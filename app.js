@@ -1,3 +1,8 @@
+// 🔌 Conexión Supabase (ARSLAN PRO)
+const SUPABASE_URL = "https://bbfxtwnuarcneymlixco.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJiZnh0d251YXJjbmV5bWxpeGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE2NjkwMjMsImV4cCI6MjA3NzI0NTAyM30.VW5sX_q8oqaYJDWhUZeaBLn9xIkBcm-_Fr9i8ItHUn8";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 /* =======================================================
    ARSLAN PRO V10.4 — KIWI Edition (Full, estable)
    - Misma base funcional + mejoras de totales, PDF, UX rápido
