@@ -1,8 +1,8 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full)
-   - Mantiene TODAS las funciones (V10.3) y mejora UI/UX
-   - Totales corregidos, autocompletado real, logo visible
-   - PDF A4 con QR, pagos parciales, pendientes, ventas+top
+   ARSLAN PRO V10.4 — KIWI Edition (Full, estable)
+   - Misma base funcional + mejoras de totales, PDF, UX rápido
+   - 4 paletas, sin splash, logo kiwi solo en PDF, "FACTURA"
+   - Clientes: selección segura por ID (evita datos cruzados)
 ======================================================= */
 (function(){
 "use strict";
@@ -16,6 +16,7 @@ const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':
 const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
+const uid = ()=>'c'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 
 /* ---------- KEYS ---------- */
 const K_CLIENTES='arslan_v104_clientes';
@@ -32,10 +33,7 @@ let priceHist = load(K_PRICEHIST, {});
 function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
-/* ---------- SPLASH & TABS ---------- */
-window.addEventListener('load', ()=>{
-  setTimeout(()=>{ $('#splash')?.classList.add('fade'); document.querySelector('[data-tab="factura"]')?.click(); }, 900);
-});
+/* ---------- TABS ---------- */
 function switchTab(id){
   $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
   $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
@@ -51,32 +49,39 @@ function uniqueByName(arr){
   arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,c); });
   return [...map.values()];
 }
+function ensureClienteIds(){
+  clientes.forEach(c=>{ if(!c.id) c.id=uid(); });
+}
 function seedClientesIfEmpty(){
-  if(clientes.length) return;
+  if(clientes.length) return ensureClienteIds();
   clientes = uniqueByName([
-    {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
-    {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
-    {nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
-    {nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
-    {nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {nombre:'Hotel Cordon'},{nombre:'Vaivén Hostelería'},{nombre:'Grupo Resicare'},{nombre:'Carlos Alameda Peralta & Seis Más'},
-    {nombre:'Tabalou Development SLU', nif:'ES B09567769'},
-    {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
-    {nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
-    {nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
-    {nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
-    {nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
-    {nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
-    {nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
-    {nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
-    {nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
-    {nombre:'Angela', dir:'C/ Madrid, Burgos'},
-    {nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
-    {nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
-    {nombre:'Domingo'},{nombre:'Bar Tropical'},
-    {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
-    {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
-    {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
+    {id:uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
+    {id:uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
+    {id:uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
+    {id:uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
+    {id:uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
+    {id:uid(), nombre:'Hotel Cordon'},
+    {id:uid(), nombre:'Vaivén Hostelería'},
+    {id:uid(), nombre:'Grupo Resicare'},
+    {id:uid(), nombre:'Carlos Alameda Peralta & Seis Más'},
+    {id:uid(), nombre:'Tabalou Development SLU', nif:'ES B09567769'},
+    {id:uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
+    {id:uid(), nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
+    {id:uid(), nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
+    {id:uid(), nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
+    {id:uid(), nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
+    {id:uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
+    {id:uid(), nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
+    {id:uid(), nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
+    {id:uid(), nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
+    {id:uid(), nombre:'Angela', dir:'C/ Madrid, Burgos'},
+    {id:uid(), nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
+    {id:uid(), nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
+    {id:uid(), nombre:'Domingo'},
+    {id:uid(), nombre:'Bar Tropical'},
+    {id:uid(), nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
+    {id:uid(), nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
+    {id:uid(), nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
   ]);
   save(K_CLIENTES, clientes);
 }
@@ -132,13 +137,14 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI ---------- */
+/* ---------- CLIENTES UI (IDs seguras) ---------- */
 function saveClientes(){ save(K_CLIENTES, clientes); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach((c,i)=>{
-    const opt=document.createElement('option'); opt.value=i; opt.textContent=c.nombre||`Cliente ${i+1}`; sel.appendChild(opt);
+  const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+  arr.forEach((c)=>{
+    const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt);
   });
 }
 function renderClientesLista(){
@@ -148,7 +154,7 @@ function renderClientesLista(){
   const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   const view = q ? arr.filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q)) : arr;
   if(view.length===0){ cont.innerHTML='<div class="item">Sin clientes.</div>'; return; }
-  view.forEach((c,idx)=>{
+  view.forEach((c)=>{
     const row=document.createElement('div'); row.className='item';
     row.innerHTML=`
       <div>
@@ -156,20 +162,20 @@ function renderClientesLista(){
         <div class="muted">${escapeHTML(c.nif||'')} · ${escapeHTML(c.dir||'')}</div>
       </div>
       <div class="row">
-        <button class="ghost" data-e="use" data-i="${idx}">Usar</button>
-        <button class="ghost" data-e="edit" data-i="${idx}">Editar</button>
-        <button class="ghost" data-e="del" data-i="${idx}">Borrar</button>
+        <button class="ghost" data-e="use" data-id="${c.id}">Usar</button>
+        <button class="ghost" data-e="edit" data-id="${c.id}">Editar</button>
+        <button class="ghost" data-e="del" data-id="${c.id}">Borrar</button>
       </div>
     `;
     cont.appendChild(row);
   });
   cont.querySelectorAll('button').forEach(b=>{
-    const i=+b.dataset.i;
+    const id=b.dataset.id;
     b.addEventListener('click', ()=>{
+      const i=clientes.findIndex(x=>x.id===id); if(i<0) return;
       if(b.dataset.e==='use'){
         const c=clientes[i]; if(!c) return;
-        $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-        switchTab('factura');
+        fillClientFields(c); switchTab('factura');
       }else if(b.dataset.e==='edit'){
         const c=clientes[i];
         const nombre=prompt('Nombre',c.nombre||'')??c.nombre;
@@ -177,12 +183,15 @@ function renderClientesLista(){
         const dir=prompt('Dirección',c.dir||'')??c.dir;
         const tel=prompt('Tel',c.tel||'')??c.tel;
         const email=prompt('Email',c.email||'')??c.email;
-        clientes[i]={nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
+        clientes[i]={...c,nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
       }else{
         if(confirm('¿Eliminar cliente?')){ clientes.splice(i,1); saveClientes(); renderClientesSelect(); renderClientesLista(); }
       }
     });
   });
+}
+function fillClientFields(c){
+  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
 }
 
 /* ---------- PRODUCTOS UI ---------- */
@@ -349,7 +358,6 @@ function recalc(){
   const iva = baseMasTrans * 0.04; // informativo
   const total = baseMasTrans;
 
-  // pagado = pagosTemp + input manual
   const manual = parseNum($('#pagado')?.value||0);
   const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + parcial;
@@ -361,24 +369,22 @@ function recalc(){
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
-  // estado sugerido
   if(total<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<total){ $('#estado').value='parcial'; }
   else { $('#estado').value='pagado'; }
 
-  // Pie de PDF
   const foot=$('#pdf-foot-note');
   if(foot){
     foot.textContent = $('#chkIvaIncluido')?.checked ? 'IVA incluido en los precios.' : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
   }
 
-  fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
-  drawResumen(); // KPIs rápidos
+  fillPrint(ls,{subtotal,transporte,iva,total},null,null);
+  drawResumen();
 }
 ;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
-function fillPrint(lines, totals, temp=null, f=null){
+function fillPrint(lines, totals, _temp=null, f=null){
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
@@ -420,7 +426,7 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
   $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
-  // QR con datos básicos
+  // QR con datos básicos (igual que antes)
   try{
     const canvas = $('#p-qr');
     const numero = f?.numero || '(Sin guardar)';
@@ -445,7 +451,7 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
   const total=unMoney($('#total').textContent);
 
   const manual = parseNum($('#pagado').value||0);
-  const pagos = [...pagosTemp]; // copiar
+  const pagos = [...pagosTemp];
   const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + pagadoParcial;
   const pendiente=Math.max(0,total-pagadoTotal);
@@ -459,7 +465,7 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
     lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
     estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
-    pagos // historial de pagos parciales
+    pagos
   };
   facturas.unshift(f); saveFacturas();
   pagosTemp = []; renderPagosTemp();
@@ -477,6 +483,8 @@ $('#btnNueva')?.addEventListener('click', ()=>{
 });
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
+  // Asegurar que la zona PDF está rellenada antes de exportar
+  recalc();
   const element = document.getElementById('printArea');
   const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
   const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
@@ -700,7 +708,7 @@ $('#btnRestore')?.addEventListener('click', ()=>{
     const reader=new FileReader(); reader.onload=()=>{
       try{
         const obj=JSON.parse(reader.result);
-        if(obj.clientes) clientes=obj.clientes;
+        if(obj.clientes){ clientes=obj.clientes; ensureClienteIds(); }
         if(obj.productos) productos=obj.productos;
         if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
@@ -712,7 +720,7 @@ $('#btnRestore')?.addEventListener('click', ()=>{
   inp.click();
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr).map(c=>({...c, id:c.id||uid()})); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
 $('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
 $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
@@ -743,13 +751,13 @@ $('#btnAddLinea')?.addEventListener('click', addLinea);
 $('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
 $('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
 $('#selCliente')?.addEventListener('change', ()=>{
-  const i=$('#selCliente').value; if(i==='') return; const c=clientes[+i]; if(!c) return;
-  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
+  const id=$('#selCliente').value; if(!id) return; const c=clientes.find(x=>x.id===id); if(!c) return;
+  fillClientFields(c);
 });
 $('#btnAddCliente')?.addEventListener('click', ()=>{
   const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
   const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  clientes.push({nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
+  clientes.push({id:uid(), nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
 });
 $('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
@@ -764,55 +772,31 @@ function drawResumen(){ drawKPIs(); }
 /* ---------- BOOT ---------- */
 (function boot(){
   seedClientesIfEmpty();
+  ensureClienteIds();
   seedProductsIfEmpty();
 
-  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
 
-  // 5 líneas iniciales
   const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
 
   renderPagosTemp();
   renderAll(); recalc();
+})();
+})();
 
-  // verificación inicial tras cargar assets
-  window.addEventListener('load', ()=>setTimeout(()=>{ try{
-    populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
-  }catch(e){ console.error('Init error',e); } }, 600));
-})();
-})();
 /* ================================
-   🎨 MODO CLARO / OSCURO + PALETAS
+   🎨 SELECTOR DE PALETAS (4 temas)
    ================================ */
-
 (function(){
-  // Paletas predefinidas
   const PALETAS = {
-    kiwi:    {bg:'#ffffff', text:'#1f2937', accent:'#22c55e', border:'#e5e7eb'},
-    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151'},
-    sand:    {bg:'#fdf6e3', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4'},
-    mint:    {bg:'#ecfdf5', text:'#064e3b', accent:'#10b981', border:'#a7f3d0'}
+    kiwi:    {bg:'#ffffff', text:'#1e293b', accent:'#16a34a', border:'#d1d5db', muted:'#6b7280'},
+    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151', muted:'#94a3b8'},
+    sand:    {bg:'#fefce8', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4', muted:'#78716c'},
+    mint:    {bg:'#ecfdf5', text:'#065f46', accent:'#059669', border:'#a7f3d0', muted:'#0f766e'}
   };
 
-  // Crear menú visual de selección
   const bar = document.createElement('div');
   bar.id = 'colorToolbar';
-  bar.innerHTML = `
-    <style>
-      #colorToolbar{
-        position:fixed; bottom:12px; right:12px; z-index:9999;
-        display:flex; gap:6px; background:rgba(255,255,255,.7);
-        border:1px solid #ccc; border-radius:8px; padding:6px 10px; 
-        box-shadow:0 2px 5px rgba(0,0,0,.2); backdrop-filter:blur(6px);
-      }
-      #colorToolbar button{
-        width:28px; height:28px; border-radius:50%; border:none; cursor:pointer;
-        transition:transform .2s; outline:none;
-      }
-      #colorToolbar button:hover{ transform:scale(1.2); }
-      #colorToolbar .dark-toggle{ width:auto; padding:0 10px; font-size:13px; font-weight:600; border-radius:6px; background:#222; color:#fff; }
-    </style>
-  `;
   document.body.appendChild(bar);
 
   // Botones de paleta
@@ -830,22 +814,24 @@ function drawResumen(){ drawKPIs(); }
   toggle.onclick=()=>toggleDark();
   bar.appendChild(toggle);
 
-  // Aplicar tema seleccionado
   function aplicarTema(nombre){
     const pal=PALETAS[nombre];
     if(!pal) return;
-    for(const [k,v] of Object.entries(pal)){
-      document.documentElement.style.setProperty(`--${k}`, v);
-    }
+    const root=document.documentElement;
+    root.style.setProperty(`--bg`, pal.bg);
+    root.style.setProperty(`--text`, pal.text);
+    root.style.setProperty(`--accent`, pal.accent);
+    root.style.setProperty(`--accent-dark`, nombre==='graphite' ? '#1d4ed8' : (nombre==='sand'?'#a16207':(nombre==='mint'?'#047857':'#15803d')));
+    root.style.setProperty(`--border`, pal.border);
+    root.style.setProperty(`--muted`, pal.muted);
+    root.setAttribute('data-theme', nombre);
     localStorage.setItem('arslan_tema', nombre);
   }
 
-  // Alternar modo oscuro/claro
   function toggleDark(){
     const isDark=document.body.classList.toggle('dark-mode');
     localStorage.setItem('arslan_dark', isDark);
-    document.body.style.background=isDark?'#111':'var(--bg)';
-    document.body.style.color=isDark?'#f9fafb':'var(--text)';
+    // el resto de vars se mantienen por paleta
   }
 
   // Restaurar configuración al cargar
@@ -854,43 +840,3 @@ function drawResumen(){ drawKPIs(); }
   aplicarTema(guardadoTema);
   if(guardadoDark) toggleDark();
 })();
-/* ================================
-   🥝 LOGO FIJO ANIMADO EN ESQUINA
-   ================================ */
-
-(function(){
-  const logo = document.createElement('img');
-  logo.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Kiwi_aka.jpg/240px-Kiwi_aka.jpg';
-  logo.alt = 'Kiwi';
-  logo.id = 'kiwiLogo';
-  document.body.appendChild(logo);
-
-  const style = document.createElement('style');
-  style.textContent = `
-    #kiwiLogo {
-      position: fixed;
-      top: 12px;
-      left: 12px;
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      border: 2px solid var(--accent, #22c55e);
-      box-shadow: 0 0 8px rgba(0,0,0,0.2);
-      cursor: pointer;
-      transition: transform 0.4s ease, box-shadow 0.4s ease;
-      z-index: 9999;
-    }
-    #kiwiLogo:hover {
-      transform: rotate(15deg) scale(1.1);
-      box-shadow: 0 0 15px rgba(34,197,94,0.5);
-    }
-  `;
-  document.head.appendChild(style);
-
-  // Al hacer clic en el logo, volver al inicio (Factura)
-  logo.addEventListener('click', ()=>{
-    document.querySelector('[data-tab="factura"]')?.click();
-  });
-})();
-
-
