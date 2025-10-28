@@ -1,15 +1,19 @@
 /* =======================================================
    ARSLAN PRO V10.4 — KIWI Edition (Full, estable + Supabase)
-   - Misma base + totales/PDF/UX/backups
-   - Supabase:
-     * Facturas: auto-upsert al Guardar
-     * Clientes/Productos: sync manual con botones "🔁 Sincronizar"
-   - Sin popups ni alertas visibles
+   - Misma base funcional + mejoras de totales, PDF, UX rápido
+   - 4 paletas, sin splash, logo kiwi solo en PDF, "FACTURA"
+   - Clientes: selección segura por ID (evita datos cruzados)
+   - Supabase: carga inicial + sync automático + botón manual
 ======================================================= */
-(function(){
 "use strict";
 
-/* ---------- HELPER DOM & NUM ---------- */
+/* ---------- SUPABASE (ESM) ---------- */
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+const SUPABASE_URL = 'https://bbfxtwnuarcneymlixco.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJiZnh0d251YXJjbmV5bWxpeGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE2NjkwMjMsImV4cCI6MjA3NzI0NTAyM30.VW5sX_q8oqaYJDWhUZeaBLn9xIkBcm-_Fr9i8ItHUn8';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ---------- HELPERS ---------- */
 const $  = (s,root=document)=>root.querySelector(s);
 const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
 const money = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
@@ -20,7 +24,7 @@ const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMo
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
 const uid = ()=>'c'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 
-/* ---------- STORAGE KEYS ---------- */
+/* ---------- KEYS ---------- */
 const K_CLIENTES='arslan_v104_clientes';
 const K_PRODUCTOS='arslan_v104_productos';
 const K_FACTURAS='arslan_v104_facturas';
@@ -30,106 +34,23 @@ const K_PRICEHIST='arslan_v104_pricehist';
 let clientes  = load(K_CLIENTES, []);
 let productos = load(K_PRODUCTOS, []);
 let facturas  = load(K_FACTURAS, []);
-let priceHist = load(K_PRICEHIST, {});
+let priceHist = load(K_PRICEHIST, {}); // { name: [{price, date}, ...] }
 
-/* ---------- LOCAL STORAGE UTILS ---------- */
 function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
-/* =======================================================
-   SUPABASE (carga UMD + cliente + helpers)
-======================================================= */
-const SUPABASE_URL = 'https://bbfxtwnuarcneymlixco.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJiZnh0d251YXJjbmV5bWxpeGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE2NjkwMjMsImV4cCI6MjA3NzI0NTAyM30.VW5sX_q8oqaYJDWhUZeaBLn9xIkBcm-_Fr9i8ItHUn8';
-
-let SB = null;
-const whenSupabase = (async () => {
-  // Cargar UMD si no existe
-  if (typeof window.supabase === 'undefined') {
-    await new Promise((res, rej) => {
-      const sc=document.createElement('script');
-      sc.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
-      sc.async=true;
-      sc.onload=res; sc.onerror=rej;
-      document.head.appendChild(sc);
-    });
+/* ---------- SYNC UI ---------- */
+const showSync = (which) => {
+  const b = $('#syncBadge'), ok=$('#syncOk'), er=$('#syncErr');
+  if(b) b.style.display = which==='busy' ? 'inline-block' : 'none';
+  if(ok) ok.style.display = which==='ok' ? 'inline-block' : 'none';
+  if(er) er.style.display = which==='err' ? 'inline-block' : 'none';
+  if(which==='ok' || which==='err'){
+    setTimeout(()=>{ if(ok) ok.style.display='none'; if(er) er.style.display='none'; }, 1800);
   }
-  try {
-    SB = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: false },
-      global: { fetch: (...a)=>fetch(...a) }
-    });
-  } catch(e) {
-    SB = null; // continuar offline si falla
-  }
-})();
+};
 
-/* ---------- SYNC HELPERS (no UI) ---------- */
-// Facturas: upsert por numero (PK lógico)
-async function supabaseUpsertFactura(f){
-  if(!SB) return;
-  try{
-    await whenSupabase;
-    await SB.from('facturas').upsert([{
-      numero: f.numero,
-      fecha: f.fecha,
-      proveedor: f.proveedor || null,
-      cliente:   f.cliente   || null,
-      lineas:    f.lineas    || [],
-      transporte: !!f.transporte,
-      iva_incluido: !!f.ivaIncluido,
-      estado: f.estado || 'pendiente',
-      metodo: f.metodo || null,
-      obs: f.obs || null,
-      totals: f.totals || null,
-      pagos:  f.pagos  || []
-    }], { onConflict: 'numero' });
-  }catch(e){/* offline / ignorar */}
-}
-
-// Clientes: upsert por id
-async function supabaseSyncClientes(arr){
-  if(!SB) return;
-  try{
-    await whenSupabase;
-    if(!Array.isArray(arr) || arr.length===0) return;
-    // Campos mínimos: id, nombre (+ opcionales)
-    const payload = arr.map(c=>({
-      id: c.id, nombre: c.nombre||null, nif: c.nif||null, dir: c.dir||null, tel: c.tel||null, email: c.email||null
-    }));
-    await SB.from('clientes').upsert(payload, { onConflict: 'id' });
-  }catch(e){/* ignorar */}
-}
-
-// Productos: upsert por name (o por id si lo tuvieras)
-async function supabaseSyncProductos(arr){
-  if(!SB) return;
-  try{
-    await whenSupabase;
-    if(!Array.isArray(arr) || arr.length===0) return;
-    const payload = arr.map(p=>({
-      name: p.name||null,
-      mode: p.mode||null,
-      boxkg: (p.boxKg==null?null:p.boxKg),
-      price: (p.price==null?null:p.price),
-      origin: p.origin||null
-    }));
-    await SB.from('productos').upsert(payload, { onConflict: 'name' });
-  }catch(e){/* ignorar */}
-}
-
-// Historial de precios: inserciones (no obligatorias en tu flujo)
-async function supabaseInsertPrice(name, price, dateISO){
-  if(!SB || !name || !(price>0)) return;
-  try{
-    await whenSupabase;
-    await SB.from('precios_historial').insert([{ name, price, fecha: dateISO || todayISO() }]);
-  }catch(e){/* ignorar */}
-}
-
-/* =======================================================
-   UI: TABS / SEED DATA / PROVEEDOR POR DEFECTO
-======================================================= */
+/* ---------- TABS ---------- */
 function switchTab(id){
   $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
   $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
@@ -139,13 +60,15 @@ function switchTab(id){
 }
 $$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
 
+/* ---------- SEED DATA ---------- */
 function uniqueByName(arr){
   const map=new Map();
   arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,c); });
   return [...map.values()];
 }
-function ensureClienteIds(){ clientes.forEach(c=>{ if(!c.id) c.id=uid(); }); }
-
+function ensureClienteIds(){
+  clientes.forEach(c=>{ if(!c.id) c.id=uid(); });
+}
 function seedClientesIfEmpty(){
   if(clientes.length) return ensureClienteIds();
   clientes = uniqueByName([
@@ -202,7 +125,7 @@ function seedProductsIfEmpty(){
   save(K_PRODUCTOS, productos);
 }
 
-/* ---------- PROVEEDOR (auto) ---------- */
+/* ---------- PROVIDER DEFAULTS (tus datos) ---------- */
 function setProviderDefaultsIfEmpty(){
   if(!$('#provNombre').value) $('#provNombre').value = 'Mohammad Arslan Waris';
   if(!$('#provNif').value)    $('#provNif').value    = 'X6389988J';
@@ -211,19 +134,14 @@ function setProviderDefaultsIfEmpty(){
   if(!$('#provEmail').value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
 }
 
-/* =======================================================
-   HISTORIAL DE PRECIOS
-======================================================= */
+/* ---------- HISTORIAL DE PRECIOS ---------- */
 function lastPrice(name){ const arr = priceHist[name]; return arr?.length ? arr[0].price : null; }
 function pushPriceHistory(name, price){
   if(!name || !(price>0)) return;
   const arr = priceHist[name] || [];
-  const now = todayISO();
-  arr.unshift({price, date: now});
+  arr.unshift({price, date: todayISO()});
   priceHist[name] = arr.slice(0,10);
   save(K_PRICEHIST, priceHist);
-  // Opcional: registrar en supabase (insert)
-  supabaseInsertPrice(name, price, now);
 }
 function renderPriceHistory(name){
   const panel=$('#pricePanel'), body=$('#ppBody'); if(!panel||!body) return;
@@ -236,15 +154,15 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* =======================================================
-   CLIENTES (IDs seguras)
-======================================================= */
-function saveClientes(){ save(K_CLIENTES, clientes); }
+/* ---------- CLIENTES UI (IDs seguras) ---------- */
+function saveClientes(){ save(K_CLIENTES, clientes); syncClientes().catch(()=>{}); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
   const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  arr.forEach((c)=>{ const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt); });
+  arr.forEach((c)=>{
+    const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt);
+  });
 }
 function renderClientesLista(){
   const cont = $('#listaClientes'); if(!cont) return;
@@ -272,8 +190,10 @@ function renderClientesLista(){
     const id=b.dataset.id;
     b.addEventListener('click', ()=>{
       const i=clientes.findIndex(x=>x.id===id); if(i<0) return;
-      if(b.dataset.e==='use'){ fillClientFields(clientes[i]); switchTab('factura'); }
-      else if(b.dataset.e==='edit'){
+      if(b.dataset.e==='use'){
+        const c=clientes[i]; if(!c) return;
+        fillClientFields(c); switchTab('factura');
+      }else if(b.dataset.e==='edit'){
         const c=clientes[i];
         const nombre=prompt('Nombre',c.nombre||'')??c.nombre;
         const nif=prompt('NIF',c.nif||'')??c.nif;
@@ -291,10 +211,8 @@ function fillClientFields(c){
   $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
 }
 
-/* =======================================================
-   PRODUCTOS
-======================================================= */
-function saveProductos(){ save(K_PRODUCTOS, productos); }
+/* ---------- PRODUCTOS UI ---------- */
+function saveProductos(){ save(K_PRODUCTOS, productos); syncProductos().catch(()=>{}); }
 function populateProductDatalist(){
   const dl=$('#productNamesList'); if(!dl) return;
   dl.innerHTML='';
@@ -302,7 +220,8 @@ function populateProductDatalist(){
 }
 function renderProductos(){
   const cont = $('#listaProductos'); if(!cont) return;
-  const q = ($('#buscarProducto')?.value||'').toLowerCase();
+  const inputSearch = $('#buscarProducto2') || $('#buscarProducto');
+  const q = (inputSearch?.value||'').toLowerCase();
   const view = q ? productos.filter(p=>(p.name||'').toLowerCase().includes(q)) : productos;
   cont.innerHTML='';
   if(view.length===0){ cont.innerHTML='<div class="item">Sin resultados.</div>'; return; }
@@ -339,9 +258,9 @@ function renderProductos(){
   });
 }
 $('#buscarProducto')?.addEventListener('input', renderProductos);
-/* =======================================================
-   FACTURA (líneas, cálculos, pagos)
-======================================================= */
+$('#buscarProducto2')?.addEventListener('input', renderProductos);
+
+/* ---------- FACTURA: LÍNEAS ---------- */
 function findProducto(name){ return productos.find(p=>(p.name||'').toLowerCase()===String(name).toLowerCase()); }
 function addLinea(){
   const tb = $('#lineasBody'); if(!tb) return;
@@ -427,7 +346,7 @@ function captureLineas(){
 }
 function lineImporte(l){ return (l.mode==='unidad') ? l.qty*l.price : l.net*l.price; }
 
-/* ---------- PAGOS PARCIALES (UI lista) ---------- */
+/* ---------- PAGOS PARCIALES EN UI ---------- */
 let pagosTemp = []; // {date, amount}
 function renderPagosTemp(){
   const list=$('#listaPagos'); if(!list) return;
@@ -449,7 +368,7 @@ $('#btnAddPago')?.addEventListener('click', ()=>{
   renderPagosTemp(); recalc();
 });
 
-/* ---------- TOTALES + ESTADO + RELLENO PDF ---------- */
+/* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
 function recalc(){
   const ls=captureLineas();
   let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
@@ -526,6 +445,7 @@ function fillPrint(lines, totals, _temp=null, f=null){
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
   $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
+  // QR con datos básicos
   try{
     const canvas = $('#p-qr');
     const numero = f?.numero || '(Sin guardar)';
@@ -537,10 +457,10 @@ function fillPrint(lines, totals, _temp=null, f=null){
 
 /* ---------- GUARDAR / NUEVA / PDF ---------- */
 function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
-function saveFacturas(){ save(K_FACTURAS, facturas); }
+function saveFacturas(){ save(K_FACTURAS, facturas); syncFacturas().catch(()=>{}); }
 
 $('#btnGuardar')?.addEventListener('click', async ()=>{
-  const ls=captureLineas(); if(ls.length===0){ return; }
+  const ls=captureLineas(); if(ls.length===0){ alert('Añade al menos una línea.'); return; }
   const numero=genNumFactura(); const now=todayISO();
   ls.forEach(l=> pushPriceHistory(l.name, l.price));
 
@@ -568,11 +488,12 @@ $('#btnGuardar')?.addEventListener('click', async ()=>{
   };
   facturas.unshift(f); saveFacturas();
   pagosTemp = []; renderPagosTemp();
+  alert(`Factura ${numero} guardada.`);
   renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
   fillPrint(ls,{subtotal,transporte,iva,total},null,f);
 
-  // 🔗 Auto-sync en Supabase (sin mostrar nada)
-  supabaseUpsertFactura(f);
+  // Sync historial de precios también
+  syncPriceHist().catch(()=>{});
 });
 
 $('#btnNueva')?.addEventListener('click', ()=>{
@@ -591,9 +512,7 @@ $('#btnImprimir')?.addEventListener('click', ()=>{
   window.html2pdf().set(opt).from(element).save();
 });
 
-/* =======================================================
-   LISTA FACTURAS / PENDIENTES / VENTAS
-======================================================= */
+/* ---------- LISTA DE FACTURAS ---------- */
 function badgeEstado(f){
   const tot=f.totals?.total||0, pag=f.totals?.pagado||0;
   if(pag>=tot) return `<span class="state-badge state-green">Pagada</span>`;
@@ -639,8 +558,6 @@ function renderFacturas(){
         f.totals.pagado=tot; f.totals.pendiente=0; f.estado='pagado';
         (f.pagos??=[]).push({date:todayISO(), amount: tot});
         saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-        // sync cambio estado
-        supabaseUpsertFactura(f);
       }else if(b.dataset.e==='parcial'){
         const max=f.totals.total-(f.totals.pagado||0);
         const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
@@ -650,7 +567,6 @@ function renderFacturas(){
           f.totals.pendiente=Math.max(0,(f.totals.total||0)-f.totals.pagado);
           f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
           saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-          supabaseUpsertFactura(f);
         }
       }else if(b.dataset.e==='pdf'){
         fillPrint(f.lineas,f.totals,null,f);
@@ -705,7 +621,7 @@ function renderPendientes(){
   });
 }
 
-/* ---------- KPIs / GRÁFICAS / VENTAS X CLIENTE ---------- */
+/* ---------- VENTAS (KPIs, gráficos, top, por cliente) ---------- */
 function sumBetween(d1,d2,filterClient=null){
   let sum=0;
   facturas.forEach(f=>{
@@ -798,9 +714,8 @@ function renderVentasCliente(){
     tb.appendChild(tr);
   });
 }
-/* =======================================================
-   BACKUP / RESTORE / EXPORTS / EVENTOS / BOOT
-======================================================= */
+
+/* ---------- BACKUP/RESTORE + EXPORTS ---------- */
 $('#btnBackup')?.addEventListener('click', ()=>{
   const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
@@ -819,18 +734,20 @@ $('#btnRestore')?.addEventListener('click', ()=>{
         if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
         save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
-        renderAll();
-      }catch{/* ignore */}
+        renderAll(); alert('Copia restaurada ✔️');
+        // Sincronizamos nube tras restaurar
+        syncAll().catch(()=>{});
+      }catch{ alert('JSON inválido'); }
     }; reader.readAsText(f);
   };
   inp.click();
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr).map(c=>({...c, id:c.id||uid()})); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr).map(c=>({...c, id:c.id||uid()})); saveClientes(); renderClientesSelect(); renderClientesLista(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
-$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
+$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; saveProductos(); populateProductDatalist(); renderProductos(); } }));
 $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
-$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; save(K_FACTURAS,facturas); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
+$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
 $('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
 
 function downloadJSON(obj, filename){
@@ -839,7 +756,7 @@ function downloadJSON(obj, filename){
 }
 function uploadJSON(cb){
   const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
-  inp.onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)); }catch{/* ignore */} }; r.readAsText(f); };
+  inp.onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)); }catch{ alert('JSON inválido'); } }; r.readAsText(f); };
   inp.click();
 }
 function exportVentasCSV(){
@@ -867,33 +784,7 @@ $('#btnAddCliente')?.addEventListener('click', ()=>{
 });
 $('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
-/* =======================================================
-   BOTONES "🔁 SINCRONIZAR" (inyectados si no están en HTML)
-======================================================= */
-(function injectSyncButtons(){
-  // CLIENTES
-  const clientesCard = $('[data-tab-panel="clientes"] .title-row .row');
-  if(clientesCard && !$('#btnSyncClientes')){
-    const btn = document.createElement('button');
-    btn.id = 'btnSyncClientes';
-    btn.textContent = '🔁 Sincronizar';
-    clientesCard.appendChild(btn);
-    btn.addEventListener('click', ()=>supabaseSyncClientes(clientes));
-  }
-  // PRODUCTOS
-  const productosCard = $('[data-tab-panel="productos"] .title-row .row');
-  if(productosCard && !$('#btnSyncProductos')){
-    const btn = document.createElement('button');
-    btn.id = 'btnSyncProductos';
-    btn.textContent = '🔁 Sincronizar';
-    productosCard.appendChild(btn);
-    btn.addEventListener('click', ()=>supabaseSyncProductos(productos));
-  }
-})();
-
-/* =======================================================
-   RENDER / BOOT
-======================================================= */
+/* ---------- RESUMEN ---------- */
 function renderAll(){
   renderClientesSelect(); renderClientesLista();
   populateProductDatalist(); renderProductos(); renderFacturas(); renderPendientes();
@@ -901,16 +792,178 @@ function renderAll(){
 }
 function drawResumen(){ drawKPIs(); }
 
+/* ---------- SUPABASE SYNC ---------- */
+/* Nota importante:
+   Para evitar conflictos con UUID en tus tablas, en la subida
+   usamos estrategia "replace": borramos y reinsertamos (RLS OFF).
+   Si quieres upsert con clave única, crea unique index:
+   - clientes(nombre) o clientes(nif)
+   - productos(name)
+   - facturas(numero)
+*/
+async function replaceTable(table, rows){
+  showSync('busy');
+  // Borrado completo
+  const del = await supabase.from(table).delete().neq('id', null);
+  if(del.error){ console.error('Delete error', table, del.error); showSync('err'); return; }
+  if(!rows?.length){ showSync('ok'); return; }
+  // Mapeo: no enviar id locales (para no chocar con uuid)
+  const sanitized = rows.map(r=>{
+    const { id, ...rest } = r || {};
+    return rest;
+  });
+  const ins = await supabase.from(table).insert(sanitized);
+  if(ins.error){ console.error('Insert error', table, ins.error); showSync('err'); return; }
+  showSync('ok');
+}
+
+async function syncClientes(){ await replaceTable('clientes', clientes); }
+async function syncProductos(){ await replaceTable('productos', productos); }
+async function syncFacturas(){ await replaceTable('facturas', facturas); }
+async function syncPriceHist(){
+  // priceHist: {name:[{price,date}]} -> tabla precios_historial(name, price, date)
+  const rows=[];
+  Object.entries(priceHist||{}).forEach(([name, arr])=>{
+    (arr||[]).forEach(h=> rows.push({name, price:h.price, date:h.date}));
+  });
+  await replaceTable('precios_historial', rows);
+}
+async function syncAll(){
+  await syncClientes();
+  await syncProductos();
+  await syncFacturas();
+  await syncPriceHist();
+}
+
+async function loadFromSupabase(){
+  try{
+    showSync('busy');
+    const { data: c, error: e1 } = await supabase.from('clientes').select('*');
+    const { data: p, error: e2 } = await supabase.from('productos').select('*');
+    const { data: f, error: e3 } = await supabase.from('facturas').select('*');
+    const { data: ph, error: e4 } = await supabase.from('precios_historial').select('*');
+
+    if(e1||e2||e3||e4){ console.warn('Carga parcial Supabase', e1||e2||e3||e4); }
+
+    if (c?.length) {
+      // Asegurar ID local para UI
+      clientes = c.map(x=>({...x, id: x.id || uid()}));
+      save(K_CLIENTES, clientes);
+    }
+    if (p?.length) {
+      productos = p;
+      save(K_PRODUCTOS, productos);
+    }
+    if (f?.length) {
+      facturas = f;
+      save(K_FACTURAS, facturas);
+    }
+    if (ph?.length){
+      const map={};
+      ph.forEach(row=>{
+        const name=row.name;
+        if(!map[name]) map[name]=[];
+        map[name].push({price:Number(row.price)||0, date:row.date});
+      });
+      // Ordenar desc por fecha y limitar 10 por producto
+      Object.keys(map).forEach(n=>{
+        map[n].sort((a,b)=>new Date(b.date)-new Date(a.date));
+        map[n]=map[n].slice(0,10);
+      });
+      priceHist = map;
+      save(K_PRICEHIST, priceHist);
+    }
+
+    renderAll(); recalc();
+    showSync('ok');
+    console.log('✅ Datos cargados desde Supabase');
+  }catch(err){
+    console.error('Supabase load error', err);
+    showSync('err');
+  }
+}
+
+/* Botón Sync manual */
+$('#btnSync')?.addEventListener('click', async ()=>{
+  try{
+    await syncAll();
+    alert('✅ Sincronizado correctamente con Supabase');
+  }catch(err){
+    alert('❌ Error al sincronizar. Revisa consola.');
+  }
+});
+
+/* ---------- BOOT ---------- */
 (function boot(){
   seedClientesIfEmpty();
   ensureClienteIds();
   seedProductsIfEmpty();
+
   setProviderDefaultsIfEmpty();
+
   const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
+
   renderPagosTemp();
   renderAll(); recalc();
-  // Cargar pestaña factura por defecto
-  document.querySelector('[data-tab="factura"]')?.click();
-})();
+
+  // Carga inicial desde Supabase (si hay datos)
+  loadFromSupabase();
+
+  // Paletas/tema selector (al final para no bloquear)
+  setupPaletas();
 })();
 
+/* ================================
+   🎨 SELECTOR DE PALETAS (4 temas)
+   ================================ */
+function setupPaletas(){
+  const PALETAS = {
+    kiwi:    {bg:'#ffffff', text:'#1e293b', accent:'#16a34a', border:'#d1d5db', muted:'#6b7280'},
+    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151', muted:'#94a3b8'},
+    sand:    {bg:#'fefce8', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4', muted:'#78716c'},
+    mint:    {bg:'#ecfdf5', text:'#065f46', accent:'#059669', border:'#a7f3d0', muted:'#0f766e'}
+  };
+
+  const bar = document.createElement('div');
+  bar.id = 'colorToolbar';
+  document.body.appendChild(bar);
+
+  for(const [name,p] of Object.entries(PALETAS)){
+    const b=document.createElement('button');
+    b.title=name; b.style.background=p.accent;
+    b.onclick=()=>aplicarTema(name);
+    bar.appendChild(b);
+  }
+
+  const toggle=document.createElement('button');
+  toggle.className='dark-toggle';
+  toggle.textContent='🌞/🌙';
+  toggle.onclick=()=>toggleDark();
+  bar.appendChild(toggle);
+
+  function aplicarTema(nombre){
+    const pal=PALETAS[nombre];
+    if(!pal) return;
+    const root=document.documentElement;
+    root.style.setProperty(`--bg`, pal.bg);
+    root.style.setProperty(`--text`, pal.text);
+    root.style.setProperty(`--accent`, pal.accent);
+    root.style.setProperty(`--accent-dark`, nombre==='graphite' ? '#1d4ed8' : (nombre==='sand'?'#a16207':(nombre==='mint'?'#047857':'#15803d')));
+    root.style.setProperty(`--border`, pal.border);
+    root.style.setProperty(`--muted`, pal.muted);
+    root.setAttribute('data-theme', nombre);
+    localStorage.setItem('arslan_tema', nombre);
+  }
+
+  function toggleDark(){
+    const isDark=document.body.classList.toggle('dark-mode');
+    localStorage.setItem('arslan_dark', isDark);
+  }
+
+  const guardadoTema = localStorage.getItem('arslan_tema') || 'kiwi';
+  const guardadoDark = localStorage.getItem('arslan_dark') === 'true';
+  aplicarTema(guardadoTema);
+  if(guardadoDark) toggleDark();
+}
+
+/* ====== FIN ====== */
