@@ -1,153 +1,40 @@
 /* =======================================================
-   ARSLAN PRO V10.6.2 — KIWI Edition (FULL, Cloud Stable)
-   - Todas las funciones activas (facturas, clientes, productos, ventas, pendientes)
-   - PDF A4 con logo Kiwi (solo en PDF), QR, transporte 10 %, IVA 4 % (informativo)
-   - Pagos parciales + estado automático
-   - Historial de precios (últimos 10 por producto)
-   - Backup/restore + export CSV/JSON
-   - 4 paletas + modo oscuro (toolbar flotante en style.css / index)
-   - Memoria LocalStorage + **Supabase 1 tabla** (autosync)
-     * Tabla sugerida: arslan_store(key text PRIMARY KEY, value jsonb, updated_at timestamptz)
-     * RLS: permitir select/insert/upsert a anon para este proyecto
-   ====================================================== */
+   ARSLAN PRO V10.4 — KIWI Edition (Full)
+   - Mantiene TODAS las funciones (V10.3) y mejora UI/UX
+   - Totales corregidos, autocompletado real, logo visible
+   - PDF A4 con QR, pagos parciales, pendientes, ventas+top
+======================================================= */
 (function(){
 "use strict";
 
 /* ---------- HELPERS ---------- */
 const $  = (s,root=document)=>root.querySelector(s);
 const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
-const money  = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
+const money = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
 const parseNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; };
 const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-const todayISO   = () => new Date().toISOString();
+const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
 
-/* ---------- KEYS (LocalStorage / Cloud) ---------- */
-const K_CLIENTES   = 'arslan_v104_clientes';
-const K_PRODUCTOS  = 'arslan_v104_productos';
-const K_FACTURAS   = 'arslan_v104_facturas';
-const K_PRICEHIST  = 'arslan_v104_pricehist';
-const K_VERSION    = 'ARSLAN PRO V10.6.2';
-
-function loadLS(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return (v==null?fallback:v); } catch{ return fallback; } }
-function saveLS(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){ console.warn('LS save error',e); } }
+/* ---------- KEYS ---------- */
+const K_CLIENTES='arslan_v104_clientes';
+const K_PRODUCTOS='arslan_v104_productos';
+const K_FACTURAS='arslan_v104_facturas';
+const K_PRICEHIST='arslan_v104_pricehist';
 
 /* ---------- ESTADO ---------- */
-let clientes  = loadLS(K_CLIENTES, []);
-let productos = loadLS(K_PRODUCTOS, []);
-let facturas  = loadLS(K_FACTURAS, []);
-let priceHist = loadLS(K_PRICEHIST, {});
+let clientes  = load(K_CLIENTES, []);
+let productos = load(K_PRODUCTOS, []);
+let facturas  = load(K_FACTURAS, []);
+let priceHist = load(K_PRICEHIST, {});
 
-/* ======================================================
-   ☁️ SUPABASE (1 TABLA, AUTOSYNC)
-   - Tabla: arslan_store
-     columns: key (text PK), value (jsonb), updated_at (timestamptz default now())
-   ====================================================== */
-const SUPABASE_URL = 'https://ajnvkscciswbzexppkqa.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqbnZrc2NjaXN3YnpleHBwa3FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE2NDQzMzIsImV4cCI6MjA3NzIyMDMzMn0.v80vhgpWa-NNTQ2GJxQhWzmUe7ErOrSNrDKI0Y0WtX8';
+function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
+function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
-// Carga ligera del SDK sin bundler (si no está ya cargado)
-let supabase = null;
-(function ensureSupabase(){
-  if (window.supabase) {
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    return;
-  }
-  const s = document.createElement('script');
-  s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
-  s.onload = ()=>{ supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); cloudPullAll(); };
-  document.head.appendChild(s);
-})();
-
-async function storeSet(key, value){
-  try{
-    if(!supabase) return; // si aún no cargó el SDK, se guardó en LS y ya se sincronizará
-    await supabase.from('arslan_store').upsert({ key, value, updated_at: new Date().toISOString() });
-  }catch(e){ console.warn('Supabase upsert error', key, e); }
-}
-async function storeGet(key){
-  try{
-    if(!supabase) return null;
-    const { data, error } = await supabase.from('arslan_store').select('value').eq('key', key).single();
-    if(error) return null;
-    return data?.value ?? null;
-  }catch{ return null; }
-}
-
-async function cloudPullAll(){
-  try{
-    if(!supabase) return;
-    const keys = [K_CLIENTES, K_PRODUCTOS, K_FACTURAS, K_PRICEHIST];
-    const { data, error } = await supabase.from('arslan_store').select('key,value').in('key', keys);
-    if(error) { console.warn('Cloud pull error', error); return; }
-    const map = new Map(data.map(r=>[r.key, r.value]));
-
-    const c = map.get(K_CLIENTES); if(Array.isArray(c)) clientes = mergeClientes(clientes, c);
-    const p = map.get(K_PRODUCTOS); if(Array.isArray(p)) productos = mergeProductos(productos, p);
-    const f = map.get(K_FACTURAS); if(Array.isArray(f)) facturas  = mergeFacturas(facturas, f);
-    const ph= map.get(K_PRICEHIST); if(ph && typeof ph==='object') priceHist = {...priceHist, ...ph};
-
-    // persistir en LS y re-render
-    saveLS(K_CLIENTES,clientes); saveLS(K_PRODUCTOS,productos); saveLS(K_FACTURAS,facturas); saveLS(K_PRICEHIST,priceHist);
-    renderAll(); recalc();
-  }catch(e){ console.warn('Cloud sync pull exception',e); }
-}
-function mergeClientes(a,b){
-  // dedupe por nombre (insensible)
-  const by = new Map();
-  [...a,...b].forEach(c=>{
-    const k=(c?.nombre||'').trim().toLowerCase();
-    if(!k) return;
-    const prev = by.get(k)||{};
-    by.set(k, { ...prev, ...c });
-  });
-  return [...by.values()];
-}
-function mergeProductos(a,b){
-  const by = new Map();
-  [...a,...b].forEach(p=>{
-    const k=(p?.name||'').trim().toLowerCase();
-    if(!k) return;
-    const prev = by.get(k)||{};
-    by.set(k,{...prev, ...p});
-  });
-  return [...by.values()];
-}
-function mergeFacturas(a,b){
-  // dedupe por numero
-  const by = new Map();
-  [...a,...b].forEach(f=>{
-    const k=f?.numero||'';
-    if(!k) return;
-    const prev = by.get(k)||{};
-    // preferimos la más reciente por fecha
-    const newer = (!prev.fecha || (new Date(f.fecha)>new Date(prev.fecha))) ? f : prev;
-    by.set(k, newer);
-  });
-  return [...by.values()].sort((x,y)=> new Date(y.fecha)-new Date(x.fecha));
-}
-
-// Autosync (debounced)
-let pushTimer = null;
-function cloudPushDebounced(){
-  clearTimeout(pushTimer);
-  pushTimer = setTimeout(async ()=>{
-    saveLS(K_CLIENTES,clientes);
-    saveLS(K_PRODUCTOS,productos);
-    saveLS(K_FACTURAS,facturas);
-    saveLS(K_PRICEHIST,priceHist);
-    await storeSet(K_CLIENTES,clientes);
-    await storeSet(K_PRODUCTOS,productos);
-    await storeSet(K_FACTURAS,facturas);
-    await storeSet(K_PRICEHIST,priceHist);
-  }, 600);
-}
-
-/* ---------- SPLASH & TABS (sin splash forzado) ---------- */
+/* ---------- SPLASH & TABS ---------- */
 window.addEventListener('load', ()=>{
-  // Si existe splash en HTML, se oculta rápido
-  setTimeout(()=>{ $('#splash')?.classList.add('fade'); document.querySelector('[data-tab="factura"]')?.click(); }, 200);
+  setTimeout(()=>{ $('#splash')?.classList.add('fade'); document.querySelector('[data-tab="factura"]')?.click(); }, 900);
 });
 function switchTab(id){
   $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
@@ -191,7 +78,7 @@ function seedClientesIfEmpty(){
     {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
     {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
   ]);
-  saveLS(K_CLIENTES, clientes); cloudPushDebounced();
+  save(K_CLIENTES, clientes);
 }
 const PRODUCT_NAMES = [
 "GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ",
@@ -213,16 +100,16 @@ const PRODUCT_NAMES = [
 function seedProductsIfEmpty(){
   if(productos.length) return;
   productos = PRODUCT_NAMES.map(n=>({name:n}));
-  saveLS(K_PRODUCTOS, productos); cloudPushDebounced();
+  save(K_PRODUCTOS, productos);
 }
 
-/* ---------- PROVIDER DEFAULTS (tus datos en UI) ---------- */
+/* ---------- PROVIDER DEFAULTS (tus datos) ---------- */
 function setProviderDefaultsIfEmpty(){
-  if(!$('#provNombre')?.value) $('#provNombre').value = 'Mohammad Arslan Waris';
-  if(!$('#provNif')?.value)    $('#provNif').value    = 'X6389988J';
-  if(!$('#provDir')?.value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
-  if(!$('#provTel')?.value)    $('#provTel').value    = '631 667 893';
-  if(!$('#provEmail')?.value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
+  if(!$('#provNombre').value) $('#provNombre').value = 'Mohammad Arslan Waris';
+  if(!$('#provNif').value)    $('#provNif').value    = 'X6389988J';
+  if(!$('#provDir').value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
+  if(!$('#provTel').value)    $('#provTel').value    = '631 667 893';
+  if(!$('#provEmail').value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
 }
 
 /* ---------- HISTORIAL DE PRECIOS ---------- */
@@ -232,7 +119,7 @@ function pushPriceHistory(name, price){
   const arr = priceHist[name] || [];
   arr.unshift({price, date: todayISO()});
   priceHist[name] = arr.slice(0,10);
-  saveLS(K_PRICEHIST, priceHist); cloudPushDebounced();
+  save(K_PRICEHIST, priceHist);
 }
 function renderPriceHistory(name){
   const panel=$('#pricePanel'), body=$('#ppBody'); if(!panel||!body) return;
@@ -246,7 +133,7 @@ function renderPriceHistory(name){
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
 /* ---------- CLIENTES UI ---------- */
-function saveClientes(){ saveLS(K_CLIENTES, clientes); cloudPushDebounced(); }
+function saveClientes(){ save(K_CLIENTES, clientes); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
@@ -299,7 +186,7 @@ function renderClientesLista(){
 }
 
 /* ---------- PRODUCTOS UI ---------- */
-function saveProductos(){ saveLS(K_PRODUCTOS, productos); cloudPushDebounced(); }
+function saveProductos(){ save(K_PRODUCTOS, productos); }
 function populateProductDatalist(){
   const dl=$('#productNamesList'); if(!dl) return;
   dl.innerHTML='';
@@ -454,69 +341,47 @@ $('#btnAddPago')?.addEventListener('click', ()=>{
 });
 
 /* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
-function recalc() {
-  const ls = captureLineas();
-  let subtotal = 0;
-  ls.forEach(l => subtotal += lineImporte(l));
-
-  // Transporte + IVA
-  const transporte = $('#chkTransporte')?.checked ? subtotal * 0.10 : 0;
+function recalc(){
+  const ls=captureLineas();
+  let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
+  const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
   const baseMasTrans = subtotal + transporte;
-  const iva   = baseMasTrans * 0.04; // informativo
+  const iva = baseMasTrans * 0.04; // informativo
   const total = baseMasTrans;
 
-  // Pagos: manual + parciales
-  const manual  = parseNum($('#pagado')?.value || 0);
-  const parcial = pagosTemp.reduce((a, b) => a + (b.amount || 0), 0);
+  // pagado = pagosTemp + input manual
+  const manual = parseNum($('#pagado')?.value||0);
+  const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + parcial;
-  const pendiente   = Math.max(0, total - pagadoTotal);
+  const pendiente = Math.max(0, total - pagadoTotal);
 
-  // Mostrar totales
-  $('#subtotal').textContent  = money(subtotal);
-  $('#transp').textContent    = money(transporte);
-  $('#iva').textContent       = money(iva);
-  $('#total').textContent     = money(total);
+  $('#subtotal').textContent = money(subtotal);
+  $('#transp').textContent = money(transporte);
+  $('#iva').textContent = money(iva);
+  $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
-  // Estado automático
-  const estadoEl = document.querySelector('#estado');
-  if (estadoEl) {
-    if (total <= 0) {
-      estadoEl.value = 'pendiente';
-    } else if (pagadoTotal <= 0) {
-      estadoEl.value = 'pendiente';
-    } else if (pagadoTotal < total) {
-      estadoEl.value = 'parcial';
-    } else {
-      estadoEl.value = 'pagado';
-    }
+  // estado sugerido
+  if(total<=0){ $('#estado').value='pendiente'; }
+  else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
+  else if(pagadoTotal<total){ $('#estado').value='parcial'; }
+  else { $('#estado').value='pagado'; }
+
+  // Pie de PDF
+  const foot=$('#pdf-foot-note');
+  if(foot){
+    foot.textContent = $('#chkIvaIncluido')?.checked ? 'IVA incluido en los precios.' : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
   }
 
-  // Pie PDF
-  const foot = document.querySelector('#pdf-foot-note');
-  if (foot) {
-    foot.textContent = document.querySelector('#chkIvaIncluido')?.checked
-      ? 'IVA incluido en los precios.'
-      : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
-  }
-
-  // Actualizar print
-  fillPrint(ls, { subtotal, transporte, iva, total }, { pagado: pagadoTotal, pendiente });
-
-  // KPIs rápidos
-  drawResumen();
+  fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
+  drawResumen(); // KPIs rápidos
 }
-['chkTransporte', 'chkIvaIncluido', 'estado', 'pagado'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', recalc);
-});
+;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
-/* ---------- PDF / PRINT ---------- */
 function fillPrint(lines, totals, temp=null, f=null){
-  $('#p-num').textContent   = f?.numero || '(Sin guardar)';
+  $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
-  // Encabezado: SOLO "Factura" (logo sólo en PDF via index.css/img)
   $('#p-prov').innerHTML = `
     <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre').value || '')}</strong></div>
     <div>${escapeHTML(f?.proveedor?.nif || $('#provNif').value || '')}</div>
@@ -553,24 +418,21 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-tot').textContent = money(totals?.total||0);
   $('#p-estado').textContent = f?.estado || $('#estado')?.value || 'Impagada';
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
-  $('#p-obs').textContent    = f?.obs || ($('#observaciones')?.value||'—');
+  $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
-  // QR
+  // QR con datos básicos
   try{
     const canvas = $('#p-qr');
-    const numero  = f?.numero || '(Sin guardar)';
+    const numero = f?.numero || '(Sin guardar)';
     const cliente = f?.cliente?.nombre || $('#cliNombre').value || '';
     const payload = `ARSLAN-Factura|${numero}|${cliente}|${money(totals?.total||0)}|${$('#p-estado').textContent}`;
-    window.QRCode?.toCanvas(canvas, payload, {width:92, margin:0});
+    window.QRCode.toCanvas(canvas, payload, {width:92, margin:0});
   }catch(e){}
 }
 
 /* ---------- GUARDAR / NUEVA / PDF ---------- */
-function genNumFactura(){
-  const d=new Date(), pad=n=>String(n).padStart(2,'0');
-  return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-function saveFacturas(){ saveLS(K_FACTURAS, facturas); cloudPushDebounced(); }
+function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
+function saveFacturas(){ save(K_FACTURAS, facturas); }
 
 $('#btnGuardar')?.addEventListener('click', ()=>{
   const ls=captureLineas(); if(ls.length===0){ alert('Añade al menos una línea.'); return; }
@@ -610,7 +472,8 @@ $('#btnNueva')?.addEventListener('click', ()=>{
   const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea();
   $('#chkTransporte').checked=false; $('#chkIvaIncluido').checked=true; $('#estado').value='pendiente';
   $('#pagado').value=''; $('#metodoPago').value='Efectivo'; $('#observaciones').value='';
-  pagosTemp=[]; renderPagosTemp(); recalc();
+  pagosTemp=[]; renderPagosTemp();
+  recalc();
 });
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
@@ -745,10 +608,10 @@ function startOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth
 
 function drawKPIs(){
   const now=new Date();
-  const hoy    = sumBetween(startOfDay(now), endOfDay(now));
+  const hoy = sumBetween(startOfDay(now), endOfDay(now));
   const semana = sumBetween(startOfWeek(now), endOfDay(now));
-  const mes    = sumBetween(startOfMonth(now), endOfDay(now));
-  const total  = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
+  const mes = sumBetween(startOfMonth(now), endOfDay(now));
+  const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
   $('#vHoy').textContent=money(hoy);
   $('#vSemana').textContent=money(semana);
   $('#vMes').textContent=money(mes);
@@ -825,7 +688,7 @@ function renderVentasCliente(){
 
 /* ---------- BACKUP/RESTORE + EXPORTS ---------- */
 $('#btnBackup')?.addEventListener('click', ()=>{
-  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:K_VERSION};
+  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
@@ -841,20 +704,19 @@ $('#btnRestore')?.addEventListener('click', ()=>{
         if(obj.productos) productos=obj.productos;
         if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
-        saveLS(K_CLIENTES,clientes); saveLS(K_PRODUCTOS,productos); saveLS(K_FACTURAS,facturas); saveLS(K_PRICEHIST,priceHist);
-        cloudPushDebounced();
+        save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
         renderAll(); alert('Copia restaurada ✔️');
       }catch{ alert('JSON inválido'); }
     }; reader.readAsText(f);
   };
   inp.click();
 });
-$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v106.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=mergeClientes(clientes, arr); saveClientes(); renderClientesSelect(); renderClientesLista(); } }));
-$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v106.json'));
-$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=mergeProductos(productos,arr); saveProductos(); populateProductDatalist(); renderProductos(); } }));
-$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v106.json'));
-$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=mergeFacturas(facturas,arr); saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
+$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
+$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
+$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
+$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; save(K_FACTURAS,facturas); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
 $('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
 
 function downloadJSON(obj, filename){
@@ -900,11 +762,11 @@ function renderAll(){
 function drawResumen(){ drawKPIs(); }
 
 /* ---------- BOOT ---------- */
-(async function boot(){
+(function boot(){
   seedClientesIfEmpty();
   seedProductsIfEmpty();
 
-  // proveedor por defecto
+  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
 
   // 5 líneas iniciales
@@ -913,13 +775,122 @@ function drawResumen(){ drawKPIs(); }
   renderPagosTemp();
   renderAll(); recalc();
 
-  // Pull cloud (si SDK ya estaba listo)
-  if (supabase) cloudPullAll();
-
-  // Verificación inicial tras cargar assets
+  // verificación inicial tras cargar assets
   window.addEventListener('load', ()=>setTimeout(()=>{ try{
     populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
-  }catch(e){ console.error('Init error',e); } }, 400));
+  }catch(e){ console.error('Init error',e); } }, 600));
 })();
 })();
+/* ================================
+   🎨 MODO CLARO / OSCURO + PALETAS
+   ================================ */
+
+(function(){
+  // Paletas predefinidas
+  const PALETAS = {
+    kiwi:    {bg:'#ffffff', text:'#1f2937', accent:'#22c55e', border:'#e5e7eb'},
+    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151'},
+    sand:    {bg:'#fdf6e3', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4'},
+    mint:    {bg:'#ecfdf5', text:'#064e3b', accent:'#10b981', border:'#a7f3d0'}
+  };
+
+  // Crear menú visual de selección
+  const bar = document.createElement('div');
+  bar.id = 'colorToolbar';
+  bar.innerHTML = `
+    <style>
+      #colorToolbar{
+        position:fixed; bottom:12px; right:12px; z-index:9999;
+        display:flex; gap:6px; background:rgba(255,255,255,.7);
+        border:1px solid #ccc; border-radius:8px; padding:6px 10px; 
+        box-shadow:0 2px 5px rgba(0,0,0,.2); backdrop-filter:blur(6px);
+      }
+      #colorToolbar button{
+        width:28px; height:28px; border-radius:50%; border:none; cursor:pointer;
+        transition:transform .2s; outline:none;
+      }
+      #colorToolbar button:hover{ transform:scale(1.2); }
+      #colorToolbar .dark-toggle{ width:auto; padding:0 10px; font-size:13px; font-weight:600; border-radius:6px; background:#222; color:#fff; }
+    </style>
+  `;
+  document.body.appendChild(bar);
+
+  // Botones de paleta
+  for(const [name,p] of Object.entries(PALETAS)){
+    const b=document.createElement('button');
+    b.title=name; b.style.background=p.accent;
+    b.onclick=()=>aplicarTema(name);
+    bar.appendChild(b);
+  }
+
+  // Botón modo claro/oscuro
+  const toggle=document.createElement('button');
+  toggle.className='dark-toggle';
+  toggle.textContent='🌞/🌙';
+  toggle.onclick=()=>toggleDark();
+  bar.appendChild(toggle);
+
+  // Aplicar tema seleccionado
+  function aplicarTema(nombre){
+    const pal=PALETAS[nombre];
+    if(!pal) return;
+    for(const [k,v] of Object.entries(pal)){
+      document.documentElement.style.setProperty(`--${k}`, v);
+    }
+    localStorage.setItem('arslan_tema', nombre);
+  }
+
+  // Alternar modo oscuro/claro
+  function toggleDark(){
+    const isDark=document.body.classList.toggle('dark-mode');
+    localStorage.setItem('arslan_dark', isDark);
+    document.body.style.background=isDark?'#111':'var(--bg)';
+    document.body.style.color=isDark?'#f9fafb':'var(--text)';
+  }
+
+  // Restaurar configuración al cargar
+  const guardadoTema = localStorage.getItem('arslan_tema') || 'kiwi';
+  const guardadoDark = localStorage.getItem('arslan_dark') === 'true';
+  aplicarTema(guardadoTema);
+  if(guardadoDark) toggleDark();
+})();
+/* ================================
+   🥝 LOGO FIJO ANIMADO EN ESQUINA
+   ================================ */
+
+(function(){
+  const logo = document.createElement('img');
+  logo.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Kiwi_aka.jpg/240px-Kiwi_aka.jpg';
+  logo.alt = 'Kiwi';
+  logo.id = 'kiwiLogo';
+  document.body.appendChild(logo);
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #kiwiLogo {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: 2px solid var(--accent, #22c55e);
+      box-shadow: 0 0 8px rgba(0,0,0,0.2);
+      cursor: pointer;
+      transition: transform 0.4s ease, box-shadow 0.4s ease;
+      z-index: 9999;
+    }
+    #kiwiLogo:hover {
+      transform: rotate(15deg) scale(1.1);
+      box-shadow: 0 0 15px rgba(34,197,94,0.5);
+    }
+  `;
+  document.head.appendChild(style);
+
+  // Al hacer clic en el logo, volver al inicio (Factura)
+  logo.addEventListener('click', ()=>{
+    document.querySelector('[data-tab="factura"]')?.click();
+  });
+})();
+
 
