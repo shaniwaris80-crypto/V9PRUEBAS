@@ -325,27 +325,31 @@ $('#btnAddPago')?.addEventListener('click', ()=>{
 });
 
 /* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
-function recalc(){
-  const ls=captureLineas();
-  let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
-  const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
+function recalc() {
+  const ls = captureLineas();
+  let subtotal = 0;
+  ls.forEach(l => subtotal += lineImporte(l));
+
+  // Transporte + IVA
+  const transporte = $('#chkTransporte')?.checked ? subtotal * 0.10 : 0;
   const baseMasTrans = subtotal + transporte;
   const iva = baseMasTrans * 0.04; // informativo
   const total = baseMasTrans;
 
-  // pagado = pagosTemp + input manual
-  const manual = parseNum($('#pagado')?.value||0);
-  const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
+  // Pagos: manual + parciales
+  const manual = parseNum($('#pagado')?.value || 0);
+  const parcial = pagosTemp.reduce((a, b) => a + (b.amount || 0), 0);
   const pagadoTotal = manual + parcial;
   const pendiente = Math.max(0, total - pagadoTotal);
 
+  // Mostrar totales en pantalla
   $('#subtotal').textContent = money(subtotal);
   $('#transp').textContent = money(transporte);
   $('#iva').textContent = money(iva);
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
-  // ---------- estado sugerido (FIX robusto) ----------
+  // ---------- ESTADO AUTOMÁTICO ----------
   const estadoEl = document.querySelector('#estado');
   if (estadoEl) {
     if (total <= 0) {
@@ -358,6 +362,21 @@ function recalc(){
       estadoEl.value = 'pagado';
     }
   }
+
+  // ---------- PIE DE PDF ----------
+  const foot = document.querySelector('#pdf-foot-note');
+  if (foot) {
+    foot.textContent = document.querySelector('#chkIvaIncluido')?.checked
+      ? 'IVA incluido en los precios.'
+      : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
+  }
+
+  // Actualizar área de impresión
+  fillPrint(ls, { subtotal, transporte, iva, total }, { pagado: pagadoTotal, pendiente });
+
+  // Actualizar paneles de resumen
+  drawResumen();
+}
 
   // Pie de PDF
   const foot = document.querySelector('#pdf-foot-note');
