@@ -488,11 +488,19 @@ function recalc(){
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
-  // estado sugerido
-  if(total<=0){ $('#estado').value='pendiente'; }
-  else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
-  else if(pagadoTotal<total){ $('#estado').value='parcial'; }
-  else { $('#estado').value='pagado'; }
+  // estado sugerido (corregido)
+  const estadoInput = $('#estado');
+  if (!estadoInput) return;
+  if (total <= 0) {
+    estadoInput.value = 'pendiente';
+  } else if (pagadoTotal <= 0) {
+    estadoInput.value = 'pendiente';
+  } else if (pagadoTotal < total) {
+    estadoInput.value = 'parcial';
+  } else {
+    estadoInput.value = 'pagado';
+  }
+
 
   // Pie de PDF
   const foot=$('#pdf-foot-note');
