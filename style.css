@@ -1,73 +1,149 @@
-:root{
+:root {
   --bg:#ffffff;
   --text:#111111;
   --muted:#6b7280;
   --border:#e5e7eb;
   --row:#f8f9fb;
   --shadow:0 10px 28px rgba(0,0,0,.08);
-  --black:#111111;
-  --red:#ef4444;
-  --amber:#f59e0b;
-  --green:#10b981;
-  --accent:#22c55e;
+  --danger:#ef4444;
+  --accent:#10b981;
 }
+
+/* 🌙 Modo oscuro automático */
 @media (prefers-color-scheme: dark){
-  :root{
-    --bg:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937; --row:#0b1222; --shadow:0 10px 28px rgba(0,0,0,.4);
+  :root {
+    --bg:#0f172a;
+    --text:#e5e7eb;
+    --muted:#94a3b8;
+    --border:#1e293b;
+    --row:#182132;
+    --shadow:0 10px 28px rgba(0,0,0,.5);
   }
 }
 
+/* ==============================
+   ✨ Paletas de color disponibles
+   ============================== */
+body[data-theme="kiwi"]   { --accent:#10b981; } /* Verde Kiwi */
+body[data-theme="mint"]   { --accent:#06b6d4; } /* Menta azulada */
+body[data-theme="sand"]   { --accent:#eab308; } /* Arena dorada */
+body[data-theme="graphite"]{ --accent:#6b7280; } /* Gris grafito */
+
+/* ==============================
+   ✨ Estilos base
+   ============================== */
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Poppins',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-html,body{transition:background-color .4s,color .4s}
-
-/* Topbar */
-.topbar{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:10px 14px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700}
-.brand img{width:28px;height:28px;border-radius:6px}
-.brand span{font-weight:700;letter-spacing:.3px}
-.brand small{font-weight:600;color:var(--muted)}
-
-.tabs{display:flex;gap:6px;flex-wrap:wrap}
-.tab{border:1px solid var(--black);background:#fff;color:#111;border-radius:10px;padding:8px 12px;cursor:pointer;transition:.2s}
-.tab:hover{background:#111;color:#fff}
-.tab.active{background:#111;color:#fff}
-
-/* Layout cards */
-.container{max-width:1200px;margin:18px auto;padding:0 12px}
-.panel{display:none}
-.panel.active{display:block}
-.card{background:var(--bg);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:14px;margin-bottom:14px}
-.title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
-@media (max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
-
-input,select,textarea{width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)}
-input.search{max-width:240px}
-button{
-  border:1px solid var(--black);
-  border-radius:10px;
-  background:#111; color:#fff;
-  padding:10px 14px; font-weight:600; cursor:pointer;
-  transition:background-color .3s,color .3s,border-color .3s,transform .06s ease;
+html,body{
+  margin:0;padding:0;
+  background:var(--bg);color:var(--text);
+  font-family:'Poppins',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  transition:background .3s,color .3s;
 }
-button.ghost{background:#f5f5f5;color:#111;border-color:#c7c7c7}
-button:hover{filter:brightness(1.04)}
-button:active{transform:translateY(1px)}
-.mt8{margin-top:8px}
+.container{max-width:1200px;margin:18px auto;padding:0 12px}
 
-/* Table calc */
-.table-wrap{width:100%;overflow:auto;border:1px solid var(--border);border-radius:12px}
-.calc-table{width:100%;border-collapse:separate;border-spacing:0}
-.calc-table th,.calc-table td{border-bottom:1px solid var(--border);padding:8px;font-size:14px}
-.calc-table thead th{position:sticky;top:0;background:var(--bg);z-index:1}
-.calc-table tbody tr:nth-child(2n){background:var(--row)}
-.calc-table td input,.calc-table td select{width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
-.calc-table td .del{background:#f3f3f3;color:#111}
+/* ==============================
+   ✨ Topbar
+   ============================== */
+.topbar{
+  position:sticky;top:0;z-index:100;
+  background:var(--bg);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;
+}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;}
+.brand img{width:28px;height:28px;border-radius:6px;}
+.brand small{font-weight:600;color:var(--muted);}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;}
+.tab{
+  border:1px solid var(--accent);
+  border-radius:10px;
+  background:transparent;
+  color:var(--accent);
+  padding:8px 12px;
+  cursor:pointer;
+  transition:.25s;
+  font-weight:500;
+}
+.tab.active, .tab:hover{
+  background:var(--accent);
+  color:#fff;
+}
 
-/* Totals */
+/* ==============================
+   ✨ Tarjetas y paneles
+   ============================== */
+.card{
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:14px;
+  box-shadow:var(--shadow);
+  padding:14px;
+  margin-bottom:14px;
+}
+.title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr;}}
+
+/* ==============================
+   ✨ Formularios y botones
+   ============================== */
+input,select,textarea{
+  width:100%;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--bg);
+  color:var(--text);
+  font-family:inherit;
+}
+input.search{max-width:240px;}
+button{
+  border:1px solid var(--accent);
+  border-radius:10px;
+  background:var(--accent);
+  color:#fff;
+  padding:10px 14px;
+  font-weight:600;
+  cursor:pointer;
+  transition:.2s;
+}
+button:hover{filter:brightness(1.1);}
+button.ghost{
+  background:transparent;
+  color:var(--accent);
+  border:1px solid var(--accent);
+}
+button.ghost:hover{
+  background:var(--accent);
+  color:#fff;
+}
+button:active{transform:translateY(1px);}
+.mt8{margin-top:8px;}
+
+/* ==============================
+   ✨ Tablas
+   ============================== */
+.table-wrap{width:100%;overflow:auto;border:1px solid var(--border);border-radius:12px;}
+.calc-table{width:100%;border-collapse:separate;border-spacing:0;}
+.calc-table th,.calc-table td{border-bottom:1px solid var(--border);padding:8px;font-size:14px;}
+.calc-table thead th{position:sticky;top:0;background:var(--bg);z-index:1;}
+.calc-table tbody tr:nth-child(2n){background:var(--row);}
+.calc-table td input,.calc-table td select{
+  width:100%;
+  padding:6px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--bg);
+  color:var(--text);
+  font-size:13px;
+}
+
+/* ==============================
+   ✨ Totales y badges
+   ============================== */
 .totals-grid{
   display:grid;
   grid-template-columns:1fr auto;
@@ -77,69 +153,68 @@ button:active{transform:translateY(1px)}
   padding:10px;
   background:var(--bg);
 }
-.totals-grid .big{font-size:18px;font-weight:700}
-#total,#pendiente{font-weight:700;font-size:1.2em;color:var(--accent);}
+.totals-grid .big{font-size:18px;font-weight:700;}
 
-/* Badges */
-.badge{padding:2px 8px;border-radius:999px;font-size:12px}
-.badge.ok{background:#dcfce7;color:#065f46}
-.badge.bad{background:#fee2e2;color:#991b1b}
-.badge.warn{background:#fef3c7;color:#92400e}
+.badge{padding:2px 8px;border-radius:999px;font-size:12px;}
+.badge.ok{background:#dcfce7;color:#065f46;}
+.badge.bad{background:#fee2e2;color:#991b1b;}
+.badge.warn{background:#fef3c7;color:#92400e;}
 
-.state-badge{padding:4px 8px;border-radius:999px;font-weight:600}
-.state-red{background:var(--red);color:#fff}
-.state-amber{background:var(--amber);color:#111}
-.state-green{background:var(--green);color:#fff}
-
-.list .item{display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed var(--border);padding:8px 0}
-.list.small .item{font-size:13px}
-
-/* Products list */
-.listaProductos .product-row{display:grid;grid-template-columns:2fr .9fr .9fr .9fr 1fr auto auto;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border)}
-.listaProductos .product-row button{padding:8px}
-
-/* Print / PDF */
-.print{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:14px;margin-top:12px}
-#p-tabla{width:100%;border-collapse:collapse;margin-top:8px}
-#p-tabla th,#p-tabla td{border:1px solid var(--border);padding:6px;text-align:left;font-size:12px}
-.pdf-header{display:flex;justify-content:space-between;gap:12px}
-.pdf-brand{display:flex;gap:12px;align-items:center}
-.pdf-brand img{width:46px;height:46px;border-radius:6px}
-.pdf-brand h2{margin:0}
-.pdf-meta{display:grid;gap:6px;align-items:start;justify-items:end}
-.pdf-totales{display:flex;justify-content:space-between;gap:12px;margin-top:10px}
-.pdf-totales .big{font-size:18px}
-.pdf-foot{margin-top:8px;font-size:12px;color:var(--muted);text-align:right}
-
-/* KPIs */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.kpi{background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center}
-.kpi span{display:block;color:var(--muted);font-size:12px}
-.kpi strong{font-size:16px}
-
-/* Price panel */
-#pricePanel{position:fixed;right:14px;bottom:14px;background:var(--bg);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:12px;max-width:260px;z-index:60}
-#pricePanel .pp-title{font-weight:700;margin-bottom:8px}
-#pricePanel .pp-row{display:flex;justify-content:space-between;border-bottom:1px dashed var(--border);padding:4px 0}
-
-/* ====== Paletas accesibles (4) ====== */
-#colorToolbar{
-  position:fixed; bottom:12px; right:12px; z-index:9999;
-  display:flex; gap:6px; background:rgba(255,255,255,.8);
-  border:1px solid var(--border); border-radius:8px; padding:6px 10px; 
-  box-shadow:0 2px 5px rgba(0,0,0,.2); backdrop-filter:blur(6px);
-}
-#colorToolbar button{
-  width:28px; height:28px; border-radius:50%; border:2px solid #111; cursor:pointer;
-  transition:transform .2s; outline:none;
-}
-#colorToolbar button:hover{ transform:scale(1.15); }
-#colorToolbar .dark-toggle{
-  width:auto; padding:0 10px; font-size:13px; font-weight:600; border-radius:6px;
-  background:#111; color:#fff; border:1px solid #111;
+/* ==============================
+   ✨ Listas y productos
+   ============================== */
+.list .item{display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed var(--border);padding:8px 0;}
+.list.small .item{font-size:13px;}
+.listaProductos .product-row{
+  display:grid;
+  grid-template-columns:2fr .9fr .9fr .9fr 1fr auto auto;
+  gap:8px;
+  padding:6px 0;
+  border-bottom:1px dashed var(--border);
 }
 
-/* Mejor contraste botones */
-button, .tab { color:#fff; }
-button.ghost, .tab:not(.active){ color:#111; background:#f8f8f8; }
+/* ==============================
+   ✨ PDF / Impresión
+   ============================== */
+.print{
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:14px;
+  margin-top:12px;
+}
+#p-tabla{width:100%;border-collapse:collapse;margin-top:8px;}
+#p-tabla th,#p-tabla td{
+  border:1px solid var(--border);
+  padding:6px;
+  text-align:left;
+  font-size:12px;
+}
+.pdf-header{display:flex;justify-content:space-between;gap:12px;}
+.pdf-brand{display:flex;gap:12px;align-items:center;}
+.pdf-brand img{width:46px;height:46px;border-radius:6px;}
+.pdf-brand h2{margin:0;}
+.pdf-meta{display:grid;gap:6px;align-items:start;justify-items:end;}
+.pdf-totales{display:flex;justify-content:space-between;gap:12px;margin-top:10px;}
+.pdf-totales .big{font-size:18px;}
+.pdf-foot{margin-top:8px;font-size:12px;color:var(--muted);text-align:right;}
 
+/* ==============================
+   ✨ KPIs y panel resumen
+   ============================== */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.kpi{
+  background:var(--row);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:10px;
+  text-align:center;
+}
+.kpi span{display:block;color:var(--muted);font-size:12px;}
+.kpi strong{font-size:16px;}
+
+/* ==============================
+   ✨ Animaciones y extras
+   ============================== */
+.fade-in{animation:fadeIn .4s ease-in;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
