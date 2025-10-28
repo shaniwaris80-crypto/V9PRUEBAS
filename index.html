@@ -1,228 +1,356 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ARSLAN PRO V10.4 — KIWI Edition</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-<!-- Supabase -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
+
+  <!-- Fuente -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Estilos -->
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
-<header class="topbar">
-  <div class="brand">
-    <img src="logo.png" alt="KIWI" />
-    <span>ARSLAN PRO <small>V10.4</small></span>
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="brand">
+      <img src="https://i.imgur.com/0Xr7mZk.png" alt="Kiwi" style="width:28px;height:28px;border-radius:6px" />
+      <span>ARSLAN PRO</span>
+      <small>V10.4 · KIWI</small>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="factura">Factura</button>
+      <button class="tab" data-tab="clientes">Clientes</button>
+      <button class="tab" data-tab="productos">Productos</button>
+      <button class="tab" data-tab="facturas">Historial</button>
+      <button class="tab" data-tab="pendientes">Pendientes</button>
+      <button class="tab" data-tab="ventas">Ventas</button>
+      <button class="tab" data-tab="resumen">Resumen</button>
+      <button id="btnSync" class="tab" title="Sincronizar Supabase">🔄 Sync</button>
+      <span id="syncBadge" class="badge warn" style="margin-left:6px;display:none">Sincronizando…</span>
+      <span id="syncOk" class="badge ok" style="margin-left:6px;display:none">Sync OK</span>
+      <span id="syncErr" class="badge bad" style="margin-left:6px;display:none">Error Sync</span>
+    </div>
   </div>
-  <nav class="tabs">
-    <button class="tab active" data-tab="factura">Factura</button>
-    <button class="tab" data-tab="clientes">Clientes</button>
-    <button class="tab" data-tab="facturas">Facturas</button>
-    <button class="tab" data-tab="productos">Productos</button>
-    <button class="tab" data-tab="pendientes">Pendientes</button>
-    <button class="tab" data-tab="ventas">Ventas</button>
-    <button class="tab" data-tab="resumen">Resumen</button>
-  </nav>
-</header>
 
-<main class="container">
-
-  <!-- FACTURA -->
-  <section class="panel active" data-tab-panel="factura">
-    <div class="grid2">
-      <div class="card">
-        <h3>Proveedor</h3>
-        <input id="provNombre" placeholder="Nombre proveedor" />
-        <input id="provNif" placeholder="NIF/CIF" />
-        <input id="provDir" placeholder="Dirección" />
-        <input id="provTel" placeholder="Teléfono" />
-        <input id="provEmail" placeholder="Email" />
-      </div>
-      <div class="card">
-        <h3>Cliente</h3>
-        <select id="selCliente"></select>
-        <input id="cliNombre" placeholder="Nombre cliente" />
-        <input id="cliNif" placeholder="NIF/CIF" />
-        <input id="cliDir" placeholder="Dirección" />
-        <input id="cliTel" placeholder="Teléfono" />
-        <input id="cliEmail" placeholder="Email" />
-        <div class="row">
-          <button id="btnNuevoCliente" class="ghost">Abrir listado</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="title-row">
-        <h3>Cuadro de cálculo</h3>
-        <div class="row">
-          <button id="btnAddLinea">+ Añadir línea</button>
-          <button id="btnVaciarLineas" class="ghost">Vaciar</button>
-        </div>
-      </div>
-
-      <datalist id="productNamesList"></datalist>
-
-      <div class="table-wrap">
-        <table class="calc-table">
-          <thead>
-            <tr>
-              <th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto (kg)</th><th>Tara (kg)</th><th>Neto (kg)</th><th>Precio</th><th>Origen</th><th>Importe</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="lineasBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="grid3">
-      <div class="card">
-        <h3>💶 Totales factura</h3>
-        <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10 %</label>
-        <label class="check"><input type="checkbox" id="chkIvaIncluido" checked /> IVA 4 % incluido (informativo)</label>
-        <div class="totals-grid">
-          <div>Subtotal</div><div id="subtotal">0,00 €</div>
-          <div>Transporte</div><div id="transp">0,00 €</div>
-          <div>IVA (4 %)</div><div id="iva">0,00 €</div>
-          <div class="big">TOTAL</div><div class="big" id="total">0,00 €</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3>Pagos</h3>
-        <div class="row">
-          <input id="inpPagoParcial" type="number" step="0.01" placeholder="Importe parcial" />
-          <button id="btnAddPago" class="ghost">+ Añadir pago</button>
-        </div>
-        <div id="listaPagos" class="list small"></div>
-        <label class="mt8">Pagado manual <input id="pagado" type="number" step="0.01" /></label>
-        <label>Estado
-          <select id="estado">
-            <option value="pendiente">Impagada</option>
-            <option value="parcial">Parcial</option>
-            <option value="pagado">Pagada</option>
-          </select>
-        </label>
-        <label>Método
-          <select id="metodoPago">
-            <option>Efectivo</option><option>Tarjeta</option><option>Transferencia</option>
-          </select>
-        </label>
-        <div class="pendiente">Pendiente: <strong id="pendiente">0,00 €</strong></div>
-      </div>
-
-      <div class="card">
-        <h3>Observaciones</h3>
-        <textarea id="observaciones" rows="6" placeholder="Notas / condiciones"></textarea>
-      </div>
-    </div>
-
-    <div class="row actions">
-      <button id="btnGuardar">💾 Guardar</button>
-      <button id="btnImprimir">🖨️ Generar PDF</button>
-      <button id="btnNueva" class="ghost">🧾 Nueva</button>
-    </div>
-
-    <div id="printArea" class="print">
-      <div class="pdf-header">
-        <div class="pdf-brand">
-          <img src="logo.png" alt="Kiwi" />
-          <div>
-            <h2>FACTURA</h2>
-            <div id="p-prov"></div>
+  <div class="container">
+    <!-- FACTURA -->
+    <section class="panel active" data-tab-panel="factura">
+      <div class="grid2">
+        <!-- Proveedor -->
+        <div class="card">
+          <div class="title-row">
+            <h3>Proveedor</h3>
+          </div>
+          <div class="grid2">
+            <input id="provNombre" placeholder="Nombre proveedor" />
+            <input id="provNif" placeholder="NIF/CIF" />
+            <input id="provDir" placeholder="Dirección" />
+            <input id="provTel" placeholder="Teléfono" />
+            <input id="provEmail" placeholder="Email" />
           </div>
         </div>
-        <div class="pdf-meta">
-          <div><span>Nº:</span><strong id="p-num"></strong></div>
-          <div><span>Fecha:</span><strong id="p-fecha"></strong></div>
-          <div><span>Cliente:</span><div id="p-cli"></div></div>
-          <canvas id="p-qr" width="92" height="92"></canvas>
+
+        <!-- Cliente -->
+        <div class="card">
+          <div class="title-row">
+            <h3>Cliente</h3>
+            <div class="row">
+              <select id="selCliente" style="min-width:240px"></select>
+              <button id="btnNuevoCliente">+ Nuevo</button>
+            </div>
+          </div>
+          <div class="grid2">
+            <input id="cliNombre" placeholder="Nombre cliente" />
+            <input id="cliNif" placeholder="NIF/CIF" />
+            <input id="cliDir" placeholder="Dirección" />
+            <input id="cliTel" placeholder="Teléfono" />
+            <input id="cliEmail" placeholder="Email" />
+          </div>
         </div>
       </div>
-      <table id="p-tabla"><thead>
-        <tr><th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th></tr>
-      </thead><tbody></tbody></table>
-      <div class="pdf-totales">
-        <div>
-          <div>Subtotal: <strong id="p-sub"></strong></div>
-          <div>Transporte: <strong id="p-tra"></strong></div>
-          <div>IVA (4 %): <strong id="p-iva"></strong></div>
-          <div class="big">Total: <strong id="p-tot"></strong></div>
+
+      <!-- Cálculo -->
+      <div class="card">
+        <div class="title-row">
+          <h3>Productos de la factura</h3>
+          <div class="row">
+            <input id="buscarProducto" class="search" placeholder="Buscar en catálogo…" />
+            <button id="btnAddLinea">+ Línea</button>
+            <button id="btnVaciarLineas" class="ghost">Vaciar</button>
+          </div>
         </div>
-        <div>
-          <div>Estado: <strong id="p-estado"></strong></div>
-          <div>Método: <strong id="p-metodo"></strong></div>
-          <div>Obs.: <span id="p-obs"></span></div>
+
+        <div class="table-wrap">
+          <table class="calc-table">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Modo</th>
+                <th>Cant.</th>
+                <th>Bruto</th>
+                <th>Tara</th>
+                <th>Neto</th>
+                <th>Precio</th>
+                <th>Origen</th>
+                <th>Importe</th>
+                <th>—</th>
+              </tr>
+            </thead>
+            <tbody id="lineasBody"></tbody>
+          </table>
+        </div>
+
+        <datalist id="productNamesList"></datalist>
+
+        <div class="grid3 mt8">
+          <div class="card">
+            <div class="title-row"><h4>Pagos parciales</h4></div>
+            <div class="row">
+              <input id="inpPagoParcial" type="number" step="0.01" placeholder="Importe parcial" />
+              <button id="btnAddPago">Añadir</button>
+            </div>
+            <div class="list small" id="listaPagos" style="margin-top:8px"></div>
+          </div>
+
+          <div class="card">
+            <div class="title-row"><h4>Opciones</h4></div>
+            <div class="row">
+              <label><input type="checkbox" id="chkTransporte" /> 10% transporte</label>
+              <label><input type="checkbox" id="chkIvaIncluido" checked /> IVA incluido (informativo)</label>
+            </div>
+            <div class="row">
+              <select id="estado">
+                <option value="pendiente">Pendiente</option>
+                <option value="parcial">Parcial</option>
+                <option value="pagado">Pagado</option>
+              </select>
+              <select id="metodoPago">
+                <option>Efectivo</option>
+                <option>Tarjeta</option>
+                <option>Transferencia</option>
+              </select>
+              <input id="pagado" type="number" step="0.01" placeholder="Importe pagado manual" />
+            </div>
+            <textarea id="observaciones" rows="3" placeholder="Observaciones…"></textarea>
+          </div>
+
+          <div class="card">
+            <div class="title-row"><h4>Totales</h4></div>
+            <div class="totals-grid">
+              <div>Subtotal</div><div id="subtotal" class="big">0,00 €</div>
+              <div>Transporte</div><div id="transp" class="big">0,00 €</div>
+              <div>IVA 4% (info)</div><div id="iva" class="big">0,00 €</div>
+              <div>Total</div><div id="total" class="big">0,00 €</div>
+              <div>Pendiente</div><div id="pendiente" class="big">0,00 €</div>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button id="btnGuardar">💾 Guardar factura</button>
+              <button id="btnNueva" class="ghost">Nueva</button>
+              <button id="btnImprimir">🖨️ PDF</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Área de impresión / PDF -->
+        <div id="printArea" class="print">
+          <div class="pdf-header">
+            <div class="pdf-brand">
+              <img id="pdf-kiwi" src="https://i.imgur.com/0Xr7mZk.png" alt="Kiwi" />
+              <div>
+                <h2 id="pdf-title">FACTURA</h2>
+                <div>Nº: <strong id="p-num">(Sin guardar)</strong></div>
+                <div>Fecha: <span id="p-fecha"></span></div>
+              </div>
+            </div>
+            <div class="pdf-meta">
+              <div>
+                <strong>Proveedor</strong>
+                <div id="p-prov"></div>
+              </div>
+              <div>
+                <strong>Cliente</strong>
+                <div id="p-cli"></div>
+              </div>
+            </div>
+          </div>
+
+          <table id="p-tabla">
+            <thead>
+              <tr>
+                <th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+
+          <div class="pdf-totales">
+            <div>
+              <div>Estado: <strong id="p-estado"></strong></div>
+              <div>Método: <strong id="p-metodo"></strong></div>
+              <div>Obs.: <span id="p-obs"></span></div>
+            </div>
+            <div>
+              <div>Subtotal: <strong id="p-sub"></strong></div>
+              <div>Transporte: <strong id="p-tra"></strong></div>
+              <div>IVA 4% (info): <strong id="p-iva"></strong></div>
+              <div class="big">TOTAL: <strong id="p-tot"></strong></div>
+            </div>
+          </div>
+
+          <div class="row" style="align-items:center;justify-content:flex-end;margin-top:8px">
+            <canvas id="p-qr" width="92" height="92" style="border:1px solid var(--border);border-radius:6px"></canvas>
+          </div>
+          <div id="pdf-foot-note" class="pdf-foot">IVA incluido en los precios.</div>
         </div>
       </div>
-      <div class="pdf-foot" id="pdf-foot-note">IVA incluido en los precios.</div>
-    </div>
-  </section>
+    </section>
 
-  <!-- CLIENTES -->
-  <section class="panel" data-tab-panel="clientes">
-    <div class="card">
-      <div class="title-row">
-        <h3>Clientes</h3>
-        <div class="row">
-          <input id="buscarCliente" class="search" placeholder="Buscar…" />
-          <button id="btnAddCliente">+ Añadir</button>
-          <button id="btnExportClientes" class="ghost">⤓ Exportar</button>
-          <button id="btnImportClientes" class="ghost">⤒ Importar</button>
-          <button id="btnSyncClientes" class="ghost">🔁 Sincronizar con Supabase</button>
+    <!-- CLIENTES -->
+    <section class="panel" data-tab-panel="clientes">
+      <div class="card">
+        <div class="title-row">
+          <h3>Clientes</h3>
+          <div class="row">
+            <input id="buscarCliente" class="search" placeholder="Buscar cliente…" />
+            <button id="btnAddCliente">+ Añadir cliente</button>
+            <button id="btnExportClientes" class="ghost">Exportar JSON</button>
+            <button id="btnImportClientes" class="ghost">Importar JSON</button>
+          </div>
+        </div>
+        <div id="listaClientes" class="list"></div>
+      </div>
+    </section>
+
+    <!-- PRODUCTOS -->
+    <section class="panel" data-tab-panel="productos">
+      <div class="card">
+        <div class="title-row">
+          <h3>Productos</h3>
+          <div class="row">
+            <input id="buscarProducto2" class="search" placeholder="Buscar producto…" />
+            <button id="btnExportProductos" class="ghost">Exportar JSON</button>
+            <button id="btnImportProductos" class="ghost">Importar JSON</button>
+          </div>
+        </div>
+        <div id="listaProductos" class="listaProductos"></div>
+      </div>
+    </section>
+
+    <!-- HISTORIAL FACTURAS -->
+    <section class="panel" data-tab-panel="facturas">
+      <div class="card">
+        <div class="title-row">
+          <h3>Historial de facturas</h3>
+          <div class="row">
+            <input id="buscaCliente" class="search" placeholder="Filtrar por cliente…" />
+            <select id="filtroEstado">
+              <option value="todas">Todas</option>
+              <option value="pendiente">Pendientes</option>
+              <option value="parcial">Parciales</option>
+              <option value="pagado">Pagadas</option>
+            </select>
+            <button id="btnExportFacturas" class="ghost">Exportar JSON</button>
+            <button id="btnImportFacturas" class="ghost">Importar JSON</button>
+            <button id="btnExportVentas" class="ghost">Exportar ventas (CSV)</button>
+          </div>
+        </div>
+        <div id="listaFacturas" class="list"></div>
+      </div>
+    </section>
+
+    <!-- PENDIENTES -->
+    <section class="panel" data-tab-panel="pendientes">
+      <div class="card">
+        <div class="title-row">
+          <h3>Deuda por cliente</h3>
+          <div>Total global: <strong id="resGlobal">0,00 €</strong></div>
+        </div>
+        <div class="table-wrap">
+          <table class="calc-table" id="tblPendientes">
+            <thead>
+              <tr><th>Cliente</th><th>#</th><th>Pendiente</th><th>Última</th><th>Acción</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
-      <div id="listaClientes" class="list"></div>
-    </div>
-  </section>
+    </section>
 
-  <!-- FACTURAS -->
-  <section class="panel" data-tab-panel="facturas">
-    <div class="card">
-      <div class="title-row">
-        <h3>Facturas</h3>
-        <div class="row">
-          <select id="filtroEstado">
-            <option value="todas">Todas</option>
-            <option value="pendiente">Impagadas</option>
-            <option value="parcial">Parciales</option>
-            <option value="pagado">Pagadas</option>
-          </select>
-          <input id="buscaCliente" class="search" placeholder="Buscar por cliente…" />
-          <button id="btnExportFacturas" class="ghost">⤓ Exportar</button>
-          <button id="btnImportFacturas" class="ghost">⤒ Importar</button>
+    <!-- VENTAS -->
+    <section class="panel" data-tab-panel="ventas">
+      <div class="grid3">
+        <div class="card kpi"><span>Hoy</span><strong id="vHoy">0,00 €</strong></div>
+        <div class="card kpi"><span>Semana</span><strong id="vSemana">0,00 €</strong></div>
+        <div class="card kpi"><span>Mes</span><strong id="vMes">0,00 €</strong></div>
+        <div class="card kpi"><span>Total</span><strong id="vTotal">0,00 €</strong></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="title-row"><h3>Ventas diarias (7d)</h3></div>
+          <canvas id="chartDiario" height="140"></canvas>
+        </div>
+        <div class="card">
+          <div class="title-row"><h3>Ventas mensuales (12m)</h3></div>
+          <canvas id="chartMensual" height="140"></canvas>
         </div>
       </div>
-      <div id="listaFacturas" class="list"></div>
-    </div>
-  </section>
 
-  <!-- PRODUCTOS -->
-  <section class="panel" data-tab-panel="productos">
-    <div class="card">
-      <div class="title-row">
-        <h3>Productos</h3>
-        <div class="row">
-          <input id="buscarProducto" class="search" placeholder="Buscar…" />
-          <button id="btnAddProducto">+ Añadir</button>
-          <button id="btnExportProductos" class="ghost">⤓ Exportar</button>
-          <button id="btnImportProductos" class="ghost">⤒ Importar</button>
-          <button id="btnSyncProductos" class="ghost">🔁 Sincronizar con Supabase</button>
+      <div class="card">
+        <div class="title-row"><h3>Top productos (€)</h3></div>
+        <canvas id="chartTop" height="160"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="title-row"><h3>Ventas por cliente</h3></div>
+        <div class="table-wrap">
+          <table class="calc-table" id="tblVentasCliente">
+            <thead>
+              <tr><th>Cliente</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
-      <div id="listaProductos" class="listaProductos"></div>
-    </div>
-  </section>
+    </section>
 
-  <!-- ... (pendientes, ventas, resumen igual que antes) ... -->
+    <!-- RESUMEN (duplicamos KPIs visibles) -->
+    <section class="panel" data-tab-panel="resumen">
+      <div class="grid3">
+        <div class="card kpi"><span>Hoy</span><strong id="rHoy">0,00 €</strong></div>
+        <div class="card kpi"><span>Semana</span><strong id="rSemana">0,00 €</strong></div>
+        <div class="card kpi"><span>Mes</span><strong id="rMes">0,00 €</strong></div>
+        <div class="card kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
+      </div>
 
-</main>
+      <div class="card">
+        <div class="title-row">
+          <h3>Copias de seguridad</h3>
+          <div class="row">
+            <button id="btnBackup">Descargar backup JSON</button>
+            <button id="btnRestore" class="ghost">Restaurar backup JSON</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
 
-<script src="app.js"></script>
+  <!-- Panel historial de precios -->
+  <div id="pricePanel" hidden>
+    <div class="pp-title">Historial de precios</div>
+    <div id="ppBody"></div>
+  </div>
+
+  <!-- Librerías CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
+  <!-- Lógica principal (módulo para poder usar import de Supabase) -->
+  <script type="module" src="app.js"></script>
 </body>
 </html>
