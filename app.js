@@ -389,7 +389,10 @@ function recalc() {
   fillPrint(ls,{subtotal,transporte,iva,total},null,null);
   drawResumen(); // KPIs rápidos
 }
-['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id => {   const el = document.getElementById(id);   if (el) el.addEventListener('input', recalc); });
+['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', recalc);
+});
 
 function fillPrint(lines, totals, _temp=null, f=null){
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
