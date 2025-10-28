@@ -1,4 +1,3 @@
-/* style.css */
 /* ===========================================================
    ARSLAN PRO V10.4 KIWI Edition — style.css (Pro Contrast)
    - 4 paletas profesionales (Kiwi, Graphite, Sand, Mint)
@@ -21,12 +20,6 @@
   --info:#2563eb;
 }
 
-/* ---------- Paletas activas ---------- */
-:root[data-theme='kiwi']{--accent:#16a34a;--accent-dark:#15803d}
-:root[data-theme='graphite']{--accent:#3b82f6;--accent-dark:#1d4ed8}
-:root[data-theme='sand']{--accent:#ca8a04;--accent-dark:#a16207}
-:root[data-theme='mint']{--accent:#059669;--accent-dark:#047857}
-
 /* ---------- Modo oscuro automático ---------- */
 @media (prefers-color-scheme: dark){
   :root {
@@ -37,7 +30,7 @@
     --row:#1e293b;
     --shadow:0 6px 18px rgba(0,0,0,0.6);
     --accent:#22c55e;
-    --accent-dark:#16a34a;
+    --accent-dark:#15803d;
   }
 }
 
@@ -174,13 +167,11 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .print{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:14px;margin-top:12px}
 #p-tabla{width:100%;border-collapse:collapse;margin-top:8px}
 #p-tabla th,#p-tabla td{border:1px solid var(--border);padding:6px;text-align:left;font-size:12px}
-.pdf-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
-.pdf-brand{display:flex;gap:10px;align-items:center}
-.pdf-brand img{width:40px;height:40px;border-radius:6px;border:1px solid var(--border)}
-.pdf-title{font-weight:700;font-size:20px}
+.pdf-header{display:flex;justify-content:space-between;gap:12px}
+.pdf-brand{display:flex;gap:12px;align-items:center}
+#pdf-kiwi{flex:0 0 auto}
+#pdf-title{margin:0 0 6px 0;font-size:20px;letter-spacing:.5px}
 .pdf-meta{display:grid;gap:6px;align-items:start;justify-items:end}
-.pdf-prov{margin-top:6px}
-.pdf-prov-inner{font-size:12px;color:var(--text)}
 .pdf-totales{display:flex;justify-content:space-between;gap:12px;margin-top:10px}
 .pdf-totales .big{font-size:18px}
 .pdf-foot{margin-top:8px;font-size:12px;color:var(--muted);text-align:right}
@@ -209,6 +200,12 @@ button:disabled{opacity:.6;cursor:not-allowed}
 html,body{transition:background-color .4s,color .4s}
 button,select,input{transition:background-color .3s,color .3s,border-color .3s}
 
+/* ---------- Modo oscuro forzado ---------- */
+body.dark-mode{
+  background-color:var(--bg)!important;
+  color:var(--text)!important;
+}
+
 /* ---------- Toolbar paletas ---------- */
 #colorToolbar{
   position:fixed;bottom:12px;right:12px;z-index:9999;
@@ -224,13 +221,16 @@ button,select,input{transition:background-color .3s,color .3s,border-color .3s}
   width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;
   transition:transform .2s;outline:none;
 }
-#colorToolbar button[title="Kiwi"]{background:#16a34a}
-#colorToolbar button[title="Graphite"]{background:#3b82f6}
-#colorToolbar button[title="Sand"]{background:#ca8a04}
-#colorToolbar button[title="Mint"]{background:#059669}
 #colorToolbar button:hover{transform:scale(1.2)}
 #colorToolbar .dark-toggle{
   width:auto;padding:0 10px;font-size:13px;font-weight:600;
   border-radius:6px;background:#222;color:#fff;
 }
+
+/* ---------- Tema colores visibles ---------- */
+:root[data-theme='kiwi']{--accent:#16a34a;--accent-dark:#15803d}
+:root[data-theme='graphite']{--accent:#3b82f6;--accent-dark:#1d4ed8}
+:root[data-theme='sand']{--accent:#ca8a04;--accent-dark:#a16207}
+:root[data-theme='mint']{--accent:#059669;--accent-dark:#047857}
+
 
