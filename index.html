@@ -1,23 +1,27 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ARSLAN PRO V10.6 — KIWI Cloud (Supabase)</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
-<!-- Libs necesarias -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-<!-- Supabase JS v2 -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ARSLAN PRO V10.6 — KIWI Cloud</title>
+
+  <!-- Fuente -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- Librerías -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+
+  <!-- Estilos -->
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
 <header class="topbar">
   <div class="brand">
-    <img src="logo-kiwi.png" alt="KIWI" />
+    <!-- Sin logo visible en UI (solo PDF) -->
     <span>ARSLAN PRO <small>V10.6</small></span>
   </div>
   <nav class="tabs">
@@ -62,11 +66,12 @@
       <div class="title-row">
         <h3>Cuadro de cálculo (cuadrícula)</h3>
         <div class="row">
-          <button id="btnAddLinea">+ Añadir línea</button>
+          <button id="btnAddLinea" class="primary">+ Añadir línea</button>
           <button id="btnVaciarLineas" class="ghost">Vaciar</button>
         </div>
       </div>
 
+      <!-- Autocompletado -->
       <datalist id="productNamesList"></datalist>
 
       <div class="table-wrap">
@@ -136,16 +141,16 @@
     </div>
 
     <div class="row actions">
-      <button id="btnGuardar">💾 Guardar</button>
+      <button id="btnGuardar" class="primary">💾 Guardar</button>
       <button id="btnImprimir">🖨️ Generar PDF</button>
       <button id="btnNueva" class="ghost">🧾 Nueva</button>
     </div>
 
-    <!-- Área PDF (solo se imprime este bloque) -->
+    <!-- Área PDF (solo para render) -->
     <div id="printArea" class="print">
       <div class="pdf-header">
         <div class="pdf-brand">
-          <img src="logo-kiwi.png" alt="Kiwi" />
+          <img id="pdfLogo" class="pdf-logo" alt="Kiwi" />
           <div>
             <h2>FACTURA</h2>
             <div id="p-prov"></div>
@@ -185,6 +190,7 @@
       <div class="pdf-foot" id="pdf-foot-note">IVA incluido en los precios.</div>
     </div>
 
+    <!-- Historial de precios -->
     <aside id="pricePanel" hidden>
       <div class="pp-title">Historial de precios</div>
       <div id="ppBody"></div>
@@ -198,7 +204,7 @@
         <h3>Clientes</h3>
         <div class="row">
           <input id="buscarCliente" class="search" placeholder="Buscar cliente…" />
-          <button id="btnAddCliente">+ Añadir</button>
+          <button id="btnAddCliente" class="primary">+ Añadir</button>
           <button id="btnExportClientes" class="ghost">⤓ Exportar</button>
           <button id="btnImportClientes" class="ghost">⤒ Importar</button>
         </div>
@@ -235,7 +241,7 @@
         <h3>Productos</h3>
         <div class="row">
           <input id="buscarProducto" class="search" placeholder="Buscar producto…" />
-          <button id="btnAddProducto">+ Añadir</button>
+          <button id="btnAddProducto" class="primary">+ Añadir</button>
           <button id="btnExportProductos" class="ghost">⤓ Exportar</button>
           <button id="btnImportProductos" class="ghost">⤒ Importar</button>
         </div>
@@ -321,14 +327,22 @@
         <div class="kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
       </div>
       <div class="row actions mt8">
-        <button id="btnBackup">Backup</button>
+        <button id="btnBackup" class="primary">Backup</button>
         <button id="btnRestore" class="ghost">Restaurar</button>
-        <button id="btnSyncNow" class="ghost">🔄 Sincronizar ahora</button>
       </div>
     </div>
   </section>
 
 </main>
+
+<!-- Selector de paletas -->
+<div id="themeBar" class="theme-bar" title="Tema">
+  <button data-theme="kiwi"    aria-label="Kiwi"></button>
+  <button data-theme="mint"    aria-label="Mint"></button>
+  <button data-theme="sand"    aria-label="Sand"></button>
+  <button data-theme="graphite"aria-label="Graphite"></button>
+  <button id="darkToggle" class="dark-toggle" aria-label="Oscuro/Claro">🌞/🌙</button>
+</div>
 
 <script src="app.js"></script>
 </body>
