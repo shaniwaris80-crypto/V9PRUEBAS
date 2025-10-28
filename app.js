@@ -1011,4 +1011,147 @@ function drawResumen(){ drawKPIs(); }
   document.addEventListener('DOMContentLoaded',()=>renderClientes());
 })();
 </script>
+/* =====================================================
+   ARSLAN PRO KIWI — FIX SEGURO CLIENTES V10.4 (SIN <script>)
+   ===================================================== */
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    const KEY = 'arslan.clientes';
+    const sel = document.getElementById('selCliente');
+    const lista = document.getElementById('listaClientes');
+    const addBtn = document.getElementById('btnAddCliente');
+    const buscar = document.getElementById('buscarCliente');
+    const f = {
+      nombre: document.getElementById('cliNombre'),
+      nif: document.getElementById('cliNif'),
+      dir: document.getElementById('cliDir'),
+      tel: document.getElementById('cliTel'),
+      email: document.getElementById('cliEmail'),
+    };
 
+    if (!sel) return; // evita bloqueo si aún no existe
+
+    // ---------- Helpers ----------
+    const read = () => {
+      try { return JSON.parse(localStorage.getItem(KEY) || '[]'); }
+      catch { return []; }
+    };
+    const save = list => localStorage.setItem(KEY, JSON.stringify(list));
+    const uid = () => Date.now() + Math.random().toString(16).slice(2);
+
+    const ensureIds = list => {
+      let changed = false;
+      list.forEach(c => {
+        if (!c.id) { c.id = uid(); changed = true; }
+      });
+      if (changed) save(list);
+      return list;
+    };
+
+    // ---------- Render select + lista ----------
+    function fillSelect() {
+      const clientes = ensureIds(read());
+      sel.innerHTML = '<option value="">-- Selecciona cliente --</option>';
+      clientes.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id;
+        o.textContent = c.nombre;
+        sel.appendChild(o);
+      });
+      const activo = localStorage.getItem('arslan.cliActivo');
+      if (activo) { sel.value = activo; showCliente(activo); }
+    }
+
+    function renderClientes(filtro = '') {
+      if (!lista) return;
+      const list = ensureIds(read());
+      lista.innerHTML = '';
+      list
+        .filter(c => c.nombre.toLowerCase().includes(filtro.toLowerCase()))
+        .forEach(c => {
+          const div = document.createElement('div');
+          div.className = 'item';
+          div.innerHTML = `
+            <div class="main">${c.nombre}</div>
+            <div class="sub">${c.nif || ''}</div>
+            <div class="actions">
+              <button data-edit="${c.id}" class="btn-edit">✎</button>
+              <button data-del="${c.id}" class="btn-del">🗑</button>
+            </div>`;
+          lista.appendChild(div);
+        });
+    }
+
+    function showCliente(id) {
+      const c = read().find(x => String(x.id) === String(id));
+      if (!c) {
+        Object.values(f).forEach(el => el && (el.value = ''));
+        return;
+      }
+      if (f.nombre) f.nombre.value = c.nombre || '';
+      if (f.nif) f.nif.value = c.nif || '';
+      if (f.dir) f.dir.value = c.direccion || '';
+      if (f.tel) f.tel.value = c.telefono || '';
+      if (f.email) f.email.value = c.email || '';
+    }
+
+    function borrarCliente(id) {
+      if (!confirm('¿Eliminar este cliente?')) return;
+      const list = read().filter(x => x.id !== id);
+      save(list);
+      renderClientes();
+      fillSelect();
+    }
+
+    // ---------- Eventos ----------
+    addBtn?.addEventListener('click', () => {
+      const nombre = prompt('Nombre del cliente nuevo:');
+      if (!nombre) return;
+      const list = ensureIds(read());
+      if (list.some(c => c.nombre.trim().toLowerCase() === nombre.trim().toLowerCase())) {
+        alert('⚠️ Ya existe un cliente con ese nombre.');
+        return;
+      }
+      const nuevo = { id: uid(), nombre: nombre.trim(), nif: '', direccion: '', telefono: '', email: '' };
+      list.push(nuevo);
+      save(list);
+      renderClientes();
+      fillSelect();
+      sel.value = nuevo.id;
+      showCliente(nuevo.id);
+    });
+
+    lista?.addEventListener('click', e => {
+      const id = e.target.dataset.edit || e.target.dataset.del;
+      if (!id) return;
+      if (e.target.dataset.edit) {
+        const list = read();
+        const c = list.find(x => x.id === id);
+        if (!c) return;
+        const nuevoNombre = prompt('Editar nombre del cliente:', c.nombre);
+        if (!nuevoNombre) return;
+        c.nombre = nuevoNombre.trim();
+        save(list);
+        renderClientes();
+        fillSelect();
+      } else if (e.target.dataset.del) {
+        borrarCliente(id);
+      }
+    });
+
+    sel.addEventListener('change', e => {
+      const id = e.target.value;
+      showCliente(id);
+      localStorage.setItem('arslan.cliActivo', id);
+    });
+
+    buscar?.addEventListener('input', e => renderClientes(e.target.value));
+
+    // ---------- Start ----------
+    fillSelect();
+    renderClientes();
+
+  } catch (err) {
+    console.error('❌ Error en módulo de clientes:', err);
+  }
+});
