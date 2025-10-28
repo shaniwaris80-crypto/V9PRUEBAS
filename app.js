@@ -1,11 +1,16 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full, estable)
-   - Misma base funcional + mejoras de totales, PDF, UX rápido
-   - 4 paletas, sin splash, logo kiwi solo en PDF, "FACTURA"
-   - Clientes: selección segura por ID (evita datos cruzados)
+   ARSLAN PRO V10.6 — KIWI Cloud (Supabase)
+   - Base estable V10.4/10.5 + mejoras y Supabase
+   - Sin login: sincroniza en segundo plano
+   - Totales corregidos, PDF pro, historial, KPIs, backups
 ======================================================= */
 (function(){
 "use strict";
+
+/* ---------- SUPABASE (Cloud Memory) ---------- */
+const SUPABASE_URL = 'https://ajnvkscciswbzexppkqa.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqbnZrc2NjaXN3YnpleHBwa3FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE2NDQzMzIsImV4cCI6MjA3NzIyMDMzMn0.v80vhgpWa-NNTQ2GJxQhWzmUe7ErOrSNrDKI0Y0WtX8';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ---------- HELPERS ---------- */
 const $  = (s,root=document)=>root.querySelector(s);
@@ -16,19 +21,19 @@ const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':
 const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
-const uid = ()=>'c'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 
 /* ---------- KEYS ---------- */
-const K_CLIENTES='arslan_v104_clientes';
-const K_PRODUCTOS='arslan_v104_productos';
-const K_FACTURAS='arslan_v104_facturas';
-const K_PRICEHIST='arslan_v104_pricehist';
+const K_CLIENTES='arslan_v106_clientes';
+const K_PRODUCTOS='arslan_v106_productos';
+const K_FACTURAS='arslan_v106_facturas';
+const K_PRICEHIST='arslan_v106_pricehist';
 
 /* ---------- ESTADO ---------- */
 let clientes  = load(K_CLIENTES, []);
 let productos = load(K_PRODUCTOS, []);
 let facturas  = load(K_FACTURAS, []);
 let priceHist = load(K_PRICEHIST, {});
+let pagosTemp = []; // {date, amount}
 
 function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
@@ -43,45 +48,38 @@ function switchTab(id){
 }
 $$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
 
-/* ---------- SEED DATA ---------- */
+/* ---------- SEEDERS ---------- */
 function uniqueByName(arr){
   const map=new Map();
   arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,c); });
   return [...map.values()];
 }
-function ensureClienteIds(){
-  clientes.forEach(c=>{ if(!c.id) c.id=uid(); });
-}
 function seedClientesIfEmpty(){
-  if(clientes.length) return ensureClienteIds();
+  if(clientes.length) return;
   clientes = uniqueByName([
-    {id:uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
-    {id:uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
-    {id:uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
-    {id:uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
-    {id:uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {id:uid(), nombre:'Hotel Cordon'},
-    {id:uid(), nombre:'Vaivén Hostelería'},
-    {id:uid(), nombre:'Grupo Resicare'},
-    {id:uid(), nombre:'Carlos Alameda Peralta & Seis Más'},
-    {id:uid(), nombre:'Tabalou Development SLU', nif:'ES B09567769'},
-    {id:uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
-    {id:uid(), nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
-    {id:uid(), nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
-    {id:uid(), nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
-    {id:uid(), nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
-    {id:uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
-    {id:uid(), nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
-    {id:uid(), nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
-    {id:uid(), nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
-    {id:uid(), nombre:'Angela', dir:'C/ Madrid, Burgos'},
-    {id:uid(), nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
-    {id:uid(), nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
-    {id:uid(), nombre:'Domingo'},
-    {id:uid(), nombre:'Bar Tropical'},
-    {id:uid(), nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
-    {id:uid(), nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
-    {id:uid(), nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
+    {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
+    {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
+    {nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
+    {nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
+    {nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
+    {nombre:'Hotel Cordon'},{nombre:'Vaivén Hostelería'},{nombre:'Grupo Resicare'},{nombre:'Carlos Alameda Peralta & Seis Más'},
+    {nombre:'Tabalou Development SLU', nif:'ES B09567769'},
+    {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
+    {nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
+    {nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
+    {nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
+    {nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
+    {nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
+    {nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
+    {nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
+    {nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
+    {nombre:'Angela', dir:'C/ Madrid, Burgos'},
+    {nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
+    {nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
+    {nombre:'Domingo'},{nombre:'Bar Tropical'},
+    {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
+    {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
+    {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
   ]);
   save(K_CLIENTES, clientes);
 }
@@ -137,14 +135,13 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI (IDs seguras) ---------- */
-function saveClientes(){ save(K_CLIENTES, clientes); }
+/* ---------- CLIENTES UI ---------- */
+function saveClientes(){ save(K_CLIENTES, clientes); syncClientesToSupabase().catch(console.warn); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  arr.forEach((c)=>{
-    const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt);
+  [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach((c,i)=>{
+    const opt=document.createElement('option'); opt.value=i; opt.textContent=c.nombre||`Cliente ${i+1}`; sel.appendChild(opt);
   });
 }
 function renderClientesLista(){
@@ -154,7 +151,7 @@ function renderClientesLista(){
   const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   const view = q ? arr.filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q)) : arr;
   if(view.length===0){ cont.innerHTML='<div class="item">Sin clientes.</div>'; return; }
-  view.forEach((c)=>{
+  view.forEach((c,idx)=>{
     const row=document.createElement('div'); row.className='item';
     row.innerHTML=`
       <div>
@@ -162,20 +159,20 @@ function renderClientesLista(){
         <div class="muted">${escapeHTML(c.nif||'')} · ${escapeHTML(c.dir||'')}</div>
       </div>
       <div class="row">
-        <button class="ghost" data-e="use" data-id="${c.id}">Usar</button>
-        <button class="ghost" data-e="edit" data-id="${c.id}">Editar</button>
-        <button class="ghost" data-e="del" data-id="${c.id}">Borrar</button>
+        <button class="ghost" data-e="use" data-i="${idx}">Usar</button>
+        <button class="ghost" data-e="edit" data-i="${idx}">Editar</button>
+        <button class="ghost" data-e="del" data-i="${idx}">Borrar</button>
       </div>
     `;
     cont.appendChild(row);
   });
   cont.querySelectorAll('button').forEach(b=>{
-    const id=b.dataset.id;
+    const i=+b.dataset.i;
     b.addEventListener('click', ()=>{
-      const i=clientes.findIndex(x=>x.id===id); if(i<0) return;
       if(b.dataset.e==='use'){
         const c=clientes[i]; if(!c) return;
-        fillClientFields(c); switchTab('factura');
+        $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
+        switchTab('factura');
       }else if(b.dataset.e==='edit'){
         const c=clientes[i];
         const nombre=prompt('Nombre',c.nombre||'')??c.nombre;
@@ -183,19 +180,16 @@ function renderClientesLista(){
         const dir=prompt('Dirección',c.dir||'')??c.dir;
         const tel=prompt('Tel',c.tel||'')??c.tel;
         const email=prompt('Email',c.email||'')??c.email;
-        clientes[i]={...c,nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
+        clientes[i]={nombre,nif,dir,tel,email,updated:todayISO()}; saveClientes(); renderClientesSelect(); renderClientesLista();
       }else{
         if(confirm('¿Eliminar cliente?')){ clientes.splice(i,1); saveClientes(); renderClientesSelect(); renderClientesLista(); }
       }
     });
   });
 }
-function fillClientFields(c){
-  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-}
 
 /* ---------- PRODUCTOS UI ---------- */
-function saveProductos(){ save(K_PRODUCTOS, productos); }
+function saveProductos(){ save(K_PRODUCTOS, productos); syncProductosToSupabase().catch(console.warn); }
 function populateProductDatalist(){
   const dl=$('#productNamesList'); if(!dl) return;
   dl.innerHTML='';
@@ -234,7 +228,7 @@ function renderProductos(){
         const boxKgStr=get('boxKg'); const boxKg=boxKgStr===''?null:parseNum(boxKgStr);
         const priceStr=get('price'); const price=priceStr===''?null:parseNum(priceStr);
         const origin=get('origin')||null;
-        productos[i]={name,mode,boxKg,price,origin}; saveProductos(); populateProductDatalist(); renderProductos();
+        productos[i]={name,mode,boxKg,price,origin,updated:todayISO()}; saveProductos(); populateProductDatalist(); renderProductos();
       }
     });
   });
@@ -327,8 +321,7 @@ function captureLineas(){
 }
 function lineImporte(l){ return (l.mode==='unidad') ? l.qty*l.price : l.net*l.price; }
 
-/* ---------- PAGOS PARCIALES EN UI ---------- */
-let pagosTemp = []; // {date, amount}
+/* ---------- PAGOS PARCIALES ---------- */
 function renderPagosTemp(){
   const list=$('#listaPagos'); if(!list) return;
   list.innerHTML='';
@@ -379,12 +372,12 @@ function recalc(){
     foot.textContent = $('#chkIvaIncluido')?.checked ? 'IVA incluido en los precios.' : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
   }
 
-  fillPrint(ls,{subtotal,transporte,iva,total},null,null);
+  fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
   drawResumen();
 }
 ;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
-function fillPrint(lines, totals, _temp=null, f=null){
+function fillPrint(lines, totals, temp=null, f=null){
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
@@ -426,7 +419,6 @@ function fillPrint(lines, totals, _temp=null, f=null){
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
   $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
-  // QR con datos básicos (igual que antes)
   try{
     const canvas = $('#p-qr');
     const numero = f?.numero || '(Sin guardar)';
@@ -440,7 +432,7 @@ function fillPrint(lines, totals, _temp=null, f=null){
 function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
 function saveFacturas(){ save(K_FACTURAS, facturas); }
 
-$('#btnGuardar')?.addEventListener('click', ()=>{
+$('#btnGuardar')?.addEventListener('click', async ()=>{
   const ls=captureLineas(); if(ls.length===0){ alert('Añade al menos una línea.'); return; }
   const numero=genNumFactura(); const now=todayISO();
   ls.forEach(l=> pushPriceHistory(l.name, l.price));
@@ -451,7 +443,7 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
   const total=unMoney($('#total').textContent);
 
   const manual = parseNum($('#pagado').value||0);
-  const pagos = [...pagosTemp];
+  const pagos = [...pagosTemp]; 
   const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + pagadoParcial;
   const pendiente=Math.max(0,total-pagadoTotal);
@@ -465,13 +457,18 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
     lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
     estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
-    pagos
+    pagos, updated: now
   };
   facturas.unshift(f); saveFacturas();
   pagosTemp = []; renderPagosTemp();
   alert(`Factura ${numero} guardada.`);
   renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
   fillPrint(ls,{subtotal,transporte,iva,total},null,f);
+
+  // Guardar en Supabase (sin login)
+  try{
+    await supabase.from('facturas').insert([{ data: f }]);
+  }catch(e){ console.warn('Supabase insert factura:', e); }
 });
 
 $('#btnNueva')?.addEventListener('click', ()=>{
@@ -482,13 +479,29 @@ $('#btnNueva')?.addEventListener('click', ()=>{
   recalc();
 });
 
-$('#btnImprimir')?.addEventListener('click', ()=>{
-  // Asegurar que la zona PDF está rellenada antes de exportar
+$('#btnImprimir')?.addEventListener('click', async ()=>{
+  // asegurar que la previsualización está actualizada
   recalc();
+
   const element = document.getElementById('printArea');
-  const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
+  const d=new Date(); 
+  const cli = ($('#cliNombre').value||'Cliente').replace(/\s+/g,'');
+  const file=`Factura-${cli}-${fmtDateDMY(d)}.pdf`;
   const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+
+  // Generar y descargar
+  const worker = window.html2pdf().set(opt).from(element).toPdf();
+  const pdf = await worker.output('blob');
   window.html2pdf().set(opt).from(element).save();
+
+  // Subir a Supabase Storage (si existe bucket 'facturas-pdf')
+  try{
+    const numero = $('#p-num').textContent || `FA-${Date.now()}`;
+    const path = `${new Date().toISOString().slice(0,10)}/${numero}.pdf`;
+    await supabase.storage.from('facturas-pdf').upload(path, pdf, { contentType:'application/pdf', upsert:true });
+  }catch(err){
+    console.warn('Storage (facturas-pdf) opcional. Si no existe bucket, ignorar:', err?.message||err);
+  }
 });
 
 /* ---------- LISTA DE FACTURAS ---------- */
@@ -508,7 +521,7 @@ function renderFacturas(){
   if(q) arr=arr.filter(f=>(f.cliente?.nombre||'').toLowerCase().includes(q));
   if(arr.length===0){ cont.innerHTML='<div class="item">No hay facturas.</div>'; return; }
 
-  arr.slice(0,400).forEach((f,idx)=>{
+  arr.slice(0,500).forEach((f,idx)=>{
     const fecha=new Date(f.fecha).toLocaleString();
     const div=document.createElement('div'); div.className='item';
     div.innerHTML=`
@@ -537,6 +550,8 @@ function renderFacturas(){
         f.totals.pagado=tot; f.totals.pendiente=0; f.estado='pagado';
         (f.pagos??=[]).push({date:todayISO(), amount: tot});
         saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+        // actualizar supabase (insert snapshot)
+        supabase.from('facturas').insert([{ data: f }]).catch(()=>{});
       }else if(b.dataset.e==='parcial'){
         const max=f.totals.total-(f.totals.pagado||0);
         const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
@@ -546,6 +561,7 @@ function renderFacturas(){
           f.totals.pendiente=Math.max(0,(f.totals.total||0)-f.totals.pagado);
           f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
           saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+          supabase.from('facturas').insert([{ data: f }]).catch(()=>{});
         }
       }else if(b.dataset.e==='pdf'){
         fillPrint(f.lineas,f.totals,null,f);
@@ -553,7 +569,14 @@ function renderFacturas(){
         const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
         const filename=`Factura-${nombreCliente}-${fmtDateDMY(dt)}.pdf`;
         const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-        window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
+        const worker = window.html2pdf().set(opt).from(document.getElementById('printArea')).toPdf();
+        worker.output('blob').then(async (blob)=>{
+          window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
+          try{
+            const path = `${new Date().toISOString().slice(0,10)}/${f.numero||('FA-'+Date.now())}.pdf`;
+            await supabase.storage.from('facturas-pdf').upload(path, blob, { contentType:'application/pdf', upsert:true });
+          }catch(e){ console.warn('Subida PDF opcional:', e?.message||e); }
+        });
       }
     });
   });
@@ -695,12 +718,21 @@ function renderVentasCliente(){
 }
 
 /* ---------- BACKUP/RESTORE + EXPORTS ---------- */
-$('#btnBackup')?.addEventListener('click', ()=>{
-  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
+$('#btnBackup')?.addEventListener('click', async ()=>{
+  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.6'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+
+  // descarga local
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+
+  // snapshot en Supabase (opcional: tabla facturas ya guarda por factura)
+  try{
+    // subimos a Storage si existe bucket backups-json
+    await supabase.storage.from('backups-json').upload(filename, blob, { contentType:'application/json', upsert:true });
+  }catch(e){ console.warn('Storage backups opcional:', e?.message||e); }
 });
+
 $('#btnRestore')?.addEventListener('click', ()=>{
   const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
   inp.onchange=e=>{
@@ -708,7 +740,7 @@ $('#btnRestore')?.addEventListener('click', ()=>{
     const reader=new FileReader(); reader.onload=()=>{
       try{
         const obj=JSON.parse(reader.result);
-        if(obj.clientes){ clientes=obj.clientes; ensureClienteIds(); }
+        if(obj.clientes) clientes=obj.clientes;
         if(obj.productos) productos=obj.productos;
         if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
@@ -719,11 +751,11 @@ $('#btnRestore')?.addEventListener('click', ()=>{
   };
   inp.click();
 });
-$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr).map(c=>({...c, id:c.id||uid()})); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
-$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
-$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
-$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
+$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v106.json'));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); saveClientes(); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v106.json'));
+$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; saveProductos(); populateProductDatalist(); renderProductos(); } }));
+$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v106.json'));
 $('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; save(K_FACTURAS,facturas); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
 $('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
 
@@ -746,22 +778,22 @@ function exportVentasCSV(){
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/* ---------- EVENTOS GENERALES ---------- */
+/* ---------- BUSCAR/ADD CLIENTE ---------- */
 $('#btnAddLinea')?.addEventListener('click', addLinea);
 $('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
 $('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
 $('#selCliente')?.addEventListener('change', ()=>{
-  const id=$('#selCliente').value; if(!id) return; const c=clientes.find(x=>x.id===id); if(!c) return;
-  fillClientFields(c);
+  const i=$('#selCliente').value; if(i==='') return; const c=clientes[+i]; if(!c) return;
+  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
 });
 $('#btnAddCliente')?.addEventListener('click', ()=>{
   const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
   const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  clientes.push({id:uid(), nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
+  clientes.push({nombre,nif,dir,tel,email,updated:todayISO()}); saveClientes(); renderClientesSelect(); renderClientesLista();
 });
 $('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
-/* ---------- RESUMEN ---------- */
+/* ---------- RENDER ALL ---------- */
 function renderAll(){
   renderClientesSelect(); renderClientesLista();
   populateProductDatalist(); renderProductos(); renderFacturas(); renderPendientes();
@@ -769,74 +801,123 @@ function renderAll(){
 }
 function drawResumen(){ drawKPIs(); }
 
+/* ---------- SUPABASE SYNC (Auto) ---------- */
+/* Tablas esperadas:
+   - clientes (id uuid pk, data jsonb)
+   - productos (id uuid pk, data jsonb)
+   - facturas (id uuid pk, data jsonb)
+*/
+async function syncPullAll(){
+  try{
+    // CLIENTES
+    const c = await supabase.from('clientes').select('data');
+    if(!c.error && Array.isArray(c.data) && c.data.length){
+      // aceptar filas tipo snapshot (array) o fila por entidad (objeto)
+      const arr=[];
+      c.data.forEach(row=>{
+        if(Array.isArray(row.data)) arr.push(...row.data);
+        else if(row.data && typeof row.data==='object' && (row.data.nombre||row.data.nif)) arr.push(row.data);
+      });
+      if(arr.length && arr.length >= (clientes?.length||0)){ clientes = uniqueByName(arr); save(K_CLIENTES, clientes); }
+    }
+    // PRODUCTOS
+    const p = await supabase.from('productos').select('data');
+    if(!p.error && Array.isArray(p.data) && p.data.length){
+      const arr=[];
+      p.data.forEach(row=>{
+        if(Array.isArray(row.data)) arr.push(...row.data);
+        else if(row.data && typeof row.data==='object' && (row.data.name)) arr.push(row.data);
+      });
+      if(arr.length && arr.length >= (productos?.length||0)){ productos = arr; save(K_PRODUCTOS, productos); }
+    }
+    // FACTURAS
+    const f = await supabase.from('facturas').select('data').order('data->>fecha',{ascending:false}).limit(1000);
+    if(!f.error && Array.isArray(f.data) && f.data.length){
+      const arr = f.data.map(r=>r.data).filter(Boolean);
+      // evita duplicados por número
+      const map=new Map();
+      [...arr, ...facturas].forEach(x=>{ if(x?.numero) map.set(x.numero, x); });
+      facturas = [...map.values()].sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
+      save(K_FACTURAS, facturas);
+    }
+  }catch(e){ console.warn('syncPullAll:', e); }
+}
+async function syncClientesToSupabase(){
+  try{ await supabase.from('clientes').insert([{ data: clientes }]); }catch(e){ /* snapshot opcional */ }
+}
+async function syncProductosToSupabase(){
+  try{ await supabase.from('productos').insert([{ data: productos }]); }catch(e){ /* snapshot opcional */ }
+}
+
 /* ---------- BOOT ---------- */
-(function boot(){
+(async function boot(){
+  setProviderDefaultsIfEmpty();
   seedClientesIfEmpty();
-  ensureClienteIds();
   seedProductsIfEmpty();
 
-  setProviderDefaultsIfEmpty();
-
+  // 5 líneas iniciales
   const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
+
+  // Auto PULL desde Supabase al abrir
+  await syncPullAll();
 
   renderPagosTemp();
   renderAll(); recalc();
-})();
+
+  // Botón Sincronizar ahora (pull + push clientes/productos snapshots)
+  $('#btnSyncNow')?.addEventListener('click', async ()=>{
+    await syncPullAll();
+    await syncClientesToSupabase();
+    await syncProductosToSupabase();
+    alert('Sincronización completa ✔️');
+    renderAll(); recalc();
+  });
+
+  // Toolbar de paletas (4) + dark
+  initColorToolbar();
 })();
 
 /* ================================
-   🎨 SELECTOR DE PALETAS (4 temas)
-   ================================ */
-(function(){
+   🎨 Paletas & Modo oscuro
+================================ */
+function initColorToolbar(){
   const PALETAS = {
-    kiwi:    {bg:'#ffffff', text:'#1e293b', accent:'#16a34a', border:'#d1d5db', muted:'#6b7280'},
-    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151', muted:'#94a3b8'},
-    sand:    {bg:'#fefce8', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4', muted:'#78716c'},
-    mint:    {bg:'#ecfdf5', text:'#065f46', accent:'#059669', border:'#a7f3d0', muted:'#0f766e'}
+    kiwi:    {bg:'#ffffff', text:'#1f2937', accent:'#22c55e', border:'#e5e7eb'},
+    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151'},
+    sand:    {bg:'#fdf6e3', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4'},
+    mint:    {bg:'#ecfdf5', text:'#064e3b', accent:'#10b981', border:'#a7f3d0'}
   };
-
-  const bar = document.createElement('div');
-  bar.id = 'colorToolbar';
+  const bar = document.createElement('div'); bar.id='colorToolbar';
   document.body.appendChild(bar);
 
-  // Botones de paleta
   for(const [name,p] of Object.entries(PALETAS)){
     const b=document.createElement('button');
-    b.title=name; b.style.background=p.accent;
+    b.title=name; b.style.background=p.accent; b.style.borderColor='#111';
     b.onclick=()=>aplicarTema(name);
     bar.appendChild(b);
   }
-
-  // Botón modo claro/oscuro
   const toggle=document.createElement('button');
-  toggle.className='dark-toggle';
-  toggle.textContent='🌞/🌙';
-  toggle.onclick=()=>toggleDark();
-  bar.appendChild(toggle);
+  toggle.className='dark-toggle'; toggle.textContent='🌞/🌙';
+  toggle.onclick=()=>toggleDark(); bar.appendChild(toggle);
 
   function aplicarTema(nombre){
     const pal=PALETAS[nombre];
     if(!pal) return;
-    const root=document.documentElement;
-    root.style.setProperty(`--bg`, pal.bg);
-    root.style.setProperty(`--text`, pal.text);
-    root.style.setProperty(`--accent`, pal.accent);
-    root.style.setProperty(`--accent-dark`, nombre==='graphite' ? '#1d4ed8' : (nombre==='sand'?'#a16207':(nombre==='mint'?'#047857':'#15803d')));
-    root.style.setProperty(`--border`, pal.border);
-    root.style.setProperty(`--muted`, pal.muted);
-    root.setAttribute('data-theme', nombre);
+    for(const [k,v] of Object.entries(pal)){
+      document.documentElement.style.setProperty(`--${k}`, v);
+    }
     localStorage.setItem('arslan_tema', nombre);
   }
-
   function toggleDark(){
     const isDark=document.body.classList.toggle('dark-mode');
     localStorage.setItem('arslan_dark', isDark);
-    // el resto de vars se mantienen por paleta
+    document.body.style.background=isDark?'#111':'var(--bg)';
+    document.body.style.color=isDark?'#f9fafb':'var(--text)';
   }
-
-  // Restaurar configuración al cargar
   const guardadoTema = localStorage.getItem('arslan_tema') || 'kiwi';
   const guardadoDark = localStorage.getItem('arslan_dark') === 'true';
   aplicarTema(guardadoTema);
   if(guardadoDark) toggleDark();
+}
 })();
+
