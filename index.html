@@ -1,15 +1,14 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ARSLAN PRO V10.4 — KIWI Edition</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -143,19 +142,33 @@
     <div id="printArea" class="print">
       <div class="pdf-header">
         <div class="pdf-brand">
-          <img id="pdfLogo" alt="Kiwi" />
-          <div class="pdf-title">FACTURA</div>
+          <!-- Logo kiwi (SVG pequeño) solo en PDF -->
+          <svg id="pdf-kiwi" width="42" height="42" viewBox="0 0 100 100" aria-hidden="true">
+            <circle cx="50" cy="50" r="45" fill="#9acd32" stroke="#5a7f1a" stroke-width="6"></circle>
+            <circle cx="50" cy="50" r="24" fill="#fff" stroke="#7fbf3f" stroke-width="5"></circle>
+            <!-- semillas -->
+            <g fill="#2b2b2b">
+              <circle cx="50" cy="28" r="3"></circle>
+              <circle cx="64" cy="32" r="3"></circle>
+              <circle cx="72" cy="45" r="3"></circle>
+              <circle cx="36" cy="32" r="3"></circle>
+              <circle cx="28" cy="45" r="3"></circle>
+              <circle cx="50" cy="72" r="3"></circle>
+              <circle cx="36" cy="68" r="3"></circle>
+              <circle cx="64" cy="68" r="3"></circle>
+            </g>
+          </svg>
+          <div>
+            <h2 id="pdf-title">FACTURA</h2>
+            <div id="p-prov"></div>
+          </div>
         </div>
         <div class="pdf-meta">
-          <div><span>Nº Factura:</span> <strong id="p-num"></strong></div>
+          <div><span>Nº:</span> <strong id="p-num"></strong></div>
           <div><span>Fecha:</span> <strong id="p-fecha"></strong></div>
           <div><span>Cliente:</span><div id="p-cli"></div></div>
           <canvas id="p-qr" width="92" height="92"></canvas>
         </div>
-      </div>
-
-      <div class="pdf-prov">
-        <div class="pdf-prov-inner" id="p-prov"></div>
       </div>
 
       <table id="p-tabla">
@@ -328,15 +341,6 @@
   </section>
 
 </main>
-
-<!-- Toolbar de paletas -->
-<div id="colorToolbar">
-  <button title="Kiwi" data-theme="kiwi"></button>
-  <button title="Graphite" data-theme="graphite"></button>
-  <button title="Sand" data-theme="sand"></button>
-  <button title="Mint" data-theme="mint"></button>
-  <button class="dark-toggle" title="Claro/Oscuro">🌞/🌙</button>
-</div>
 
 <script src="app.js"></script>
 </body>
