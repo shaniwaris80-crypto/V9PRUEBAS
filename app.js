@@ -1,8 +1,10 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full, Final)
-   - Mantiene TODAS las funciones (V10.3/V10.4 completo)
-   - Arreglos: sin splash, logo SOLO en PDF, encabezado FACTURA
-   - Clientes con ID único (sin mezclas), arranque seguro
+   ARSLAN PRO V10.4 — KIWI Edition (FULL + mejoras seguras)
+   Base estable + Totales mejores + PDF Pro + UX rápido + Backups
+   - Logo solo en PDF
+   - Cabecera PDF: “FACTURA” arriba izquierda
+   - QR igual que antes
+   - Sin splash
 ======================================================= */
 (function(){
 "use strict";
@@ -16,33 +18,29 @@ const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':
 const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
-const uid = ()=> (Date.now().toString(36) + Math.random().toString(36).slice(2,9));
+const debounce = (fn,ms=250)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
 
-/* ---------- KEYS ---------- */
-const K_CLIENTES='arslan_v104_clientes';
-const K_PRODUCTOS='arslan_v104_productos';
-const K_FACTURAS='arslan_v104_facturas';
-const K_PRICEHIST='arslan_v104_pricehist';
-const K_CLI_ACTIVO='arslan_v104_cli_activo';
+/* ---------- STORAGE KEYS ---------- */
+const K_CLIENTES   = 'arslan_v104_clientes';
+const K_PRODUCTOS  = 'arslan_v104_productos';
+const K_FACTURAS   = 'arslan_v104_facturas';
+const K_PRICEHIST  = 'arslan_v104_pricehist';
+const K_DRAFT      = 'arslan_v104_borrador_factura';
+const K_UI         = 'arslan_v104_ui';
+const K_AUTOBACKUP = 'arslan_v104_auto_backup_meta';
+
+function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
+function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
 /* ---------- ESTADO ---------- */
-let clientes  = load(K_CLIENTES, []);
-let productos = load(K_PRODUCTOS, []);
-let facturas  = load(K_FACTURAS, []);
-let priceHist = load(K_PRICEHIST, {});
+let clientes   = load(K_CLIENTES, []);
+let productos  = load(K_PRODUCTOS, []);
+let facturas   = load(K_FACTURAS, []);
+let priceHist  = load(K_PRICEHIST, {});
+let pagosTemp  = []; // {date, amount}
 
-function load(k, fallback){ try{ const txt = localStorage.getItem(k); if(!txt) return fallback; const v = JSON.parse(txt); return v ?? fallback; } catch{ return fallback; } }
-function save(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
-
-/* ---------- TABS (sin splash) ---------- */
-function switchTab(id){
-  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
-  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
-  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
-  if(id==='pendientes'){ renderPendientes(); }
-  if(id==='resumen'){ drawResumen(); }
-}
-$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
+/* ---------- UI STATE ---------- */
+let UI = load(K_UI, { activeTab: 'factura' });
 
 /* ---------- SEED DATA ---------- */
 function uniqueByName(arr){
@@ -50,45 +48,36 @@ function uniqueByName(arr){
   arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,c); });
   return [...map.values()];
 }
-function ensureClienteIds(list){
-  let changed=false;
-  list.forEach(c=>{ if(!c.id){ c.id=uid(); changed=true; } });
-  if(changed){ save(K_CLIENTES,list); }
-  return list;
-}
-function getClienteById(id){ return (clientes||[]).find(c=>c.id===id); }
-
 function seedClientesIfEmpty(){
-  if(clientes.length){ clientes = ensureClienteIds(clientes); return; }
+  if(clientes.length) return;
   clientes = uniqueByName([
-    {id:uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
-    {id:uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
-    {id:uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
-    {id:uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
-    {id:uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {id:uid(), nombre:'Hotel Cordon'},{id:uid(), nombre:'Vaivén Hostelería'},{id:uid(), nombre:'Grupo Resicare'},{id:uid(), nombre:'Carlos Alameda Peralta & Seis Más'},
-    {id:uid(), nombre:'Tabalou Development SLU', nif:'ES B09567769'},
-    {id:uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
-    {id:uid(), nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
-    {id:uid(), nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
-    {id:uid(), nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
-    {id:uid(), nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
-    {id:uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
-    {id:uid(), nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
-    {id:uid(), nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
-    {id:uid(), nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
-    {id:uid(), nombre:'Angela', dir:'C/ Madrid, Burgos'},
-    {id:uid(), nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
-    {id:uid(), nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
-    {id:uid(), nombre:'Domingo'},{id:uid(), nombre:'Bar Tropical'},
-    {id:uid(), nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
-    {id:uid(), nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
-    {id:uid(), nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
+    {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
+    {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
+    {nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
+    {nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
+    {nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
+    {nombre:'Hotel Cordon'},{nombre:'Vaivén Hostelería'},{nombre:'Grupo Resicare'},{nombre:'Carlos Alameda Peralta & Seis Más'},
+    {nombre:'Tabalou Development SLU', nif:'ES B09567769'},
+    {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
+    {nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
+    {nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
+    {nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
+    {nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
+    {nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
+    {nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
+    {nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
+    {nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
+    {nombre:'Angela', dir:'C/ Madrid, Burgos'},
+    {nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
+    {nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
+    {nombre:'Domingo'},{nombre:'Bar Tropical'},
+    {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
+    {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
+    {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
   ]);
   save(K_CLIENTES, clientes);
 }
 const PRODUCT_NAMES = [
-  /* (lista completa tal como la tenías, sin cambios) */
 "GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ",
 "MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA","MANDARINA HOJA","MANZANA GOLDEN 20","NARANJA TOMASIN","NECTARINA","NUECES","SANDIA","LIMON SEGUNDA","MANZANA FUJI",
 "NARANJA MESA SONRISA","JENGIBRE","BATATA","AJO PRIMERA","CEBOLLA NORMAL","CALABAZA GRANDE","PATATA LAVADA","TOMATE CHERRY RAMA","TOMATE CHERRY PERA","TOMATE DANIELA","TOMATE ROSA PRIMERA",
@@ -140,17 +129,14 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI (con ID estable) ---------- */
+/* ---------- CLIENTES UI ---------- */
 function saveClientes(){ save(K_CLIENTES, clientes); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  const arr=[...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  arr.forEach((c)=>{
-    const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt);
+  [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach((c,i)=>{
+    const opt=document.createElement('option'); opt.value=i; opt.textContent=c.nombre||`Cliente ${i+1}`; sel.appendChild(opt);
   });
-  const activo = localStorage.getItem(K_CLI_ACTIVO);
-  if(activo && arr.some(c=>c.id===activo)) sel.value=activo;
 }
 function renderClientesLista(){
   const cont = $('#listaClientes'); if(!cont) return;
@@ -159,7 +145,7 @@ function renderClientesLista(){
   const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   const view = q ? arr.filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q)) : arr;
   if(view.length===0){ cont.innerHTML='<div class="item">Sin clientes.</div>'; return; }
-  view.forEach((c)=>{
+  view.forEach((c,idx)=>{
     const row=document.createElement('div'); row.className='item';
     row.innerHTML=`
       <div>
@@ -167,22 +153,19 @@ function renderClientesLista(){
         <div class="muted">${escapeHTML(c.nif||'')} · ${escapeHTML(c.dir||'')}</div>
       </div>
       <div class="row">
-        <button class="ghost" data-e="use" data-id="${c.id}">Usar</button>
-        <button class="ghost" data-e="edit" data-id="${c.id}">Editar</button>
-        <button class="ghost" data-e="del" data-id="${c.id}">Borrar</button>
+        <button class="ghost" data-e="use" data-i="${idx}">Usar</button>
+        <button class="ghost" data-e="edit" data-i="${idx}">Editar</button>
+        <button class="ghost" data-e="del" data-i="${idx}">Borrar</button>
       </div>
     `;
     cont.appendChild(row);
   });
   cont.querySelectorAll('button').forEach(b=>{
-    const id=b.dataset.id;
+    const i=+b.dataset.i;
     b.addEventListener('click', ()=>{
-      const i = clientes.findIndex(x=>x.id===id);
-      if(i<0) return;
       if(b.dataset.e==='use'){
-        const c=clientes[i];
+        const c=clientes[i]; if(!c) return;
         $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-        $('#selCliente').value=c.id; localStorage.setItem(K_CLI_ACTIVO,c.id);
         switchTab('factura');
       }else if(b.dataset.e==='edit'){
         const c=clientes[i];
@@ -191,7 +174,7 @@ function renderClientesLista(){
         const dir=prompt('Dirección',c.dir||'')??c.dir;
         const tel=prompt('Tel',c.tel||'')??c.tel;
         const email=prompt('Email',c.email||'')??c.email;
-        clientes[i]={...c, nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
+        clientes[i]={nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
       }else{
         if(confirm('¿Eliminar cliente?')){ clientes.splice(i,1); saveClientes(); renderClientesSelect(); renderClientesLista(); }
       }
@@ -279,6 +262,9 @@ function addLinea(){
   const origin=tr.querySelector('.origin');
   const amount=tr.querySelector('.amount');
 
+  // UX: foco al nombre al crear
+  name.focus();
+
   const showHist=()=>{ const n=name.value.trim(); if(n) renderPriceHistory(n); };
   name.addEventListener('focus', showHist);
   price.addEventListener('focus', showHist);
@@ -295,8 +281,23 @@ function addLinea(){
     recalcLine();
   });
 
-  [mode, qty, gross, tare, price].forEach(i=>i.addEventListener('input', recalcLine));
-  tr.querySelector('.del').addEventListener('click', ()=>{ tr.remove(); recalc(); });
+  [mode, qty, gross, tare, price].forEach(i=>i.addEventListener('input', ()=>{ recalcLine(); saveDraftDebounced(); }));
+  tr.querySelector('.del').addEventListener('click', ()=>{ tr.remove(); recalc(); saveDraftDebounced(); });
+
+  // UX: navegación con teclado
+  tr.querySelectorAll('input,select').forEach((el, idx, arr)=>{
+    el.addEventListener('keydown', e=>{
+      if(e.key==='Enter' && !e.ctrlKey){
+        e.preventDefault();
+        const next = arr[idx+1] || null;
+        if(next) next.focus(); else addLinea();
+      }
+      if(e.key==='Enter' && e.ctrlKey){
+        e.preventDefault();
+        addLinea();
+      }
+    });
+  });
 
   function recalcLine(){
     const m=(mode.value||'').toLowerCase();
@@ -332,8 +333,7 @@ function captureLineas(){
 }
 function lineImporte(l){ return (l.mode==='unidad') ? l.qty*l.price : l.net*l.price; }
 
-/* ---------- PAGOS PARCIALES EN UI ---------- */
-let pagosTemp = []; // {date, amount}
+/* ---------- PAGOS PARCIALES ---------- */
 function renderPagosTemp(){
   const list=$('#listaPagos'); if(!list) return;
   list.innerHTML='';
@@ -344,25 +344,26 @@ function renderPagosTemp(){
     list.appendChild(div);
   });
   list.querySelectorAll('button').forEach(b=>{
-    b.addEventListener('click', ()=>{ pagosTemp.splice(+b.dataset.i,1); renderPagosTemp(); recalc(); });
+    b.addEventListener('click', ()=>{ pagosTemp.splice(+b.dataset.i,1); renderPagosTemp(); recalc(); saveDraftDebounced(); });
   });
 }
 $('#btnAddPago')?.addEventListener('click', ()=>{
   const amt=parseNum($('#inpPagoParcial').value||0); if(!(amt>0)) return;
   pagosTemp.unshift({date: todayISO(), amount: amt});
   $('#inpPagoParcial').value='';
-  renderPagosTemp(); recalc();
+  renderPagosTemp(); recalc(); saveDraftDebounced();
 });
 
-/* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
+/* ---------- RECALC + PDF-FILL + ESTADO ---------- */
 function recalc(){
   const ls=captureLineas();
   let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
   const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
   const baseMasTrans = subtotal + transporte;
   const iva = baseMasTrans * 0.04; // informativo
-  const total = baseMasTrans;       // (tu lógica: IVA solo informativo, total = base+transporte)
+  const total = baseMasTrans;
 
+  // pagado = pagosTemp + input manual
   const manual = parseNum($('#pagado')?.value||0);
   const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + parcial;
@@ -374,25 +375,28 @@ function recalc(){
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
+  // estado sugerido
   if(total<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<total){ $('#estado').value='parcial'; }
   else { $('#estado').value='pagado'; }
 
+  // Pie de PDF
   const foot=$('#pdf-foot-note');
   if(foot){
     foot.textContent = $('#chkIvaIncluido')?.checked ? 'IVA incluido en los precios.' : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
   }
 
   fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
-  drawResumen();
+  drawResumen(); // KPIs rápidos
 }
-;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
+;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', ()=>{ recalc(); saveDraftDebounced(); }));
 
 function fillPrint(lines, totals, temp=null, f=null){
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
+  // Cabecera PDF: FACTURA + logo + proveedor
   $('#p-prov').innerHTML = `
     <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre').value || '')}</strong></div>
     <div>${escapeHTML(f?.proveedor?.nif || $('#provNif').value || '')}</div>
@@ -431,7 +435,7 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
   $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
-  // QR (igual que antes)
+  // QR con datos básicos (igual que antes)
   try{
     const canvas = $('#p-qr');
     const numero = f?.numero || '(Sin guardar)';
@@ -442,7 +446,10 @@ function fillPrint(lines, totals, temp=null, f=null){
 }
 
 /* ---------- GUARDAR / NUEVA / PDF ---------- */
-function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
+function genNumFactura(){
+  const d=new Date(), pad=n=>String(n).padStart(2,'0');
+  return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
 function saveFacturas(){ save(K_FACTURAS, facturas); }
 
 $('#btnGuardar')?.addEventListener('click', ()=>{
@@ -456,7 +463,7 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
   const total=unMoney($('#total').textContent);
 
   const manual = parseNum($('#pagado').value||0);
-  const pagos = [...pagosTemp];
+  const pagos = [...pagosTemp]; // copiar
   const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + pagadoParcial;
   const pendiente=Math.max(0,total-pagadoTotal);
@@ -466,32 +473,85 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
   const f={
     numero, fecha:now,
     proveedor:{nombre:$('#provNombre').value,nif:$('#provNif').value,dir:$('#provDir').value,tel:$('#provTel').value,email:$('#provEmail').value},
-    cliente:{nombre:$('#cliNombre').value,nif:$('#cliNif').value,dir:$('#cliDir').value,tel:$('#cliTel').value,email:$('#cliEmail').value, id: $('#selCliente').value || null},
+    cliente:{nombre:$('#cliNombre').value,nif:$('#cliNif').value,dir:$('#cliDir').value,tel:$('#cliTel').value,email:$('#cliEmail').value},
     lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
     estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
-    pagos
+    pagos // historial de pagos parciales
   };
   facturas.unshift(f); saveFacturas();
+
+  // Limpia borrador
+  localStorage.removeItem(K_DRAFT);
   pagosTemp = []; renderPagosTemp();
   alert(`Factura ${numero} guardada.`);
   renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
   fillPrint(ls,{subtotal,transporte,iva,total},null,f);
 });
 
-$('#btnNueva')?.addEventListener('click', ()=>{
+$('#btnNueva')?.addEventListener('click', nuevaFactura);
+
+function nuevaFactura(){
   const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea();
   $('#chkTransporte').checked=false; $('#chkIvaIncluido').checked=true; $('#estado').value='pendiente';
   $('#pagado').value=''; $('#metodoPago').value='Efectivo'; $('#observaciones').value='';
   pagosTemp=[]; renderPagosTemp();
-  recalc();
-});
+  saveDraft(); recalc();
+}
 
+// PDF Pro: evita PDF en blanco, añade numeración y marca de agua
 $('#btnImprimir')?.addEventListener('click', ()=>{
+  // Asegura que los datos del printArea estén frescos
+  recalc();
+
   const element = document.getElementById('printArea');
+  // Truco para asegurarnos que es visible para html2pdf (aunque no lo muestres)
+  const prevVis = element.style.visibility;
+  const prevPos = element.style.position;
+  const prevLeft= element.style.left;
+  element.style.visibility = 'visible';
+  element.style.position = 'relative';
+  element.style.left = '0';
+
   const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
-  const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-  window.html2pdf().set(opt).from(element).save();
+  const opt = {
+    margin: [10,10,10,10],
+    filename: file,
+    image: { type:'jpeg', quality:0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+
+  // Genera y añade numeración + watermark
+  window.html2pdf().set(opt).from(element).toPdf().get('pdf').then(pdf=>{
+    const totalPages = pdf.internal.getNumberOfPages();
+    const estado = ($('#p-estado')?.textContent||'').toLowerCase();
+    const paid = estado.includes('pagad');
+
+    for(let i=1;i<=totalPages;i++){
+      pdf.setPage(i);
+      // Pie de página: numeración
+      pdf.setFontSize(9);
+      const w = pdf.internal.pageSize.getWidth();
+      const h = pdf.internal.pageSize.getHeight();
+      pdf.text(`Página ${i} de ${totalPages}`, w-14, h-8, {align:'right'});
+
+      // Marca de agua
+      pdf.setGState(new pdf.GState({opacity:0.08}));
+      pdf.setFontSize(48);
+      pdf.setTextColor(paid?0:200, paid?150:0, 0); // verde si pagada, rojizo si no
+      pdf.saveGraphicsState && pdf.saveGraphicsState();
+      pdf.text(paid?'PAGADA':'PENDIENTE', w/2, h/2, {align:'center', angle: -30});
+      pdf.restoreGraphicsState && pdf.restoreGraphicsState();
+      pdf.setGState(new pdf.GState({opacity:1}));
+      pdf.setTextColor(0,0,0);
+    }
+  }).save().then(()=>{
+    // Restaura estilo visual
+    element.style.visibility = prevVis;
+    element.style.position   = prevPos;
+    element.style.left       = prevLeft;
+  });
 });
 
 /* ---------- LISTA DE FACTURAS ---------- */
@@ -508,7 +568,13 @@ function renderFacturas(){
   const fe=$('#filtroEstado')?.value||'todas';
   let arr=facturas.slice();
   if(fe!=='todas') arr=arr.filter(f=>f.estado===fe);
-  if(q) arr=arr.filter(f=>(f.cliente?.nombre||'').toLowerCase().includes(q));
+
+  // Búsqueda por cliente o nº de factura
+  if(q) arr=arr.filter(f=>{
+    const nom=(f.cliente?.nombre||'').toLowerCase();
+    return nom.includes(q) || (f.numero||'').toLowerCase().includes(q);
+  });
+
   if(arr.length===0){ cont.innerHTML='<div class="item">No hay facturas.</div>'; return; }
 
   arr.slice(0,400).forEach((f,idx)=>{
@@ -524,6 +590,7 @@ function renderFacturas(){
         <button class="ghost" data-e="ver" data-i="${idx}">Ver</button>
         <button data-e="cobrar" data-i="${idx}">💶 Cobrar</button>
         <button class="ghost" data-e="parcial" data-i="${idx}">+ Parcial</button>
+        <button class="ghost" data-e="dup" data-i="${idx}">Duplicar</button>
         <button class="ghost" data-e="pdf" data-i="${idx}">PDF</button>
       </div>`;
     cont.appendChild(div);
@@ -541,7 +608,7 @@ function renderFacturas(){
         (f.pagos??=[]).push({date:todayISO(), amount: tot});
         saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
       }else if(b.dataset.e==='parcial'){
-        const max=f.totals.total-(f.totals.pagado||0);
+        const max=(f.totals.total||0)-(f.totals.pagado||0);
         const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
         if(val>0){
           f.pagos=f.pagos||[]; f.pagos.push({date:todayISO(), amount:val});
@@ -550,19 +617,50 @@ function renderFacturas(){
           f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
           saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
         }
+      }else if(b.dataset.e==='dup'){
+        duplicarFactura(f);
       }else if(b.dataset.e==='pdf'){
         fillPrint(f.lineas,f.totals,null,f);
-        const dt=new Date(f.fecha);
-        const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
-        const filename=`Factura-${nombreCliente}-${fmtDateDMY(dt)}.pdf`;
-        const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-        window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
+        // Reutiliza el botón de imprimir (ya añade numeración y watermark)
+        $('#btnImprimir').click();
       }
     });
   });
 }
 $('#filtroEstado')?.addEventListener('input', renderFacturas);
 $('#buscaCliente')?.addEventListener('input', renderFacturas);
+
+function duplicarFactura(f){
+  switchTab('factura');
+  // Carga proveedor y cliente
+  $('#provNombre').value=f.proveedor?.nombre||''; $('#provNif').value=f.proveedor?.nif||'';
+  $('#provDir').value=f.proveedor?.dir||''; $('#provTel').value=f.proveedor?.tel||''; $('#provEmail').value=f.proveedor?.email||'';
+  $('#cliNombre').value=f.cliente?.nombre||''; $('#cliNif').value=f.cliente?.nif||'';
+  $('#cliDir').value=f.cliente?.dir||''; $('#cliTel').value=f.cliente?.tel||''; $('#cliEmail').value=f.cliente?.email||'';
+  // Carga líneas
+  const tb=$('#lineasBody'); tb.innerHTML='';
+  (f.lineas||[]).forEach(()=>addLinea());
+  const trs=$$('#lineasBody tr');
+  (f.lineas||[]).forEach((l,i)=>{
+    const r=trs[i];
+    r.querySelector('.name').value=l.name||'';
+    r.querySelector('.mode').value=l.mode||'';
+    r.querySelector('.qty').value=l.qty||'';
+    r.querySelector('.gross').value=l.gross||'';
+    r.querySelector('.tare').value=l.tare||'';
+    r.querySelector('.net').value=l.net||'';
+    r.querySelector('.price').value=l.price||'';
+    r.querySelector('.origin').value=l.origin||'';
+  });
+  $('#chkTransporte').checked=!!f.transporte;
+  $('#chkIvaIncluido').checked=!!f.ivaIncluido;
+  $('#estado').value='pendiente';
+  $('#pagado').value='';
+  $('#metodoPago').value=f.metodo||'Efectivo';
+  $('#observaciones').value=f.obs||'';
+  pagosTemp=[]; renderPagosTemp();
+  recalc(); saveDraft();
+}
 
 /* ---------- PENDIENTES ---------- */
 function renderPendientes(){
@@ -697,7 +795,7 @@ function renderVentasCliente(){
   });
 }
 
-/* ---------- BACKUP/RESTORE + EXPORTS ---------- */
+/* ---------- BACKUP / RESTORE / EXPORTS ---------- */
 $('#btnBackup')?.addEventListener('click', ()=>{
   const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
@@ -711,7 +809,7 @@ $('#btnRestore')?.addEventListener('click', ()=>{
     const reader=new FileReader(); reader.onload=()=>{
       try{
         const obj=JSON.parse(reader.result);
-        if(obj.clientes){ clientes=ensureClienteIds(obj.clientes); }
+        if(obj.clientes) clientes=obj.clientes;
         if(obj.productos) productos=obj.productos;
         if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
@@ -723,7 +821,7 @@ $('#btnRestore')?.addEventListener('click', ()=>{
   inp.click();
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=ensureClienteIds(uniqueByName(arr)); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
 $('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
 $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
@@ -736,7 +834,8 @@ function downloadJSON(obj, filename){
 }
 function uploadJSON(cb){
   const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
-  inp.onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)); }catch{ alert('JSON inválido'); } }; r.readAsText(f); };
+  inp.onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)); }catch{ alert('JSON inválido'); } }; r.readAsText(f);
+  };
   inp.click();
 }
 function exportVentasCSV(){
@@ -749,25 +848,87 @@ function exportVentasCSV(){
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/* ---------- EVENTOS GENERALES ---------- */
-$('#btnAddLinea')?.addEventListener('click', addLinea);
-$('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
+/* ---------- AUTOGUARDADO DE BORRADOR ---------- */
+function saveDraft(){
+  try{
+    const draft = {
+      proveedor:{
+        nombre:$('#provNombre').value, nif:$('#provNif').value, dir:$('#provDir').value, tel:$('#provTel').value, email:$('#provEmail').value
+      },
+      cliente:{
+        nombre:$('#cliNombre').value, nif:$('#cliNif').value, dir:$('#cliDir').value, tel:$('#cliTel').value, email:$('#cliEmail').value
+      },
+      lineas: captureLineas(),
+      flags:{
+        transporte: $('#chkTransporte').checked,
+        ivaIncluido: $('#chkIvaIncluido').checked,
+        estado: $('#estado').value,
+        metodo: $('#metodoPago').value
+      },
+      pagosTemp,
+      obs: $('#observaciones').value
+    };
+    save(K_DRAFT, draft);
+  }catch(e){}
+}
+const saveDraftDebounced = debounce(saveDraft, 300);
+
+function restoreDraftIfAny(){
+  const d = load(K_DRAFT, null);
+  if(!d) return;
+  $('#provNombre').value=d.proveedor?.nombre||''; $('#provNif').value=d.proveedor?.nif||'';
+  $('#provDir').value=d.proveedor?.dir||''; $('#provTel').value=d.proveedor?.tel||''; $('#provEmail').value=d.proveedor?.email||'';
+  $('#cliNombre').value=d.cliente?.nombre||''; $('#cliNif').value=d.cliente?.nif||'';
+  $('#cliDir').value=d.cliente?.dir||''; $('#cliTel').value=d.cliente?.tel||''; $('#cliEmail').value=d.cliente?.email||'';
+
+  const tb=$('#lineasBody'); tb.innerHTML=''; const L=d.lineas||[]; if(L.length===0){ for(let i=0;i<5;i++) addLinea(); } else { for(let i=0;i<L.length;i++) addLinea(); }
+  const trs=$$('#lineasBody tr');
+  L.forEach((l,i)=>{
+    const r=trs[i];
+    r.querySelector('.name').value=l.name||'';
+    r.querySelector('.mode').value=l.mode||'';
+    r.querySelector('.qty').value=l.qty||'';
+    r.querySelector('.gross').value=l.gross||'';
+    r.querySelector('.tare').value=l.tare||'';
+    r.querySelector('.net').value=l.net||'';
+    r.querySelector('.price').value=l.price||'';
+    r.querySelector('.origin').value=l.origin||'';
+  });
+
+  $('#chkTransporte').checked=!!d.flags?.transporte;
+  $('#chkIvaIncluido').checked=!!d.flags?.ivaIncluido;
+  $('#estado').value=d.flags?.estado||'pendiente';
+  $('#metodoPago').value=d.flags?.metodo||'Efectivo';
+  $('#observaciones').value=d.obs||'';
+  pagosTemp=d.pagosTemp||[]; renderPagosTemp();
+}
+
+/* ---------- UI EVENTS ---------- */
+$('#btnAddLinea')?.addEventListener('click', ()=>{ addLinea(); saveDraftDebounced(); });
+$('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); saveDraftDebounced(); }});
 $('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
-$('#selCliente')?.addEventListener('change', (e)=>{
-  const id=e.target.value; if(!id) return;
-  const c=getClienteById(id); if(!c) return;
+$('#selCliente')?.addEventListener('change', ()=>{
+  const i=$('#selCliente').value; if(i==='') return; const c=clientes[+i]; if(!c) return;
   $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-  localStorage.setItem(K_CLI_ACTIVO, id);
+  saveDraftDebounced();
 });
 $('#btnAddCliente')?.addEventListener('click', ()=>{
   const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
   const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  const nuevo={id:uid(), nombre:nombre.trim(), nif, dir, tel, email};
-  clientes.push(nuevo); saveClientes(); renderClientesSelect(); renderClientesLista();
-  $('#selCliente').value=nuevo.id; localStorage.setItem(K_CLI_ACTIVO, nuevo.id);
-  $('#cliNombre').value=nuevo.nombre; $('#cliNif').value=nuevo.nif; $('#cliDir').value=nuevo.dir; $('#cliTel').value=nuevo.tel; $('#cliEmail').value=nuevo.email;
+  clientes.push({nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
 });
 $('#buscarCliente')?.addEventListener('input', renderClientesLista);
+
+/* ---------- TABS ---------- */
+function switchTab(id){
+  UI.activeTab=id; save(K_UI, UI);
+  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
+  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
+  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
+  if(id==='pendientes'){ renderPendientes(); }
+  if(id==='resumen'){ drawResumen(); }
+}
+$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
 
 /* ---------- RESUMEN ---------- */
 function renderAll(){
@@ -777,32 +938,58 @@ function renderAll(){
 }
 function drawResumen(){ drawKPIs(); }
 
-/* ---------- BOOT (sin splash) ---------- */
-(function boot(){
+/* ---------- AUTOBACKUP SEMANAL (localStorage) ---------- */
+function autoBackupWeekly(){
   try{
-    clientes = ensureClienteIds(load(K_CLIENTES, []));
-    save(K_CLIENTES, clientes);
-  }catch{}
+    const meta = load(K_AUTOBACKUP, { last: null });
+    const now = new Date();
+    const last = meta.last ? new Date(meta.last) : null;
+    const need = !last || ((now - last) > 6*24*3600*1000); // >6 días
+    if(!need) return;
 
+    const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
+    save('arslan_v104_auto_backup_payload', payload);
+    save(K_AUTOBACKUP, { last: todayISO() });
+    // Silencioso para no molestar; tienes copia en localStorage.
+  }catch(e){}
+}
+
+/* ---------- BOOT ---------- */
+(function boot(){
   seedClientesIfEmpty();
   seedProductsIfEmpty();
+
+  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
 
-  const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
+  // Restaura pestaña activa
+  switchTab(UI.activeTab || 'factura');
+
+  // 5 líneas iniciales si no hay borrador
+  const tb=$('#lineasBody');
+  if(tb && tb.children.length===0){
+    // Si hay borrador, se restaurará; si no, ponemos 5 líneas.
+    for(let i=0;i<5;i++) addLinea();
+  }
+
+  // Restaura borrador si existe
+  restoreDraftIfAny();
 
   renderPagosTemp();
   renderAll(); recalc();
 
-  // Ir directo a Factura al iniciar
-  switchTab('factura');
-  setTimeout(()=>{ try{ populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc(); }catch(e){ console.error('Init error',e); } }, 200);
-})();
-})();
-/* ================================
-   🎨 MODO CLARO / OSCURO + PALETAS
-   (Se mantiene tal cual, sin cambios de UI)
-   ================================ */
+  // Refresca por si recursos tardan
+  window.addEventListener('load', ()=>setTimeout(()=>{ try{
+    populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
+  }catch(e){ console.error('Init error',e); } }, 400));
 
+  autoBackupWeekly();
+})();
+})();
+
+/* ================================
+   🎨 PALETAS / MODO OSCURO (toolbar)
+   ================================ */
 (function(){
   const PALETAS = {
     kiwi:    {bg:'#ffffff', text:'#1f2937', accent:'#22c55e', border:'#e5e7eb'},
@@ -852,7 +1039,6 @@ function drawResumen(){ drawKPIs(); }
     }
     localStorage.setItem('arslan_tema', nombre);
   }
-
   function toggleDark(){
     const isDark=document.body.classList.toggle('dark-mode');
     localStorage.setItem('arslan_dark', isDark);
