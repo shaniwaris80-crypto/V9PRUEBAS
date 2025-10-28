@@ -892,4 +892,123 @@ function drawResumen(){ drawKPIs(); }
     document.querySelector('[data-tab="factura"]')?.click();
   });
 })();
+<script>
+/* =====================================================
+   ARSLAN PRO KIWI — MÓDULO CLIENTES COMPLETO + FIX COLOR
+   ===================================================== */
+(function(){
+  const KEY='arslan.clientes';
+  const sel=document.getElementById('selCliente');
+  const lista=document.getElementById('listaClientes');
+  const addBtn=document.getElementById('btnAddCliente');
+  const buscar=document.getElementById('buscarCliente');
+  const f={
+    nombre:document.getElementById('cliNombre'),
+    nif:document.getElementById('cliNif'),
+    dir:document.getElementById('cliDir'),
+    tel:document.getElementById('cliTel'),
+    email:document.getElementById('cliEmail')
+  };
+
+  if(!lista||!sel) return;
+
+  // --- Helpers ---
+  const read=()=>{try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch{return[]}};
+  const save=l=>localStorage.setItem(KEY,JSON.stringify(l));
+  const uid=()=>Date.now()+Math.random().toString(16).slice(2);
+  const ensureIds=l=>{let ch=false;l.forEach(c=>{if(!c.id){c.id=uid();ch=true}});if(ch)save(l);return l};
+
+  // --- Render listado lateral ---
+  function renderClientes(filtro=''){
+    const list=ensureIds(read());
+    lista.innerHTML='';
+    const frag=document.createDocumentFragment();
+    list.filter(c=>c.nombre.toLowerCase().includes(filtro.toLowerCase()))
+        .forEach(c=>{
+          const div=document.createElement('div');
+          div.className='item';
+          div.innerHTML=`
+            <div class="main">${c.nombre}</div>
+            <div class="sub">${c.nif||''}</div>
+            <div class="actions">
+              <button data-edit="${c.id}" class="btn-edit">✎</button>
+              <button data-del="${c.id}" class="btn-del">🗑</button>
+            </div>`;
+          frag.appendChild(div);
+        });
+    lista.appendChild(frag);
+    fillSelect();
+  }
+
+  // --- Rellenar selector ---
+  function fillSelect(){
+    const clientes=ensureIds(read());
+    sel.innerHTML='<option value="">-- Selecciona cliente --</option>';
+    clientes.forEach(c=>{
+      const o=document.createElement('option');
+      o.value=c.id;o.textContent=c.nombre;sel.appendChild(o);
+    });
+    const activo=localStorage.getItem('arslan.cliActivo');
+    if(activo){sel.value=activo;showCliente(activo);}
+  }
+
+  // --- Mostrar en campos factura ---
+  function showCliente(id){
+    const c=read().find(x=>String(x.id)===String(id));
+    if(!c){Object.values(f).forEach(el=>el&&(el.value=''));return;}
+    f.nombre.value=c.nombre||'';f.nif.value=c.nif||'';
+    f.dir.value=c.direccion||'';f.tel.value=c.telefono||'';
+    f.email.value=c.email||'';
+  }
+
+  // --- Guardar / editar cliente ---
+  function guardarCliente(data){
+    const list=ensureIds(read());
+    const i=list.findIndex(x=>x.id===data.id);
+    if(i>=0) list[i]=data; else list.push(data);
+    save(list);renderClientes();fillSelect();
+  }
+
+  // --- Borrar cliente ---
+  function borrarCliente(id){
+    if(!confirm('¿Eliminar este cliente?'))return;
+    const list=read().filter(x=>x.id!==id);
+    save(list);renderClientes();fillSelect();
+  }
+
+  // --- Eventos ---
+  addBtn?.addEventListener('click',()=>{
+    const nombre=prompt('Nombre del cliente nuevo:');
+    if(!nombre)return;
+    const list=ensureIds(read());
+    if(list.some(c=>c.nombre.trim().toLowerCase()===nombre.trim().toLowerCase())){
+      alert('⚠️ Ya existe un cliente con ese nombre.');return;
+    }
+    const nuevo={id:uid(),nombre:nombre.trim(),nif:'',direccion:'',telefono:'',email:''};
+    list.push(nuevo);save(list);renderClientes();fillSelect();
+    sel.value=nuevo.id;showCliente(nuevo.id);
+  });
+
+  lista.addEventListener('click',e=>{
+    const id=e.target.dataset.edit||e.target.dataset.del;
+    if(!id)return;
+    if(e.target.dataset.edit){
+      const list=read();const c=list.find(x=>x.id===id);if(!c)return;
+      const nuevoNombre=prompt('Editar nombre del cliente:',c.nombre);
+      if(!nuevoNombre)return;
+      c.nombre=nuevoNombre.trim();save(list);renderClientes();fillSelect();
+    }else if(e.target.dataset.del){borrarCliente(id);}
+  });
+
+  sel.addEventListener('change',e=>{
+    const id=e.target.value;showCliente(id);
+    localStorage.setItem('arslan.cliActivo',id);
+  });
+
+  buscar?.addEventListener('input',e=>renderClientes(e.target.value));
+
+  // --- Iniciar ---
+  document.addEventListener('DOMContentLoaded',()=>renderClientes());
+})();
+</script>
 
