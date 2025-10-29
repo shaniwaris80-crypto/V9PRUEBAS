@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 // Evita duplicar inicialización
 const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
+// Usa la instancia existente de Firebase
 const db = firebase.database();
 
 
