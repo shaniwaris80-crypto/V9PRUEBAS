@@ -1,20 +1,21 @@
 /* ===========================================================
-   ARSLAN PRO V10.4 — KIWI Edition
-   Tema: Blanco + Negro + Verde
+   ARSLAN PRO V10.5 — KIWI PRO Layout Stable
+   Tema: Blanco + Verde oscuro + Gris suave
    Tipografía: Poppins
    =========================================================== */
 
+/* ---------- PALETA ---------- */
 :root {
-  --green: #16a34a;
-  --green-dark: #15803d;
-  --green-light: #dcfce7;
+  --kiwi: #16a34a;
+  --kiwi-dark: #15803d;
+  --kiwi-light: #dcfce7;
   --text: #111827;
   --muted: #6b7280;
   --border: #e5e7eb;
   --bg: #ffffff;
   --bg-alt: #f9fafb;
   --danger: #ef4444;
-  --amber: #facc15;
+  --amber: #fbbf24;
 }
 
 /* ---------- RESETEO ---------- */
@@ -36,11 +37,11 @@ body {
   align-items: center;
   justify-content: space-between;
   background: var(--bg);
-  border-bottom: 2px solid var(--green);
-  padding: 0.5rem 1rem;
+  border-bottom: 3px solid var(--kiwi);
+  padding: 0.6rem 1rem;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 50;
 }
 .brand {
   display: flex;
@@ -48,30 +49,35 @@ body {
   gap: .6rem;
 }
 .brand img {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
 }
 .brand span {
   font-weight: 600;
+  color: var(--kiwi-dark);
   font-size: 1.1rem;
 }
 
 /* ---------- TABS ---------- */
 .tabs {
   display: flex;
-  gap: 0.3rem;
+  flex-wrap: wrap;
+  gap: .3rem;
 }
 .tab {
   background: transparent;
-  border: 1px solid var(--green);
-  color: var(--green-dark);
-  padding: .3rem .7rem;
+  border: 1px solid var(--kiwi-dark);
+  color: var(--kiwi-dark);
+  padding: .35rem .7rem;
   border-radius: .4rem;
   cursor: pointer;
   font-weight: 500;
+  transition: all .2s ease;
 }
-.tab.active {
-  background: var(--green);
+.tab.active,
+.tab:hover {
+  background: var(--kiwi-dark);
   color: #fff;
 }
 
@@ -79,7 +85,7 @@ body {
 .sync-indicator {
   display: flex;
   align-items: center;
-  gap: .3rem;
+  gap: .35rem;
   font-size: .85rem;
   color: var(--muted);
 }
@@ -87,17 +93,17 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--green);
+  background: var(--kiwi);
 }
 
-/* ---------- CONTAINER ---------- */
+/* ---------- CONTENEDOR PRINCIPAL ---------- */
 .container {
   padding: 1rem;
   max-width: 1250px;
   margin: auto;
 }
 
-/* ---------- PANELS ---------- */
+/* ---------- PANEL ---------- */
 .panel {
   display: none;
 }
@@ -105,7 +111,7 @@ body {
   display: block;
 }
 
-/* ---------- GRID LAYOUTS ---------- */
+/* ---------- GRID ---------- */
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -124,40 +130,39 @@ body {
 .card {
   background: var(--bg-alt);
   border: 1px solid var(--border);
-  border-radius: 0.8rem;
+  border-radius: .8rem;
   padding: 1rem;
-  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 .card h3 {
   margin-top: 0;
   font-weight: 600;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
 }
 
-/* ---------- BUTTONS ---------- */
+/* ---------- BOTONES ---------- */
 button {
-  background: var(--green);
+  background: var(--kiwi-dark);
   color: white;
   border: none;
   padding: 0.5rem 0.9rem;
-  border-radius: 0.5rem;
+  border-radius: .45rem;
   cursor: pointer;
   font-weight: 500;
-  transition: background 0.2s;
+  transition: background .2s, transform .1s;
 }
-button:hover {
-  background: var(--green-dark);
-}
+button:hover { background: var(--kiwi); }
+button:active { transform: scale(.97); }
 button.ghost {
   background: transparent;
-  border: 1px solid var(--green);
-  color: var(--green-dark);
+  border: 1px solid var(--kiwi-dark);
+  color: var(--kiwi-dark);
 }
 button.ghost:hover {
-  background: var(--green-light);
+  background: var(--kiwi-light);
 }
 
-/* ---------- FORMS ---------- */
+/* ---------- FORMULARIOS ---------- */
 input, select, textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -181,30 +186,28 @@ label.check {
 }
 .mt8 { margin-top: .8rem; }
 
-/* ---------- TABLES ---------- */
-.table-wrap {
-  overflow-x: auto;
-}
+/* ---------- TABLAS ---------- */
+.table-wrap { overflow-x: auto; }
 .calc-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: .9rem;
 }
 .calc-table th {
-  background: var(--green-light);
-  border-bottom: 1px solid var(--green);
-  padding: .3rem .4rem;
+  background: var(--kiwi-light);
+  border-bottom: 1px solid var(--kiwi-dark);
+  padding: .35rem .4rem;
   text-align: left;
 }
 .calc-table td {
   border-bottom: 1px solid var(--border);
-  padding: .3rem .4rem;
+  padding: .35rem .4rem;
 }
 .calc-table input {
   width: 100%;
 }
 
-/* ---------- LISTS ---------- */
+/* ---------- LISTAS ---------- */
 .list, .listaProductos {
   display: flex;
   flex-direction: column;
@@ -226,7 +229,7 @@ label.check {
   padding: .25rem .4rem;
 }
 
-/* ---------- BADGES / ESTADOS ---------- */
+/* ---------- ESTADOS / BADGES ---------- */
 .state-badge {
   padding: .15rem .5rem;
   border-radius: .4rem;
@@ -234,11 +237,11 @@ label.check {
   color: #fff;
   font-weight: 500;
 }
-.state-green { background: var(--green-dark); }
+.state-green { background: var(--kiwi-dark); }
 .state-amber { background: var(--amber); color: #000; }
 .state-red { background: var(--danger); }
 
-/* ---------- TOTALS ---------- */
+/* ---------- TOTALES ---------- */
 .totals-grid {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -247,10 +250,10 @@ label.check {
 }
 .totals-grid .big {
   font-weight: 600;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
 }
 
-/* ---------- KPI CARDS ---------- */
+/* ---------- KPIs ---------- */
 .kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(150px,1fr));
@@ -261,7 +264,7 @@ label.check {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: .6rem;
-  padding: .5rem;
+  padding: .6rem;
   text-align: center;
 }
 .kpi span {
@@ -271,21 +274,26 @@ label.check {
 }
 .kpi strong {
   font-size: 1.1rem;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
 }
 
-/* ---------- PRINT AREA ---------- */
-.print {
-  background: white;
+/* ---------- PDF / PRINT ---------- */
+#printArea {
+  background: #fff;
   color: #000;
-  padding: 1rem;
+  padding: 24px;
   border: 1px solid #e5e7eb;
-  margin-top: 1rem;
+  margin-top: 1.2rem;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .pdf-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
   justify-content: space-between;
-  align-items: center;
+  gap: 12px;
 }
 .pdf-brand {
   display: flex;
@@ -293,40 +301,53 @@ label.check {
   gap: .6rem;
 }
 .pdf-brand img {
-  width: 42px;
-  height: 42px;
+  width: 70px;
+  height: auto;
+  border-radius: 10px;
 }
 .pdf-brand h2 {
   margin: 0;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
 }
 .pdf-meta {
-  font-size: .85rem;
+  text-align: right;
+  font-size: .9rem;
   color: #333;
 }
-.pdf-meta div { margin-bottom: .2rem; }
+#p-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: .8rem;
+}
+#p-tabla th,
+#p-tabla td {
+  border: 1px solid #ddd;
+  padding: .35rem;
+  font-size: .85rem;
+  text-align: left;
+}
 .pdf-totales {
-  display: flex;
-  justify-content: space-between;
-  border-top: 1px solid var(--border);
-  margin-top: .6rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid #ddd;
+  margin-top: 1rem;
   padding-top: .6rem;
   font-size: .9rem;
 }
 .pdf-foot {
   text-align: right;
-  margin-top: .5rem;
+  margin-top: .7rem;
   font-size: .85rem;
   color: var(--muted);
 }
 
-/* ---------- PRICE PANEL ---------- */
+/* ---------- PANEL HISTORIAL DE PRECIOS ---------- */
 #pricePanel {
   position: fixed;
   bottom: 20px;
   right: 20px;
   background: var(--bg);
-  border: 1px solid var(--green);
+  border: 1px solid var(--kiwi);
   box-shadow: 0 2px 6px rgba(0,0,0,0.15);
   border-radius: .6rem;
   padding: .7rem 1rem;
@@ -335,7 +356,7 @@ label.check {
 }
 .pp-title {
   font-weight: 600;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
   margin-bottom: .4rem;
 }
 .pp-row {
@@ -345,10 +366,10 @@ label.check {
   padding: .1rem 0;
 }
 .pp-row strong {
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
 }
 
-/* ---------- ROWS / ACTIONS ---------- */
+/* ---------- FILAS / ACCIONES ---------- */
 .row {
   display: flex;
   align-items: center;
@@ -364,7 +385,7 @@ label.check {
 .pendiente {
   margin-top: .4rem;
   font-weight: 500;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
 }
 .pendiente.total {
   border-top: 1px solid var(--border);
@@ -372,28 +393,29 @@ label.check {
   padding-top: .5rem;
 }
 
-/* ---------- SCROLL ---------- */
+/* ---------- SCROLLBAR ---------- */
 ::-webkit-scrollbar { height: 6px; width: 6px; }
-::-webkit-scrollbar-thumb { background: var(--green-dark); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--kiwi-dark); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg-alt); }
 
-/* ---------- UTILS ---------- */
+/* ---------- UTILIDADES ---------- */
 .muted { color: var(--muted); font-size: .85rem; }
 .text-right { text-align: right; }
 .center { text-align: center; }
-/* === DESTACAR CUADRO DE PRECIO (highlight) === */
+
+/* ---------- RESALTAR PRECIO ---------- */
 input.price {
-  border: 2px solid var(--green-dark);
-  background: #f0fff4; /* tono verde muy claro */
+  border: 2px solid var(--kiwi-dark);
+  background: #f0fff4;
   font-weight: 600;
-  color: var(--green-dark);
+  color: var(--kiwi-dark);
   box-shadow: 0 0 4px rgba(22,163,74,0.3);
   transition: all 0.2s ease;
 }
-
 input.price:focus {
   outline: none;
   border-color: #22c55e;
   box-shadow: 0 0 6px rgba(34,197,94,0.4);
   background: #ecfdf5;
 }
+
