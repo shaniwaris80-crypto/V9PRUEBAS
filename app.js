@@ -1,16 +1,16 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full, Estable)
-   - Tema: blanco/negro + verde kiwi
-   - Cliente con IDs únicas (corrige mezcla de datos)
-   - IVA 4% opcional (solo sobre SUBTOTAL). Si se añade, oculta nota "IVA incluido".
-   - Transporte 10% opcional (sobre SUBTOTAL)
-   - PDF PRO estable (sin splash), logo kiwi solo en PDF
-   - Historial de precios, pagos parciales, pendientes, ventas, backups
+   ARSLAN PRO V10.4 — KIWI Edition (Full, PDF+IVA+Clientes Fix)
+   - Logo kiwi en PDF (base64) sin archivos externos
+   - IVA 4% opcional: se aplica SOLO al SUBTOTAL (no transporte)
+   - Si se aplica IVA => se oculta el texto “IVA incluido…”
+   - Selección de clientes por ID único (sin cruces)
+   - Totales en vivo, PDF pro, backups, ventas, pendientes
+   - Sin splash, sin logos en UI (logo solo en PDF)
 ======================================================= */
 (function(){
 "use strict";
 
-/* ---------- HELPERS ---------- */
+/* ---------- CONSTANTES / HELPERS ---------- */
 const $  = (s,root=document)=>root.querySelector(s);
 const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
 const money = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
@@ -19,13 +19,14 @@ const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':
 const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
-const uuid = ()=> 'c_'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+const uid = ()=>'c_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 
 /* ---------- KEYS ---------- */
 const K_CLIENTES='arslan_v104_clientes';
 const K_PRODUCTOS='arslan_v104_productos';
 const K_FACTURAS='arslan_v104_facturas';
 const K_PRICEHIST='arslan_v104_pricehist';
+const K_THEME='arslan_v104_theme';
 
 /* ---------- ESTADO ---------- */
 let clientes  = load(K_CLIENTES, []);
@@ -36,35 +37,46 @@ let priceHist = load(K_PRICEHIST, {});
 function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
-/* ---------- TABS ---------- */
-function switchTab(id){
-  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
-  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
-  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
-  if(id==='pendientes'){ renderPendientes(); }
-  if(id==='resumen'){ drawResumen(); }
-}
-$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
+/* ---------- LOGO BASE64 PARA PDF ---------- */
+/* Icono kiwi base64 (pequeño, ~2 KB) */
+const PDF_KIWI_BASE64 = 
+"data:image/svg+xml;base64,"+
+"PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIg"+
+"eG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIg"+
+"cj0iMzAiIGZpbGw9IiM5RmQ1NzIiIHN0cm9rZT0iI0U2RjdlOSIgc3Ryb2tlLXdpZHRoPSIyIi8+Ci8q"+
+"IGRldGFsbGUga2l3aSBzbGljZSB3aXRoIHNlZWRzICovCjxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9"+
+"IjE0IiBmaWxsPSIjRkZGIiBvcGFjaXR5PSIuOTUiLz4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0i"+
+"NSIgZmlsbD0iI0YxQzU1OCIgc3Ryb2tlPSIjNDg3QTM0IiBzdHJva2Utd2lkdGg9IjIiLz4KPGxpbmUg"+
+"eDE9IjMyIiB5MT0iMTIiIHgyPSIzMiIgeTI9IjE4IiBzdHJva2U9IiM0ODdBMzQiIHN0cm9rZS13aWR0"+
+"aD0iMiIvPgo8L3N2Zz4=";
 
 /* ---------- SEED DATA ---------- */
-function ensureClienteId(c){ if(!c.id) c.id = uuid(); return c; }
+function ensureClienteIDs(){
+  let changed=false;
+  clientes.forEach(c=>{ if(!c || typeof c!=='object') return; if(!c.id){ c.id=uid(); changed=true; } });
+  if(changed) save(K_CLIENTES, clientes);
+}
 function uniqueByName(arr){
   const map=new Map();
-  arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,ensureClienteId(c)); });
+  arr.forEach(c=>{
+    if(!c) return;
+    const name=(c.nombre||'').trim().toLowerCase();
+    if(!map.has(name)){
+      if(!c.id) c.id=uid();
+      map.set(name, c);
+    }
+  });
   return [...map.values()];
 }
 function seedClientesIfEmpty(){
-  if(clientes.length) { clientes = clientes.map(ensureClienteId); save(K_CLIENTES, clientes); return; }
+  if(clientes.length) return;
   clientes = uniqueByName([
     {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
     {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
     {nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
     {nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
     {nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {nombre:'Hotel Cordon'},
-    {nombre:'Vaivén Hostelería'},
-    {nombre:'Grupo Resicare'},
-    {nombre:'Carlos Alameda Peralta & Seis Más'},
+    {nombre:'Hotel Cordon'},{nombre:'Vaivén Hostelería'},{nombre:'Grupo Resicare'},{nombre:'Carlos Alameda Peralta & Seis Más'},
     {nombre:'Tabalou Development SLU', nif:'ES B09567769'},
     {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
     {nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
@@ -78,30 +90,29 @@ function seedClientesIfEmpty(){
     {nombre:'Angela', dir:'C/ Madrid, Burgos'},
     {nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
     {nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
-    {nombre:'Domingo'},
-    {nombre:'Bar Tropical'},
+    {nombre:'Domingo'},{nombre:'Bar Tropical'},
     {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
     {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
     {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
-  ]).map(ensureClienteId);
+  ]).map(c=>({id:uid(), ...c}));
   save(K_CLIENTES, clientes);
 }
 const PRODUCT_NAMES = [
-  "GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ",
-  "MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA","MANDARINA HOJA","MANZANA GOLDEN 20","NARANJA TOMASIN","NECTARINA","NUECES","SANDIA","LIMON SEGUNDA","MANZANA FUJI",
-  "NARANJA MESA SONRISA","JENGIBRE","BATATA","AJO PRIMERA","CEBOLLA NORMAL","CALABAZA GRANDE","PATATA LAVADA","TOMATE CHERRY RAMA","TOMATE CHERRY PERA","TOMATE DANIELA","TOMATE ROSA PRIMERA",
-  "CEBOLLINO","TOMATE ASURCADO MARRON","TOMATE RAMA","PIMIENTO PADRON","ZANAHORIA","PEPINO","CEBOLLETA","PUERROS","BROCOLI","JUDIA VERDE","BERENJENA","PIMIENTO ITALIANO VERDE",
-  "PIMIENTO ITALIANO ROJO","CHAMPIÑON","UVA ROJA","UVA BLANCA","ALCACHOFA","CALABACIN","COLIFLOR","BATAVIA","ICEBERG","MANDARINA SEGUNDA","MANZANA GOLDEN 28","NARANJA ZUMO","KIWI SEGUNDA",
-  "MANZANA ROYAL GALA 24","PLATANO CANARIO SUELTO","CEREZA","FRESAS","ARANDANOS","ESPINACA","PEREJIL","CILANTRO","ACELGAS","PIMIENTO VERDE","PIMIENTO ROJO","MACHO VERDE","MACHO MADURO",
-  "YUCA","AVOCADO","CEBOLLA ROJA","MENTA","HABANERO","RABANITOS","POMELO","PAPAYA","REINETA 28","NISPERO","ALBARICOQUE","TOMATE PERA","TOMATE BOLA","TOMATE PINK","VALVENOSTA GOLDEN",
-  "MELOCOTON ROJO","MELON GALIA","APIO","NARANJA SANHUJA","LIMON PRIMERA","MANGO","MELOCOTON AMARILLO","VALVENOSTA ROJA","PIÑA","NARANJA HOJA","PERA CONFERENCIA SEGUNDA","CEBOLLA DULCE",
-  "TOMATE ASURCADO AZUL","ESPARRAGOS BLANCOS","ESPARRAGOS TRIGUEROS","REINETA PRIMERA","AGUACATE PRIMERA","COCO","NECTARINA SEGUNDA","REINETA 24","NECTARINA CARNE BLANCA","GUINDILLA",
-  "REINETA VERDE","PATATA 25KG","PATATA 5 KG","TOMATE RAFF","REPOLLO","KIWI ZESPRI","PARAGUAYO SEGUNDA","MELON","REINETA 26","TOMATE ROSA","MANZANA CRIPS",
-  "ALOE VERA PIEZAS","TOMATE ENSALADA","PATATA 10KG","MELON BOLLO","CIRUELA ROJA","LIMA","GUINEO VERDE","SETAS","BANANA","BONIATO","FRAMBUESA","BREVAS","PERA AGUA","YAUTIA","YAME",
-  "OKRA","MANZANA MELASSI","CACAHUETE","SANDIA NEGRA","SANDIA RAYADA","HIGOS","KUMATO","KIWI CHILE","MELOCOTON AMARILLO SEGUNDA","HIERBABUENA","REMOLACHA","LECHUGA ROMANA","CEREZA",
-  "KAKI","CIRUELA CLAUDIA","PERA LIMONERA","CIRUELA AMARILLA","HIGOS BLANCOS","UVA ALVILLO","LIMON EXTRA","PITAHAYA ROJA","HIGO CHUMBO","CLEMENTINA","GRANADA","NECTARINA PRIMERA BIS",
-  "CHIRIMOYA","UVA CHELVA","PIMIENTO CALIFORNIA VERDE","KIWI TOMASIN","PIMIENTO CALIFORNIA ROJO","MANDARINA SATSUMA","CASTAÑA","CAKI","MANZANA KANZI","PERA ERCOLINA","NABO",
-  "UVA ALVILLO NEGRA","CHAYOTE","ROYAL GALA 28","MANDARINA PRIMERA","PIMIENTO PINTON","MELOCOTON AMARILLO DE CALANDA","HINOJOS","MANDARINA DE HOJA","UVA ROJA PRIMERA","UVA BLANCA PRIMERA"
+"GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ",
+"MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA","MANDARINA HOJA","MANZANA GOLDEN 20","NARANJA TOMASIN","NECTARINA","NUECES","SANDIA","LIMON SEGUNDA","MANZANA FUJI",
+"NARANJA MESA SONRISA","JENGIBRE","BATATA","AJO PRIMERA","CEBOLLA NORMAL","CALABAZA GRANDE","PATATA LAVADA","TOMATE CHERRY RAMA","TOMATE CHERRY PERA","TOMATE DANIELA","TOMATE ROSA PRIMERA",
+"CEBOLLINO","TOMATE ASURCADO MARRON","TOMATE RAMA","PIMIENTO PADRON","ZANAHORIA","PEPINO","CEBOLLETA","PUERROS","BROCOLI","JUDIA VERDE","BERENJENA","PIMIENTO ITALIANO VERDE",
+"PIMIENTO ITALIANO ROJO","CHAMPIÑON","UVA ROJA","UVA BLANCA","ALCACHOFA","CALABACIN","COLIFLOR","BATAVIA","ICEBERG","MANDARINA SEGUNDA","MANZANA GOLDEN 28","NARANJA ZUMO","KIWI SEGUNDA",
+"MANZANA ROYAL GALA 24","PLATANO CANARIO SUELTO","CEREZA","FRESAS","ARANDANOS","ESPINACA","PEREJIL","CILANTRO","ACELGAS","PIMIENTO VERDE","PIMIENTO ROJO","MACHO VERDE","MACHO MADURO",
+"YUCA","AVOCADO","CEBOLLA ROJA","MENTA","HABANERO","RABANITOS","POMELO","PAPAYA","REINETA 28","NISPERO","ALBARICOQUE","TOMATE PERA","TOMATE BOLA","TOMATE PINK","VALVENOSTA GOLDEN",
+"MELOCOTON ROJO","MELON GALIA","APIO","NARANJA SANHUJA","LIMON PRIMERA","MANGO","MELOCOTON AMARILLO","VALVENOSTA ROJA","PIÑA","NARANJA HOJA","PERA CONFERENCIA SEGUNDA","CEBOLLA DULCE",
+"TOMATE ASURCADO AZUL","ESPARRAGOS BLANCOS","ESPARRAGOS TRIGUEROS","REINETA PRIMERA","AGUACATE PRIMERA","COCO","NECTARINA SEGUNDA","REINETA 24","NECTARINA CARNE BLANCA","GUINDILLA",
+"REINETA VERDE","PATATA 25KG","PATATA 5 KG","TOMATE RAFF","REPOLLO","KIWI ZESPRI","PARAGUAYO SEGUNDA","MELON","REINETA 26","TOMATE ROSA","MANZANA CRIPS",
+"ALOE VERA PIEZAS","TOMATE ENSALADA","PATATA 10KG","MELON BOLLO","CIRUELA ROJA","LIMA","GUINEO VERDE","SETAS","BANANA","BONIATO","FRAMBUESA","BREVAS","PERA AGUA","YAUTIA","YAME",
+"OKRA","MANZANA MELASSI","CACAHUETE","SANDIA NEGRA","SANDIA RAYADA","HIGOS","KUMATO","KIWI CHILE","MELOCOTON AMARILLO SEGUNDA","HIERBABUENA","REMOLACHA","LECHUGA ROMANA","CEREZA",
+"KAKI","CIRUELA CLAUDIA","PERA LIMONERA","CIRUELA AMARILLA","HIGOS BLANCOS","UVA ALVILLO","LIMON EXTRA","PITAHAYA ROJA","HIGO CHUMBO","CLEMENTINA","GRANADA","NECTARINA PRIMERA BIS",
+"CHIRIMOYA","UVA CHELVA","PIMIENTO CALIFORNIA VERDE","KIWI TOMASIN","PIMIENTO CALIFORNIA ROJO","MANDARINA SATSUMA","CASTAÑA","CAKI","MANZANA KANZI","PERA ERCOLINA","NABO",
+"UVA ALVILLO NEGRA","CHAYOTE","ROYAL GALA 28","MANDARINA PRIMERA","PIMIENTO PINTON","MELOCOTON AMARILLO DE CALANDA","HINOJOS","MANDARINA DE HOJA","UVA ROJA PRIMERA","UVA BLANCA PRIMERA"
 ];
 function seedProductsIfEmpty(){
   if(productos.length) return;
@@ -109,7 +120,17 @@ function seedProductsIfEmpty(){
   save(K_PRODUCTOS, productos);
 }
 
-/* ---------- PROVIDER DEFAULTS (tus datos) ---------- */
+/* ---------- TABS ---------- */
+function switchTab(id){
+  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
+  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
+  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
+  if(id==='pendientes'){ renderPendientes(); }
+  if(id==='resumen'){ drawResumen(); }
+}
+$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
+
+/* ---------- PROVEEDOR POR DEFECTO ---------- */
 function setProviderDefaultsIfEmpty(){
   if(!$('#provNombre').value) $('#provNombre').value = 'Mohammad Arslan Waris';
   if(!$('#provNif').value)    $('#provNif').value    = 'X6389988J';
@@ -138,19 +159,18 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI (con IDs) ---------- */
+/* ---------- CLIENTES UI (IDs ÚNICOS) ---------- */
 function saveClientes(){ save(K_CLIENTES, clientes); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach((c)=>{
+  const arr=[...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+  arr.forEach((c)=>{
     const opt=document.createElement('option');
     opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)';
     sel.appendChild(opt);
   });
 }
-function getClienteById(id){ return clientes.find(c=>c.id===id); }
-
 function renderClientesLista(){
   const cont = $('#listaClientes'); if(!cont) return;
   cont.innerHTML='';
@@ -179,9 +199,8 @@ function renderClientesLista(){
       const idx = clientes.findIndex(x=>x.id===id);
       if(idx<0) return;
       if(b.dataset.e==='use'){
-        const c=clientes[idx]; if(!c) return;
+        const c=clientes[idx];
         $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-        $('#selCliente').value = c.id;
         switchTab('factura');
       }else if(b.dataset.e==='edit'){
         const c=clientes[idx];
@@ -197,6 +216,17 @@ function renderClientesLista(){
     });
   });
 }
+$('#selCliente')?.addEventListener('change', ()=>{
+  const id=$('#selCliente').value; if(!id) return;
+  const c=clientes.find(x=>x.id===id); if(!c) return;
+  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
+});
+$('#btnAddCliente')?.addEventListener('click', ()=>{
+  const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
+  const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
+  clientes.push({id:uid(), nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
+});
+$('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
 /* ---------- PRODUCTOS UI ---------- */
 function saveProductos(){ save(K_PRODUCTOS, productos); }
@@ -331,7 +361,7 @@ function captureLineas(){
 }
 function lineImporte(l){ return (l.mode==='unidad') ? l.qty*l.price : l.net*l.price; }
 
-/* ---------- PAGOS PARCIALES EN UI ---------- */
+/* ---------- PAGOS PARCIALES TEMP ---------- */
 let pagosTemp = []; // {date, amount}
 function renderPagosTemp(){
   const list=$('#listaPagos'); if(!list) return;
@@ -357,12 +387,11 @@ $('#btnAddPago')?.addEventListener('click', ()=>{
 function recalc(){
   const ls=captureLineas();
   let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
-
-  // Transporte 10% sobre SUBTOTAL
   const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
 
-  // IVA 4% SOLO SOBRE SUBTOTAL (no transporte)
-  const iva = $('#chkAddIVA')?.checked ? subtotal * 0.04 : 0;
+  // IVA: solo si se marca, y SOLO sobre el SUBTOTAL
+  const ivaAplica = $('#chkIvaIncluido')?.checked ?? false;
+  const iva = ivaAplica ? subtotal * 0.04 : 0;
 
   const total = subtotal + transporte + iva;
 
@@ -378,24 +407,26 @@ function recalc(){
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
+  // Mostrar/ocultar texto “IVA incluido…”
+  const ivaMsg = $('#ivaIncluidoMsg');
+  if(ivaMsg){ ivaMsg.style.display = ivaAplica ? 'none' : 'block'; }
+
   // estado sugerido
   if(total<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<total){ $('#estado').value='parcial'; }
   else { $('#estado').value='pagado'; }
 
-  // Pie de PDF: si se añade IVA, ocultar "IVA incluido…"
-  const foot=$('#pdf-foot-note');
-  if(foot){
-    foot.textContent = $('#chkAddIVA')?.checked ? '' : 'IVA incluido en los precios.';
-  }
-
   fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
   drawResumen(); // KPIs rápidos
 }
-;['chkTransporte','chkAddIVA','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
+;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
 function fillPrint(lines, totals, temp=null, f=null){
+  // Logo en PDF (img#pdf-logo)
+  const pdfLogo = $('#pdf-logo');
+  if(pdfLogo && !pdfLogo.src) pdfLogo.src = PDF_KIWI_BASE64;
+
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
@@ -437,6 +468,13 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
   $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
+  // Pie de PDF (coherente con IVA aplicado/no aplicado)
+  const foot=$('#pdf-foot-note');
+  if(foot){
+    const ivaAplica = $('#chkIvaIncluido')?.checked ?? false;
+    foot.textContent = ivaAplica ? '' : 'IVA incluido en los precios.';
+  }
+
   // QR con datos básicos
   try{
     const canvas = $('#p-qr');
@@ -473,7 +511,7 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
     numero, fecha:now,
     proveedor:{nombre:$('#provNombre').value,nif:$('#provNif').value,dir:$('#provDir').value,tel:$('#provTel').value,email:$('#provEmail').value},
     cliente:{nombre:$('#cliNombre').value,nif:$('#cliNif').value,dir:$('#cliDir').value,tel:$('#cliTel').value,email:$('#cliEmail').value},
-    lineas:ls, transporte:$('#chkTransporte').checked, addIVA:$('#chkAddIVA').checked,
+    lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
     estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
     pagos // historial de pagos parciales
@@ -487,26 +525,25 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
 
 $('#btnNueva')?.addEventListener('click', ()=>{
   const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea();
-  $('#chkTransporte').checked=false; $('#chkAddIVA').checked=false; $('#estado').value='pendiente';
+  $('#chkTransporte').checked=false; $('#chkIvaIncluido').checked=false; $('#estado').value='pendiente';
   $('#pagado').value=''; $('#metodoPago').value='Efectivo'; $('#observaciones').value='';
   pagosTemp=[]; renderPagosTemp();
   recalc();
 });
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
-  // Asegurar que la vista PDF está actualizada
+  // Siempre rellenar antes de imprimir para evitar PDF en blanco
   const ls=captureLineas();
-  const subtotal=unMoney($('#subtotal').textContent);
-  const transporte=unMoney($('#transp').textContent);
-  const iva=unMoney($('#iva').textContent);
-  const total=unMoney($('#total').textContent);
+  let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
+  const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
+  const ivaAplica = $('#chkIvaIncluido')?.checked ?? false;
+  const iva = ivaAplica ? subtotal * 0.04 : 0;
+  const total = subtotal + transporte + iva;
   fillPrint(ls,{subtotal,transporte,iva,total},null,null);
 
   const element = document.getElementById('printArea');
   const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
   const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-  // Evitar PDF en blanco: forzar reflow y usar .from(element)
-  element.offsetHeight; 
   window.html2pdf().set(opt).from(element).save();
 });
 
@@ -538,7 +575,7 @@ function renderFacturas(){
       <div class="row">
         <strong>${money(f.totals.total)}</strong>
         <button class="ghost" data-e="ver" data-i="${idx}">Ver</button>
-        <button data-e="cobrar" data-i="${idx}" class="primary">💶 Cobrar</button>
+        <button data-e="cobrar" data-i="${idx}">💶 Cobrar</button>
         <button class="ghost" data-e="parcial" data-i="${idx}">+ Parcial</button>
         <button class="ghost" data-e="pdf" data-i="${idx}">PDF</button>
       </div>`;
@@ -557,7 +594,7 @@ function renderFacturas(){
         (f.pagos??=[]).push({date:todayISO(), amount: tot});
         saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
       }else if(b.dataset.e==='parcial'){
-        const max=(f.totals.total||0)-(f.totals.pagado||0);
+        const max=f.totals.total-(f.totals.pagado||0);
         const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
         if(val>0){
           f.pagos=f.pagos||[]; f.pagos.push({date:todayISO(), amount:val});
@@ -727,19 +764,19 @@ $('#btnRestore')?.addEventListener('click', ()=>{
     const reader=new FileReader(); reader.onload=()=>{
       try{
         const obj=JSON.parse(reader.result);
-        if(obj.clientes) clientes=obj.clientes.map(ensureClienteId);
+        if(obj.clientes) clientes=obj.clientes;
         if(obj.productos) productos=obj.productos;
         if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
         save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
-        renderAll(); alert('Copia restaurada ✔️');
+        ensureClienteIDs(); renderAll(); alert('Copia restaurada ✔️');
       }catch{ alert('JSON inválido'); }
     }; reader.readAsText(f);
   };
   inp.click();
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr.map(ensureClienteId)); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); ensureClienteIDs(); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
 $('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
 $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
@@ -765,35 +802,11 @@ function exportVentasCSV(){
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/* ---------- EVENTOS GENERALES ---------- */
+/* ---------- EVENTOS GENERALES + RENDER ---------- */
 $('#btnAddLinea')?.addEventListener('click', addLinea);
 $('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
 $('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
-$('#selCliente')?.addEventListener('change', ()=>{
-  const id=$('#selCliente').value; if(!id) return; const c=getClienteById(id); if(!c) return;
-  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-});
-$('#btnAddCliente')?.addEventListener('click', ()=>{
-  const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
-  const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  clientes.push(ensureClienteId({nombre,nif,dir,tel,email})); saveClientes(); renderClientesSelect(); renderClientesLista();
-});
-$('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
-/* Reset de deudas */
-$('#btnResetCliente')?.addEventListener('click', ()=>{
-  const nombre = ($('#cliNombre').value||'').trim(); if(!nombre){ alert('Selecciona/Escribe un cliente en la factura.'); return; }
-  if(!confirm(`Poner a 0 las deudas de ${nombre}?`)) return;
-  facturas.forEach(f=>{ if((f.cliente?.nombre||'')===nombre){ f.totals.pendiente=0; f.totals.pagado=f.totals.total; f.estado='pagado'; } });
-  saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-});
-$('#btnResetGlobal')?.addEventListener('click', ()=>{
-  if(!confirm('Poner a 0 TODAS las deudas?')) return;
-  facturas.forEach(f=>{ f.totals.pendiente=0; f.totals.pagado=f.totals.total; f.estado='pagado'; });
-  saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-});
-
-/* ---------- RESUMEN ---------- */
 function renderAll(){
   renderClientesSelect(); renderClientesLista();
   populateProductDatalist(); renderProductos(); renderFacturas(); renderPendientes();
@@ -804,7 +817,10 @@ function drawResumen(){ drawKPIs(); }
 /* ---------- BOOT ---------- */
 (function boot(){
   seedClientesIfEmpty();
+  ensureClienteIDs();
   seedProductsIfEmpty();
+
+  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
 
   // 5 líneas iniciales
@@ -813,9 +829,7 @@ function drawResumen(){ drawKPIs(); }
   renderPagosTemp();
   renderAll(); recalc();
 
-  // Verificación inicial tras cargar assets
-  window.addEventListener('load', ()=>setTimeout(()=>{ try{
-    populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
-  }catch(e){ console.error('Init error',e); } }, 400));
+  // entrar por defecto en Factura
+  document.querySelector('[data-tab="factura"]')?.click();
 })();
 })();
