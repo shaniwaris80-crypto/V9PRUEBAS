@@ -1,835 +1,1064 @@
-/* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full, PDF+IVA+Clientes Fix)
-   - Logo kiwi en PDF (base64) sin archivos externos
-   - IVA 4% opcional: se aplica SOLO al SUBTOTAL (no transporte)
-   - Si se aplica IVA => se oculta el texto “IVA incluido…”
-   - Selección de clientes por ID único (sin cruces)
-   - Totales en vivo, PDF pro, backups, ventas, pendientes
-   - Sin splash, sin logos en UI (logo solo en PDF)
-======================================================= */
-(function(){
-"use strict";
+/* ===========================================================
+   ARSLAN PRO V10.4 — KIWI Edition
+   app.js — Base completa con Firebase Upload-Only + Logo Kiwi
+   =========================================================== */
 
-/* ---------- CONSTANTES / HELPERS ---------- */
-const $  = (s,root=document)=>root.querySelector(s);
-const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
-const money = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
-const parseNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; };
-const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-const todayISO = () => new Date().toISOString();
-const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
-const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
-const uid = ()=>'c_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+document.addEventListener('DOMContentLoaded', () => {
 
-/* ---------- KEYS ---------- */
-const K_CLIENTES='arslan_v104_clientes';
-const K_PRODUCTOS='arslan_v104_productos';
-const K_FACTURAS='arslan_v104_facturas';
-const K_PRICEHIST='arslan_v104_pricehist';
-const K_THEME='arslan_v104_theme';
+  /* ---------- HELPERS ---------- */
+  const $ = s => document.querySelector(s);
+  const $$ = s => Array.from(document.querySelectorAll(s));
+  const money = n => (isNaN(n) ? 0 : n).toFixed(2).replace('.', ',') + ' €';
+  const parseNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; };
+  const nowISO = () => new Date().toISOString().slice(0, 10);
+  const uid = () => 'FA-' + new Date().toISOString().replace(/\D/g, '').slice(0, 12);
 
-/* ---------- ESTADO ---------- */
-let clientes  = load(K_CLIENTES, []);
-let productos = load(K_PRODUCTOS, []);
-let facturas  = load(K_FACTURAS, []);
-let priceHist = load(K_PRICEHIST, {});
+  /* ---------- VARIABLES GLOBALES ---------- */
+  let clientes = JSON.parse(localStorage.getItem('clientes') || '[]');
+  let productos = JSON.parse(localStorage.getItem('productos') || '[]');
+  let facturas = JSON.parse(localStorage.getItem('facturas') || '[]');
+  let priceHist = JSON.parse(localStorage.getItem('priceHist') || '{}');
 
-function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
-function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
+  let lineas = [];
+  let pagos = [];
 
-/* ---------- LOGO BASE64 PARA PDF ---------- */
-/* Icono kiwi base64 (pequeño, ~2 KB) */
-const PDF_KIWI_BASE64 = 
-"data:image/svg+xml;base64,"+
-"PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIg"+
-"eG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIg"+
-"cj0iMzAiIGZpbGw9IiM5RmQ1NzIiIHN0cm9rZT0iI0U2RjdlOSIgc3Ryb2tlLXdpZHRoPSIyIi8+Ci8q"+
-"IGRldGFsbGUga2l3aSBzbGljZSB3aXRoIHNlZWRzICovCjxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9"+
-"IjE0IiBmaWxsPSIjRkZGIiBvcGFjaXR5PSIuOTUiLz4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0i"+
-"NSIgZmlsbD0iI0YxQzU1OCIgc3Ryb2tlPSIjNDg3QTM0IiBzdHJva2Utd2lkdGg9IjIiLz4KPGxpbmUg"+
-"eDE9IjMyIiB5MT0iMTIiIHgyPSIzMiIgeTI9IjE4IiBzdHJva2U9IiM0ODdBMzQiIHN0cm9rZS13aWR0"+
-"aD0iMiIvPgo8L3N2Zz4=";
+  /* ---------- FIREBASE CONFIG (Upload Only) ---------- */
+  const firebaseConfig = {
+    databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app"
+  };
+  const app = firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const syncRef = db.ref('arslan_pro_v104');
 
-/* ---------- SEED DATA ---------- */
-function ensureClienteIDs(){
-  let changed=false;
-  clientes.forEach(c=>{ if(!c || typeof c!=='object') return; if(!c.id){ c.id=uid(); changed=true; } });
-  if(changed) save(K_CLIENTES, clientes);
-}
-function uniqueByName(arr){
-  const map=new Map();
-  arr.forEach(c=>{
+  const syncDot = $('#syncDot');
+  const syncText = $('#syncText');
+
+  function setSyncState(state) {
+    const el = $('#syncIndicator');
+    el.classList.remove('sync-ok','sync-error');
+    if (state === 'ok') { el.classList.add('sync-ok'); syncText.textContent = 'Synced'; }
+    else if (state === 'error') { el.classList.add('sync-error'); syncText.textContent = 'Error'; }
+    else { syncText.textContent = 'Sync'; }
+  }
+
+  async function firebaseUpload() {
+    try {
+      setSyncState('...');
+      const data = { clientes, productos, facturas, priceHist, ts: Date.now() };
+      await syncRef.set(data);
+      setSyncState('ok');
+    } catch (e) {
+      console.error('Firebase upload error', e);
+      setSyncState('error');
+    }
+  }
+
+  // Auto-sync cada 60s y tras guardar factura
+  setInterval(firebaseUpload, 60000);
+
+  /* ---------- GUARDAR EN LOCAL Y FIREBASE ---------- */
+  function saveAll() {
+    localStorage.setItem('clientes', JSON.stringify(clientes));
+    localStorage.setItem('productos', JSON.stringify(productos));
+    localStorage.setItem('facturas', JSON.stringify(facturas));
+    localStorage.setItem('priceHist', JSON.stringify(priceHist));
+    firebaseUpload(); // solo subida
+  }
+
+  /* ---------- PESTAÑAS ---------- */
+  $$('.tab').forEach(btn=>{
+    btn.onclick=()=>{
+      $$('.tab').forEach(t=>t.classList.remove('active'));
+      btn.classList.add('active');
+      const tab=btn.dataset.tab;
+      $$('.panel').forEach(p=>p.classList.toggle('active',p.dataset.tabPanel===tab));
+    };
+  });
+
+  /* ---------- CLIENTES ---------- */
+  function renderClientes() {
+    const lista = $('#listaClientes');
+    lista.innerHTML = '';
+    clientes.forEach((c,i)=>{
+      const div=document.createElement('div');
+      div.className='item';
+      div.innerHTML=`<span>${c.nombre}</span><span>${c.nif||''}</span>`;
+      div.onclick=()=>{
+        // al seleccionar cliente desde listado
+        loadCliente(i);
+        $('.tab[data-tab="factura"]').click();
+      };
+      lista.appendChild(div);
+    });
+    // refrescar selector principal
+    const sel=$('#selCliente');
+    sel.innerHTML='<option value="">— Seleccionar —</option>';
+    clientes.forEach((c,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=c.nombre; sel.appendChild(o); });
+  }
+
+  function loadCliente(i){
+    const c=clientes[i];
     if(!c) return;
-    const name=(c.nombre||'').trim().toLowerCase();
-    if(!map.has(name)){
-      if(!c.id) c.id=uid();
-      map.set(name, c);
-    }
-  });
-  return [...map.values()];
-}
-function seedClientesIfEmpty(){
-  if(clientes.length) return;
-  clientes = uniqueByName([
-    {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
-    {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
-    {nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
-    {nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
-    {nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {nombre:'Hotel Cordon'},{nombre:'Vaivén Hostelería'},{nombre:'Grupo Resicare'},{nombre:'Carlos Alameda Peralta & Seis Más'},
-    {nombre:'Tabalou Development SLU', nif:'ES B09567769'},
-    {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
-    {nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
-    {nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
-    {nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
-    {nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
-    {nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
-    {nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
-    {nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
-    {nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
-    {nombre:'Angela', dir:'C/ Madrid, Burgos'},
-    {nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
-    {nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
-    {nombre:'Domingo'},{nombre:'Bar Tropical'},
-    {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
-    {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
-    {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
-  ]).map(c=>({id:uid(), ...c}));
-  save(K_CLIENTES, clientes);
-}
-const PRODUCT_NAMES = [
-"GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ",
-"MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA","MANDARINA HOJA","MANZANA GOLDEN 20","NARANJA TOMASIN","NECTARINA","NUECES","SANDIA","LIMON SEGUNDA","MANZANA FUJI",
-"NARANJA MESA SONRISA","JENGIBRE","BATATA","AJO PRIMERA","CEBOLLA NORMAL","CALABAZA GRANDE","PATATA LAVADA","TOMATE CHERRY RAMA","TOMATE CHERRY PERA","TOMATE DANIELA","TOMATE ROSA PRIMERA",
-"CEBOLLINO","TOMATE ASURCADO MARRON","TOMATE RAMA","PIMIENTO PADRON","ZANAHORIA","PEPINO","CEBOLLETA","PUERROS","BROCOLI","JUDIA VERDE","BERENJENA","PIMIENTO ITALIANO VERDE",
-"PIMIENTO ITALIANO ROJO","CHAMPIÑON","UVA ROJA","UVA BLANCA","ALCACHOFA","CALABACIN","COLIFLOR","BATAVIA","ICEBERG","MANDARINA SEGUNDA","MANZANA GOLDEN 28","NARANJA ZUMO","KIWI SEGUNDA",
-"MANZANA ROYAL GALA 24","PLATANO CANARIO SUELTO","CEREZA","FRESAS","ARANDANOS","ESPINACA","PEREJIL","CILANTRO","ACELGAS","PIMIENTO VERDE","PIMIENTO ROJO","MACHO VERDE","MACHO MADURO",
-"YUCA","AVOCADO","CEBOLLA ROJA","MENTA","HABANERO","RABANITOS","POMELO","PAPAYA","REINETA 28","NISPERO","ALBARICOQUE","TOMATE PERA","TOMATE BOLA","TOMATE PINK","VALVENOSTA GOLDEN",
-"MELOCOTON ROJO","MELON GALIA","APIO","NARANJA SANHUJA","LIMON PRIMERA","MANGO","MELOCOTON AMARILLO","VALVENOSTA ROJA","PIÑA","NARANJA HOJA","PERA CONFERENCIA SEGUNDA","CEBOLLA DULCE",
-"TOMATE ASURCADO AZUL","ESPARRAGOS BLANCOS","ESPARRAGOS TRIGUEROS","REINETA PRIMERA","AGUACATE PRIMERA","COCO","NECTARINA SEGUNDA","REINETA 24","NECTARINA CARNE BLANCA","GUINDILLA",
-"REINETA VERDE","PATATA 25KG","PATATA 5 KG","TOMATE RAFF","REPOLLO","KIWI ZESPRI","PARAGUAYO SEGUNDA","MELON","REINETA 26","TOMATE ROSA","MANZANA CRIPS",
-"ALOE VERA PIEZAS","TOMATE ENSALADA","PATATA 10KG","MELON BOLLO","CIRUELA ROJA","LIMA","GUINEO VERDE","SETAS","BANANA","BONIATO","FRAMBUESA","BREVAS","PERA AGUA","YAUTIA","YAME",
-"OKRA","MANZANA MELASSI","CACAHUETE","SANDIA NEGRA","SANDIA RAYADA","HIGOS","KUMATO","KIWI CHILE","MELOCOTON AMARILLO SEGUNDA","HIERBABUENA","REMOLACHA","LECHUGA ROMANA","CEREZA",
-"KAKI","CIRUELA CLAUDIA","PERA LIMONERA","CIRUELA AMARILLA","HIGOS BLANCOS","UVA ALVILLO","LIMON EXTRA","PITAHAYA ROJA","HIGO CHUMBO","CLEMENTINA","GRANADA","NECTARINA PRIMERA BIS",
-"CHIRIMOYA","UVA CHELVA","PIMIENTO CALIFORNIA VERDE","KIWI TOMASIN","PIMIENTO CALIFORNIA ROJO","MANDARINA SATSUMA","CASTAÑA","CAKI","MANZANA KANZI","PERA ERCOLINA","NABO",
-"UVA ALVILLO NEGRA","CHAYOTE","ROYAL GALA 28","MANDARINA PRIMERA","PIMIENTO PINTON","MELOCOTON AMARILLO DE CALANDA","HINOJOS","MANDARINA DE HOJA","UVA ROJA PRIMERA","UVA BLANCA PRIMERA"
-];
-function seedProductsIfEmpty(){
-  if(productos.length) return;
-  productos = PRODUCT_NAMES.map(n=>({name:n}));
-  save(K_PRODUCTOS, productos);
-}
-
-/* ---------- TABS ---------- */
-function switchTab(id){
-  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
-  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
-  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
-  if(id==='pendientes'){ renderPendientes(); }
-  if(id==='resumen'){ drawResumen(); }
-}
-$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
-
-/* ---------- PROVEEDOR POR DEFECTO ---------- */
-function setProviderDefaultsIfEmpty(){
-  if(!$('#provNombre').value) $('#provNombre').value = 'Mohammad Arslan Waris';
-  if(!$('#provNif').value)    $('#provNif').value    = 'X6389988J';
-  if(!$('#provDir').value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
-  if(!$('#provTel').value)    $('#provTel').value    = '631 667 893';
-  if(!$('#provEmail').value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
-}
-
-/* ---------- HISTORIAL DE PRECIOS ---------- */
-function lastPrice(name){ const arr = priceHist[name]; return arr?.length ? arr[0].price : null; }
-function pushPriceHistory(name, price){
-  if(!name || !(price>0)) return;
-  const arr = priceHist[name] || [];
-  arr.unshift({price, date: todayISO()});
-  priceHist[name] = arr.slice(0,10);
-  save(K_PRICEHIST, priceHist);
-}
-function renderPriceHistory(name){
-  const panel=$('#pricePanel'), body=$('#ppBody'); if(!panel||!body) return;
-  panel.removeAttribute('hidden');
-  const hist=priceHist[name]||[];
-  if(hist.length===0){ body.innerHTML=`<div class="pp-row"><span>${escapeHTML(name)}</span><strong>Sin datos</strong></div>`; hidePanelSoon(); return; }
-  body.innerHTML=`<div class="pp-row" style="justify-content:center"><strong>${escapeHTML(name)}</strong></div>` +
-    hist.map(h=>`<div class="pp-row"><span>${fmtDateDMY(new Date(h.date))}</span><strong>${money(h.price)}</strong></div>`).join('');
-  hidePanelSoon();
-}
-function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
-
-/* ---------- CLIENTES UI (IDs ÚNICOS) ---------- */
-function saveClientes(){ save(K_CLIENTES, clientes); }
-function renderClientesSelect(){
-  const sel = $('#selCliente'); if(!sel) return;
-  sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  const arr=[...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  arr.forEach((c)=>{
-    const opt=document.createElement('option');
-    opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)';
-    sel.appendChild(opt);
-  });
-}
-function renderClientesLista(){
-  const cont = $('#listaClientes'); if(!cont) return;
-  cont.innerHTML='';
-  const q = ($('#buscarCliente')?.value||'').toLowerCase();
-  const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  const view = q ? arr.filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q)) : arr;
-  if(view.length===0){ cont.innerHTML='<div class="item">Sin clientes.</div>'; return; }
-  view.forEach((c)=>{
-    const row=document.createElement('div'); row.className='item';
-    row.innerHTML=`
-      <div>
-        <strong>${escapeHTML(c.nombre||'(Sin nombre)')}</strong>
-        <div class="muted">${escapeHTML(c.nif||'')} · ${escapeHTML(c.dir||'')}</div>
-      </div>
-      <div class="row">
-        <button class="ghost" data-e="use" data-id="${c.id}">Usar</button>
-        <button class="ghost" data-e="edit" data-id="${c.id}">Editar</button>
-        <button class="ghost" data-e="del" data-id="${c.id}">Borrar</button>
-      </div>
-    `;
-    cont.appendChild(row);
-  });
-  cont.querySelectorAll('button').forEach(b=>{
-    const id=b.dataset.id;
-    b.addEventListener('click', ()=>{
-      const idx = clientes.findIndex(x=>x.id===id);
-      if(idx<0) return;
-      if(b.dataset.e==='use'){
-        const c=clientes[idx];
-        $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-        switchTab('factura');
-      }else if(b.dataset.e==='edit'){
-        const c=clientes[idx];
-        const nombre=prompt('Nombre',c.nombre||'')??c.nombre;
-        const nif=prompt('NIF',c.nif||'')??c.nif;
-        const dir=prompt('Dirección',c.dir||'')??c.dir;
-        const tel=prompt('Tel',c.tel||'')??c.tel;
-        const email=prompt('Email',c.email||'')??c.email;
-        clientes[idx]={...c,nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
-      }else{
-        if(confirm('¿Eliminar cliente?')){ clientes.splice(idx,1); saveClientes(); renderClientesSelect(); renderClientesLista(); }
-      }
-    });
-  });
-}
-$('#selCliente')?.addEventListener('change', ()=>{
-  const id=$('#selCliente').value; if(!id) return;
-  const c=clientes.find(x=>x.id===id); if(!c) return;
-  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-});
-$('#btnAddCliente')?.addEventListener('click', ()=>{
-  const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
-  const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  clientes.push({id:uid(), nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
-});
-$('#buscarCliente')?.addEventListener('input', renderClientesLista);
-
-/* ---------- PRODUCTOS UI ---------- */
-function saveProductos(){ save(K_PRODUCTOS, productos); }
-function populateProductDatalist(){
-  const dl=$('#productNamesList'); if(!dl) return;
-  dl.innerHTML='';
-  productos.forEach(p=>{ const o=document.createElement('option'); o.value=p.name; dl.appendChild(o); });
-}
-function renderProductos(){
-  const cont = $('#listaProductos'); if(!cont) return;
-  const q = ($('#buscarProducto')?.value||'').toLowerCase();
-  const view = q ? productos.filter(p=>(p.name||'').toLowerCase().includes(q)) : productos;
-  cont.innerHTML='';
-  if(view.length===0){ cont.innerHTML='<div class="item">Sin resultados.</div>'; return; }
-  view.forEach((p,idx)=>{
-    const row=document.createElement('div'); row.className='product-row';
-    row.innerHTML=`
-      <input value="${escapeHTML(p.name||'')}" data-f="name" />
-      <select data-f="mode">
-        <option value="">—</option><option value="kg"${p.mode==='kg'?' selected':''}>kg</option><option value="unidad"${p.mode==='unidad'?' selected':''}>unidad</option><option value="caja"${p.mode==='caja'?' selected':''}>caja</option>
-      </select>
-      <input type="number" step="0.01" data-f="boxKg" placeholder="Kg/caja" value="${p.boxKg??''}" />
-      <input type="number" step="0.01" data-f="price" placeholder="€ base" value="${p.price??''}" />
-      <input data-f="origin" placeholder="Origen" value="${escapeHTML(p.origin||'')}" />
-      <button data-e="save" data-i="${idx}">💾 Guardar</button>
-      <button class="ghost" data-e="del" data-i="${idx}">✖</button>
-    `;
-    cont.appendChild(row);
-  });
-  cont.querySelectorAll('button').forEach(b=>{
-    const i=+b.dataset.i;
-    b.addEventListener('click', ()=>{
-      if(b.dataset.e==='del'){
-        if(confirm('¿Eliminar producto?')){ productos.splice(i,1); saveProductos(); populateProductDatalist(); renderProductos(); }
-      }else{
-        const row=b.closest('.product-row');
-        const get=f=>row.querySelector(`[data-f="${f}"]`).value.trim();
-        const name=get('name'); const mode=(get('mode')||null);
-        const boxKgStr=get('boxKg'); const boxKg=boxKgStr===''?null:parseNum(boxKgStr);
-        const priceStr=get('price'); const price=priceStr===''?null:parseNum(priceStr);
-        const origin=get('origin')||null;
-        productos[i]={name,mode,boxKg,price,origin}; saveProductos(); populateProductDatalist(); renderProductos();
-      }
-    });
-  });
-}
-$('#buscarProducto')?.addEventListener('input', renderProductos);
-
-/* ---------- FACTURA: LÍNEAS ---------- */
-function findProducto(name){ return productos.find(p=>(p.name||'').toLowerCase()===String(name).toLowerCase()); }
-function addLinea(){
-  const tb = $('#lineasBody'); if(!tb) return;
-  const tr=document.createElement('tr');
-  tr.innerHTML=`
-    <td><input class="name" list="productNamesList" placeholder="Producto (↓ para ver lista)" /></td>
-    <td>
-      <select class="mode">
-        <option value="">—</option><option value="kg">kg</option><option value="unidad">unidad</option><option value="caja">caja</option>
-      </select>
-    </td>
-    <td><input class="qty" type="number" step="1"  placeholder="Cant." /></td>
-    <td><input class="gross" type="number" step="0.01" placeholder="Bruto" /></td>
-    <td><input class="tare"  type="number" step="0.01" placeholder="Tara" /></td>
-    <td><input class="net"   type="number" step="0.01" placeholder="Neto" disabled /></td>
-    <td><input class="price" type="number" step="0.01" placeholder="Precio" /></td>
-    <td><input class="origin" placeholder="Origen (opcional)" /></td>
-    <td><input class="amount" placeholder="Importe" disabled /></td>
-    <td><button class="del">✕</button></td>
-  `;
-  tb.appendChild(tr);
-
-  const name=tr.querySelector('.name');
-  const mode=tr.querySelector('.mode');
-  const qty=tr.querySelector('.qty');
-  const gross=tr.querySelector('.gross');
-  const tare=tr.querySelector('.tare');
-  const net=tr.querySelector('.net');
-  const price=tr.querySelector('.price');
-  const origin=tr.querySelector('.origin');
-  const amount=tr.querySelector('.amount');
-
-  const showHist=()=>{ const n=name.value.trim(); if(n) renderPriceHistory(n); };
-  name.addEventListener('focus', showHist);
-  price.addEventListener('focus', showHist);
-
-  name.addEventListener('change', ()=>{
-    const p=findProducto(name.value.trim());
-    if(p){
-      if(p.mode) mode.value=p.mode;
-      if(p.price!=null) price.value=p.price;
-      if(p.origin) origin.value=p.origin;
-      const lp=lastPrice(p.name); if(lp!=null && !p.price) price.value=lp;
-      renderPriceHistory(p.name);
-    }
-    recalcLine();
-  });
-
-  [mode, qty, gross, tare, price].forEach(i=>i.addEventListener('input', recalcLine));
-  tr.querySelector('.del').addEventListener('click', ()=>{ tr.remove(); recalc(); });
-
-  function recalcLine(){
-    const m=(mode.value||'').toLowerCase();
-    const q=Math.max(0, Math.floor(parseNum(qty.value||0)));
-    const g=Math.max(0, parseNum(gross.value||0));
-    const t=Math.max(0, parseNum(tare.value||0));
-    const pr=Math.max(0, parseNum(price.value||0));
-    let n=0;
-
-    if(g>0 || t>0){ n=Math.max(0,g-t); }
-    else if(m==='caja'){ const p=findProducto(name.value); const kg=p?.boxKg||0; n=q*kg; }
-    else if(m==='kg'){ n=q; }
-    else if(m==='unidad'){ n=q; }
-
-    net.value = n ? n.toFixed(2) : '';
-    const amt = (m==='unidad') ? q*pr : n*pr;
-    amount.value = amt>0 ? amt.toFixed(2) : '';
-    recalc();
-  }
-}
-function captureLineas(){
-  return $$('#lineasBody tr').map(r=>{
-    const name=r.querySelector('.name').value.trim();
-    const mode=r.querySelector('.mode').value.trim().toLowerCase();
-    const qty=Math.max(0, Math.floor(parseNum(r.querySelector('.qty').value||0)));
-    const gross=Math.max(0, parseNum(r.querySelector('.gross').value||0));
-    const tare=Math.max(0, parseNum(r.querySelector('.tare').value||0));
-    const net=Math.max(0, parseNum(r.querySelector('.net').value||0));
-    const price=Math.max(0, parseNum(r.querySelector('.price').value||0));
-    const origin=r.querySelector('.origin').value.trim();
-    return {name,mode,qty,gross,tare,net,price,origin};
-  }).filter(l=> l.name && (l.qty>0 || l.net>0 || l.gross>0) );
-}
-function lineImporte(l){ return (l.mode==='unidad') ? l.qty*l.price : l.net*l.price; }
-
-/* ---------- PAGOS PARCIALES TEMP ---------- */
-let pagosTemp = []; // {date, amount}
-function renderPagosTemp(){
-  const list=$('#listaPagos'); if(!list) return;
-  list.innerHTML='';
-  if(pagosTemp.length===0){ list.innerHTML='<div class="item">Sin pagos parciales.</div>'; return; }
-  pagosTemp.forEach((p,i)=>{
-    const div=document.createElement('div'); div.className='item';
-    div.innerHTML=`<div>${fmtDateDMY(new Date(p.date))} · <strong>${money(p.amount)}</strong></div><button class="ghost" data-i="${i}">✖</button>`;
-    list.appendChild(div);
-  });
-  list.querySelectorAll('button').forEach(b=>{
-    b.addEventListener('click', ()=>{ pagosTemp.splice(+b.dataset.i,1); renderPagosTemp(); recalc(); });
-  });
-}
-$('#btnAddPago')?.addEventListener('click', ()=>{
-  const amt=parseNum($('#inpPagoParcial').value||0); if(!(amt>0)) return;
-  pagosTemp.unshift({date: todayISO(), amount: amt});
-  $('#inpPagoParcial').value='';
-  renderPagosTemp(); recalc();
-});
-
-/* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
-function recalc(){
-  const ls=captureLineas();
-  let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
-  const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
-
-  // IVA: solo si se marca, y SOLO sobre el SUBTOTAL
-  const ivaAplica = $('#chkIvaIncluido')?.checked ?? false;
-  const iva = ivaAplica ? subtotal * 0.04 : 0;
-
-  const total = subtotal + transporte + iva;
-
-  // pagado = pagosTemp + input manual
-  const manual = parseNum($('#pagado')?.value||0);
-  const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
-  const pagadoTotal = manual + parcial;
-  const pendiente = Math.max(0, total - pagadoTotal);
-
-  $('#subtotal').textContent = money(subtotal);
-  $('#transp').textContent = money(transporte);
-  $('#iva').textContent = money(iva);
-  $('#total').textContent = money(total);
-  $('#pendiente').textContent = money(pendiente);
-
-  // Mostrar/ocultar texto “IVA incluido…”
-  const ivaMsg = $('#ivaIncluidoMsg');
-  if(ivaMsg){ ivaMsg.style.display = ivaAplica ? 'none' : 'block'; }
-
-  // estado sugerido
-  if(total<=0){ $('#estado').value='pendiente'; }
-  else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
-  else if(pagadoTotal<total){ $('#estado').value='parcial'; }
-  else { $('#estado').value='pagado'; }
-
-  fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
-  drawResumen(); // KPIs rápidos
-}
-;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
-
-function fillPrint(lines, totals, temp=null, f=null){
-  // Logo en PDF (img#pdf-logo)
-  const pdfLogo = $('#pdf-logo');
-  if(pdfLogo && !pdfLogo.src) pdfLogo.src = PDF_KIWI_BASE64;
-
-  $('#p-num').textContent = f?.numero || '(Sin guardar)';
-  $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
-
-  $('#p-prov').innerHTML = `
-    <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre').value || '')}</strong></div>
-    <div>${escapeHTML(f?.proveedor?.nif || $('#provNif').value || '')}</div>
-    <div>${escapeHTML(f?.proveedor?.dir || $('#provDir').value || '')}</div>
-    <div>${escapeHTML(f?.proveedor?.tel || $('#provTel').value || '')} · ${escapeHTML(f?.proveedor?.email || $('#provEmail').value || '')}</div>
-  `;
-  $('#p-cli').innerHTML = `
-    <div><strong>${escapeHTML(f?.cliente?.nombre || $('#cliNombre').value || '')}</strong></div>
-    <div>${escapeHTML(f?.cliente?.nif || $('#cliNif').value || '')}</div>
-    <div>${escapeHTML(f?.cliente?.dir || $('#cliDir').value || '')}</div>
-    <div>${escapeHTML(f?.cliente?.tel || $('#cliTel').value || '')} · ${escapeHTML(f?.cliente?.email || $('#cliEmail').value || '')}</div>
-  `;
-
-  const tbody = $('#p-tabla tbody'); tbody.innerHTML='';
-  (lines||[]).forEach(l=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escapeHTML(l.name)}</td>
-      <td>${escapeHTML(l.mode||'')}</td>
-      <td>${l.qty||''}</td>
-      <td>${l.gross?l.gross.toFixed(2):''}</td>
-      <td>${l.tare?l.tare.toFixed(2):''}</td>
-      <td>${l.net?l.net.toFixed(2):''}</td>
-      <td>${money(l.price)}</td>
-      <td>${escapeHTML(l.origin||'')}</td>
-      <td>${money((l.mode==='unidad') ? l.qty*l.price : l.net*l.price)}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  $('#p-sub').textContent = money(totals?.subtotal||0);
-  $('#p-tra').textContent = money(totals?.transporte||0);
-  $('#p-iva').textContent = money(totals?.iva||0);
-  $('#p-tot').textContent = money(totals?.total||0);
-  $('#p-estado').textContent = f?.estado || $('#estado')?.value || 'Impagada';
-  $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
-  $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
-
-  // Pie de PDF (coherente con IVA aplicado/no aplicado)
-  const foot=$('#pdf-foot-note');
-  if(foot){
-    const ivaAplica = $('#chkIvaIncluido')?.checked ?? false;
-    foot.textContent = ivaAplica ? '' : 'IVA incluido en los precios.';
+    $('#selCliente').value=i;
+    $('#cliNombre').value=c.nombre||'';
+    $('#cliNif').value=c.nif||'';
+    $('#cliDir').value=c.dir||'';
+    $('#cliTel').value=c.tel||'';
+    $('#cliEmail').value=c.email||'';
   }
 
-  // QR con datos básicos
-  try{
-    const canvas = $('#p-qr');
-    const numero = f?.numero || '(Sin guardar)';
-    const cliente = f?.cliente?.nombre || $('#cliNombre').value || '';
-    const payload = `ARSLAN-Factura|${numero}|${cliente}|${money(totals?.total||0)}|${$('#p-estado').textContent}`;
-    window.QRCode.toCanvas(canvas, payload, {width:92, margin:0});
-  }catch(e){}
-}
-
-/* ---------- GUARDAR / NUEVA / PDF ---------- */
-function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
-function saveFacturas(){ save(K_FACTURAS, facturas); }
-
-$('#btnGuardar')?.addEventListener('click', ()=>{
-  const ls=captureLineas(); if(ls.length===0){ alert('Añade al menos una línea.'); return; }
-  const numero=genNumFactura(); const now=todayISO();
-  ls.forEach(l=> pushPriceHistory(l.name, l.price));
-
-  const subtotal=unMoney($('#subtotal').textContent);
-  const transporte=unMoney($('#transp').textContent);
-  const iva=unMoney($('#iva').textContent);
-  const total=unMoney($('#total').textContent);
-
-  const manual = parseNum($('#pagado').value||0);
-  const pagos = [...pagosTemp]; // copiar
-  const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
-  const pagadoTotal = manual + pagadoParcial;
-  const pendiente=Math.max(0,total-pagadoTotal);
-
-  const estado = (pagadoTotal<=0) ? 'pendiente' : (pagadoTotal<total ? 'parcial' : 'pagado');
-
-  const f={
-    numero, fecha:now,
-    proveedor:{nombre:$('#provNombre').value,nif:$('#provNif').value,dir:$('#provDir').value,tel:$('#provTel').value,email:$('#provEmail').value},
-    cliente:{nombre:$('#cliNombre').value,nif:$('#cliNif').value,dir:$('#cliDir').value,tel:$('#cliTel').value,email:$('#cliEmail').value},
-    lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
-    estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
-    totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
-    pagos // historial de pagos parciales
+  $('#selCliente').onchange=()=>{
+    const i=parseInt($('#selCliente').value);
+    if(!isNaN(i)) loadCliente(i);
   };
-  facturas.unshift(f); saveFacturas();
-  pagosTemp = []; renderPagosTemp();
-  alert(`Factura ${numero} guardada.`);
-  renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-  fillPrint(ls,{subtotal,transporte,iva,total},null,f);
-});
 
-$('#btnNueva')?.addEventListener('click', ()=>{
-  const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea();
-  $('#chkTransporte').checked=false; $('#chkIvaIncluido').checked=false; $('#estado').value='pendiente';
-  $('#pagado').value=''; $('#metodoPago').value='Efectivo'; $('#observaciones').value='';
-  pagosTemp=[]; renderPagosTemp();
-  recalc();
-});
+  $('#btnAddCliente').onclick=()=>{
+    const nombre=prompt('Nombre cliente:');
+    if(!nombre) return;
+    const nuevo={nombre,nif:'',dir:'',tel:'',email:''};
+    clientes.push(nuevo);
+    saveAll();
+    renderClientes();
+  };
 
-$('#btnImprimir')?.addEventListener('click', ()=>{
-  // Siempre rellenar antes de imprimir para evitar PDF en blanco
-  const ls=captureLineas();
-  let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
-  const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
-  const ivaAplica = $('#chkIvaIncluido')?.checked ?? false;
-  const iva = ivaAplica ? subtotal * 0.04 : 0;
-  const total = subtotal + transporte + iva;
-  fillPrint(ls,{subtotal,transporte,iva,total},null,null);
+  $('#btnNuevoCliente').onclick=()=>{$('.tab[data-tab="clientes"]').click();};
 
-  const element = document.getElementById('printArea');
-  const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
-  const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-  window.html2pdf().set(opt).from(element).save();
-});
-
-/* ---------- LISTA DE FACTURAS ---------- */
-function badgeEstado(f){
-  const tot=f.totals?.total||0, pag=f.totals?.pagado||0;
-  if(pag>=tot) return `<span class="state-badge state-green">Pagada</span>`;
-  if(pag>0 && pag<tot) return `<span class="state-badge state-amber">Parcial (${money(pag)} / ${money(tot)})</span>`;
-  return `<span class="state-badge state-red">Impagada</span>`;
-}
-function renderFacturas(){
-  const cont=$('#listaFacturas'); if(!cont) return;
-  cont.innerHTML='';
-  const q=($('#buscaCliente')?.value||'').toLowerCase();
-  const fe=$('#filtroEstado')?.value||'todas';
-  let arr=facturas.slice();
-  if(fe!=='todas') arr=arr.filter(f=>f.estado===fe);
-  if(q) arr=arr.filter(f=>(f.cliente?.nombre||'').toLowerCase().includes(q));
-  if(arr.length===0){ cont.innerHTML='<div class="item">No hay facturas.</div>'; return; }
-
-  arr.slice(0,400).forEach((f,idx)=>{
-    const fecha=new Date(f.fecha).toLocaleString();
-    const div=document.createElement('div'); div.className='item';
-    div.innerHTML=`
-      <div>
-        <strong>${escapeHTML(f.numero)}</strong> ${badgeEstado(f)}
-        <div class="muted">${fecha} · ${escapeHTML(f.cliente?.nombre||'')}</div>
-      </div>
-      <div class="row">
-        <strong>${money(f.totals.total)}</strong>
-        <button class="ghost" data-e="ver" data-i="${idx}">Ver</button>
-        <button data-e="cobrar" data-i="${idx}">💶 Cobrar</button>
-        <button class="ghost" data-e="parcial" data-i="${idx}">+ Parcial</button>
-        <button class="ghost" data-e="pdf" data-i="${idx}">PDF</button>
-      </div>`;
-    cont.appendChild(div);
-  });
-
-  cont.querySelectorAll('button').forEach(b=>{
-    const i=+b.dataset.i;
-    b.addEventListener('click', ()=>{
-      const f=facturas[i]; if(!f) return;
-      if(b.dataset.e==='ver'){
-        fillPrint(f.lineas,f.totals,null,f); switchTab('factura'); document.getElementById('printArea')?.scrollIntoView({behavior:'smooth'});
-      }else if(b.dataset.e==='cobrar'){
-        const tot=f.totals.total||0;
-        f.totals.pagado=tot; f.totals.pendiente=0; f.estado='pagado';
-        (f.pagos??=[]).push({date:todayISO(), amount: tot});
-        saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-      }else if(b.dataset.e==='parcial'){
-        const max=f.totals.total-(f.totals.pagado||0);
-        const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
-        if(val>0){
-          f.pagos=f.pagos||[]; f.pagos.push({date:todayISO(), amount:val});
-          f.totals.pagado=(f.totals.pagado||0)+val;
-          f.totals.pendiente=Math.max(0,(f.totals.total||0)-f.totals.pagado);
-          f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
-          saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-        }
-      }else if(b.dataset.e==='pdf'){
-        fillPrint(f.lineas,f.totals,null,f);
-        const dt=new Date(f.fecha);
-        const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
-        const filename=`Factura-${nombreCliente}-${fmtDateDMY(dt)}.pdf`;
-        const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-        window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
-      }
+  /* ---------- PRODUCTOS ---------- */
+  function renderProductos(){
+    const lista=$('#listaProductos');
+    lista.innerHTML='';
+    productos.forEach((p,i)=>{
+      const row=document.createElement('div');
+      row.className='product-row';
+      row.innerHTML=`
+        <span>${p.nombre}</span>
+        <span>${p.modo||''}</span>
+        <span>${p.kgCaja||''}</span>
+        <span>${p.precio||''}</span>
+        <span>${p.origen||''}</span>
+        <button data-i="${i}" class="edit">✎</button>
+        <button data-i="${i}" class="del">🗑</button>`;
+      lista.appendChild(row);
     });
-  });
-}
-$('#filtroEstado')?.addEventListener('input', renderFacturas);
-$('#buscaCliente')?.addEventListener('input', renderFacturas);
+  }
 
-/* ---------- PENDIENTES ---------- */
-function renderPendientes(){
-  const tb=$('#tblPendientes tbody'); if(!tb) return;
-  tb.innerHTML='';
-  const map=new Map(); // cliente -> {count, total, lastDate}
-  facturas.forEach(f=>{
-    const pend=f.totals?.pendiente||0; if(pend<=0) return;
-    const nom=f.cliente?.nombre||'(s/cliente)';
-    const cur=map.get(nom)||{count:0,total:0,lastDate:null};
-    cur.count++; cur.total+=pend; cur.lastDate = !cur.lastDate || new Date(f.fecha)>new Date(cur.lastDate) ? f.fecha : cur.lastDate;
-    map.set(nom,cur);
-  });
-  let global=0;
-  const rows=[...map.entries()].sort((a,b)=>b[1].total-a[1].total);
-  rows.forEach(([nom,info])=>{
-    global+=info.total;
+  $('#btnAddProducto').onclick=()=>{
+    const nombre=prompt('Nombre producto:');
+    if(!nombre) return;
+    const nuevo={nombre,modo:'kg',kgCaja:0,precio:0,origen:''};
+    productos.push(nuevo);
+    saveAll();
+    renderProductos();
+  };
+
+  /* ---------- FACTURA ---------- */
+  function nuevaFactura(){
+    lineas=[];
+    pagos=[];
+    $('#lineasBody').innerHTML='';
+    $('#subtotal').textContent='0,00 €';
+    $('#transp').textContent='0,00 €';
+    $('#iva').textContent='0,00 €';
+    $('#total').textContent='0,00 €';
+    $('#pendiente').textContent='0,00 €';
+    $('#listaPagos').innerHTML='';
+    $('#pagado').value='';
+    $('#estado').value='pendiente';
+    $('#metodoPago').value='Efectivo';
+    $('#observaciones').value='';
+  }
+  $('#btnNueva').onclick=nuevaFactura;
+  nuevaFactura();
+
+  $('#btnAddLinea').onclick=()=>{
     const tr=document.createElement('tr');
-    const color = info.total>500 ? 'state-red' : info.total>=100 ? 'state-amber' : 'state-green';
     tr.innerHTML=`
-      <td>${escapeHTML(nom)}</td>
-      <td>${info.count}</td>
-      <td><span class="state-badge ${color}">${money(info.total)}</span></td>
-      <td>${new Date(info.lastDate).toLocaleString()}</td>
-      <td><button class="ghost" data-c="${escapeHTML(nom)}">Ver facturas</button></td>
-    `;
-    tb.appendChild(tr);
-  });
-  $('#resGlobal').textContent = money(global);
-
-  tb.querySelectorAll('button').forEach(b=>{
-    b.addEventListener('click', ()=>{
-      const nombre=b.dataset.c;
-      $('#buscaCliente').value=nombre;
-      switchTab('facturas');
-      renderFacturas();
-    });
-  });
-}
-
-/* ---------- VENTAS (KPIs, gráficos, top, por cliente) ---------- */
-function sumBetween(d1,d2,filterClient=null){
-  let sum=0;
-  facturas.forEach(f=>{
-    const d=new Date(f.fecha);
-    if(d>=d1 && d<d2 && (!filterClient || (f.cliente?.nombre||'')===filterClient)) sum+=(f.totals?.total||0);
-  });
-  return sum;
-}
-function startOfDay(d=new Date()){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
-function endOfDay(d=new Date()){ const x=new Date(d); x.setHours(23,59,59,999); return x; }
-function startOfWeek(d=new Date()){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); x.setHours(0,0,0,0); return x; }
-function startOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth(), 1); }
-
-function drawKPIs(){
-  const now=new Date();
-  const hoy = sumBetween(startOfDay(now), endOfDay(now));
-  const semana = sumBetween(startOfWeek(now), endOfDay(now));
-  const mes = sumBetween(startOfMonth(now), endOfDay(now));
-  const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
-  $('#vHoy').textContent=money(hoy);
-  $('#vSemana').textContent=money(semana);
-  $('#vMes').textContent=money(mes);
-  $('#vTotal').textContent=money(total);
-
-  $('#rHoy').textContent=money(hoy);
-  $('#rSemana').textContent=money(semana);
-  $('#rMes').textContent=money(mes);
-  $('#rTotal').textContent=money(total);
-}
-
-let chart1, chart2, chartTop;
-function groupDaily(n=7){
-  const now=new Date(); const buckets=[];
-  for(let i=n-1;i>=0;i--){ const d=new Date(now); d.setDate(d.getDate()-i); const k=d.toISOString().slice(0,10); buckets.push({k,label:k.slice(5),sum:0}); }
-  facturas.forEach(f=>{ const k=f.fecha.slice(0,10); const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
-  return buckets;
-}
-function groupMonthly(n=12){
-  const now=new Date(); const buckets=[];
-  for(let i=n-1;i>=0;i--){ const d=new Date(now); d.setMonth(d.getMonth()-i); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; buckets.push({k,label:k,sum:0}); }
-  facturas.forEach(f=>{ const d=new Date(f.fecha); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
-  return buckets;
-}
-function drawCharts(){
-  if(typeof Chart==='undefined') return;
-  const daily=groupDaily(7); const monthly=groupMonthly(12);
-  if(chart1) chart1.destroy(); if(chart2) chart2.destroy();
-  chart1=new Chart(document.getElementById('chartDiario').getContext('2d'), {type:'bar', data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
-  chart2=new Chart(document.getElementById('chartMensual').getContext('2d'), {type:'line', data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
-}
-function drawTop(){
-  if(typeof Chart==='undefined') return;
-  const map=new Map(); // name -> total €
-  facturas.forEach(f=>{
-    (f.lineas||[]).forEach(l=>{
-      const amt = (l.mode==='unidad') ? l.qty*l.price : l.net*l.price;
-      map.set(l.name,(map.get(l.name)||0)+amt);
-    });
-  });
-  const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const labels=pairs.map(p=>p[0]); const data=pairs.map(p=>p[1]);
-  if(chartTop) chartTop.destroy();
-  chartTop=new Chart(document.getElementById('chartTop').getContext('2d'), {type:'bar', data:{labels, datasets:[{label:'Top productos (€)', data} ]}, options:{responsive:true, plugins:{legend:{display:false}}}});
-}
-
-function renderVentasCliente(){
-  const tb=$('#tblVentasCliente tbody'); if(!tb) return;
-  tb.innerHTML='';
-  const now=new Date();
-  const sDay=startOfDay(now), eDay=endOfDay(now);
-  const sWeek=startOfWeek(now), eWeek=endOfDay(now);
-  const sMonth=startOfMonth(now), eMonth=endOfDay(now);
-
-  const byClient=new Map(); // cliente -> {hoy,semana,mes,total}
-  facturas.forEach(f=>{
-    const nom=f.cliente?.nombre||'(s/cliente)';
-    const d=new Date(f.fecha); const tot=f.totals?.total||0;
-    const cur=byClient.get(nom)||{hoy:0,semana:0,mes:0,total:0};
-    if(d>=sDay && d<=eDay) cur.hoy+=tot;
-    if(d>=sWeek&&d<=eWeek) cur.semana+=tot;
-    if(d>=sMonth&&d<=eMonth) cur.mes+=tot;
-    cur.total+=tot;
-    byClient.set(nom,cur);
-  });
-
-  [...byClient.entries()].sort((a,b)=>b[1].total-a[1].total).forEach(([nom,v])=>{
-    const tr=document.createElement('tr');
-    const highlight = v.hoy>0 ? 'state-green' : '';
-    tr.innerHTML=`<td>${escapeHTML(nom)}</td><td class="${highlight}">${money(v.hoy)}</td><td>${money(v.semana)}</td><td>${money(v.mes)}</td><td><strong>${money(v.total)}</strong></td>`;
-    tb.appendChild(tr);
-  });
-}
-
-/* ---------- BACKUP/RESTORE + EXPORTS ---------- */
-$('#btnBackup')?.addEventListener('click', ()=>{
-  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
-  const filename=`backup-${fmtDateDMY(new Date())}.json`;
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-});
-$('#btnRestore')?.addEventListener('click', ()=>{
-  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
-  inp.onchange=e=>{
-    const f=e.target.files[0]; if(!f) return;
-    const reader=new FileReader(); reader.onload=()=>{
-      try{
-        const obj=JSON.parse(reader.result);
-        if(obj.clientes) clientes=obj.clientes;
-        if(obj.productos) productos=obj.productos;
-        if(obj.facturas) facturas=obj.facturas;
-        if(obj.priceHist) priceHist=obj.priceHist;
-        save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
-        ensureClienteIDs(); renderAll(); alert('Copia restaurada ✔️');
-      }catch{ alert('JSON inválido'); }
-    }; reader.readAsText(f);
+      <td><input list="productNamesList" class="prod" /></td>
+      <td><select class="modo"><option>kg</option><option>caja</option><option>ud</option><option>manojo</option></select></td>
+      <td><input type="number" class="cant" value="1" /></td>
+      <td><input type="number" class="bruto" /></td>
+      <td><input type="number" class="tara" /></td>
+      <td><input type="number" class="neto" /></td>
+      <td><input type="number" class="precio" /></td>
+      <td><input class="origen" /></td>
+      <td class="importe">0,00 €</td>
+      <td><button class="del">✖</button></td>`;
+    $('#lineasBody').appendChild(tr);
   };
-  inp.click();
-});
-$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); ensureClienteIDs(); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
-$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
-$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
-$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
-$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; save(K_FACTURAS,facturas); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
-$('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
 
-function downloadJSON(obj, filename){
-  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
-function uploadJSON(cb){
-  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
-  inp.onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)); }catch{ alert('JSON inválido'); } }; r.readAsText(f); };
-  inp.click();
-}
-function exportVentasCSV(){
-  const rows=[['Cliente','Fecha','Nº','Total','Pagado','Pendiente','Estado']];
-  facturas.forEach(f=>{
-    rows.push([f.cliente?.nombre||'', new Date(f.fecha).toLocaleString(), f.numero, (f.totals?.total||0), (f.totals?.pagado||0), (f.totals?.pendiente||0), f.estado]);
+  $('#btnVaciarLineas').onclick=()=>{$('#lineasBody').innerHTML='';};
+  /* ---------- AUTOCOMPLETADO PRODUCTOS + DATALIST ---------- */
+  function refreshProductDatalist(){
+    const dl = $('#productNamesList');
+    dl.innerHTML = '';
+    (productos||[]).forEach(p=>{
+      const opt=document.createElement('option');
+      opt.value = p.nombre || p.name || '';
+      dl.appendChild(opt);
+    });
+  }
+
+  // Último precio registrado por producto (priceHist: { "Tomate": [{price, date}, ...] })
+  function lastPrice(name){
+    const arr = priceHist?.[name] || [];
+    return arr.length ? arr[0].price : null;
+  }
+  function pushPriceHistory(name, price){
+    if(!name || !(price>0)) return;
+    const arr = priceHist[name] || [];
+    arr.unshift({price, date: new Date().toISOString()});
+    priceHist[name] = arr.slice(0,10);
+    saveAll();
+  }
+
+  // Panel flotante con historial (aparece unos segundos)
+  let ppTimer=null;
+  function showPriceHistory(name){
+    const panel = $('#pricePanel');
+    const body = $('#ppBody');
+    if(!panel || !body) return;
+    const hist = priceHist?.[name] || [];
+    panel.hidden = false;
+    if(hist.length===0){
+      body.innerHTML = `<div class="pp-row"><span>${name}</span><strong>Sin datos</strong></div>`;
+    }else{
+      body.innerHTML = `<div class="pp-row" style="justify-content:center"><strong>${name}</strong></div>` +
+        hist.map(h=>`<div class="pp-row"><span>${new Date(h.date).toLocaleDateString()}</span><strong>${money(h.price)}</strong></div>`).join('');
+    }
+    if(ppTimer) clearTimeout(ppTimer);
+    ppTimer = setTimeout(()=>{ panel.hidden = true; }, 4500);
+  }
+
+  /* ---------- RECALCULO DE LÍNEAS Y TOTALES ---------- */
+  function captureLineas(){
+    const rows = $$('#lineasBody tr');
+    const out = [];
+    rows.forEach(r=>{
+      const prod = r.querySelector('.prod')?.value?.trim() || '';
+      const modo = r.querySelector('.modo')?.value || 'kg';
+      const cant = parseNum(r.querySelector('.cant')?.value || 0);
+      const bruto = parseNum(r.querySelector('.bruto')?.value || 0);
+      const tara  = parseNum(r.querySelector('.tara')?.value || 0);
+      const neto  = parseNum(r.querySelector('.neto')?.value || 0);
+      const precio= parseNum(r.querySelector('.precio')?.value || 0);
+      const origen= r.querySelector('.origen')?.value?.trim() || '';
+
+      // Cálculo de neto si no lo ponen (si hay bruto/tara → neto=bruto-tara; si modo=caja y hay kgCaja, neto=cant*kgCaja)
+      let n = neto;
+      if((bruto>0 || tara>0) && (bruto - tara) >= 0) n = +(bruto - tara).toFixed(2);
+      if(n<=0){
+        if(modo==='caja'){
+          const p = productos.find(x => (x.nombre||'').toLowerCase() === prod.toLowerCase());
+          const kgCaja = p?.kgCaja || 0;
+          if(kgCaja>0) n = +(kgCaja * cant).toFixed(2);
+        }else if(modo==='kg'){
+          n = cant;
+        }else{ // unidad / manojo
+          n = cant;
+        }
+      }
+
+      const importe = (modo==='ud' || modo==='manojo') ? (cant * precio) : (n * precio);
+
+      // render importe
+      const impCell = r.querySelector('.importe');
+      if(impCell) impCell.textContent = money(isFinite(importe)?importe:0);
+
+      out.push({ nombre:prod, modo, cant, bruto, tara, neto:n, precio, origen, importe: isFinite(importe)?importe:0 });
+    });
+    return out.filter(l => l.nombre && (l.cant>0 || l.neto>0 || l.bruto>0));
+  }
+
+  function recalc(){
+    const ls = captureLineas();
+
+    // Subtotal SIN transporte (como pediste)
+    let subtotal = ls.reduce((a,l) => a + (l.importe||0), 0);
+
+    // Transporte 10% (opcional)
+    const aplicaTrans = $('#chkTransporte')?.checked;
+    const transporte = aplicaTrans ? +(subtotal * 0.10).toFixed(2) : 0;
+
+    // IVA 4% (aplicable si marcas "Aplicar IVA 4%")
+    const ivaAplicado = $('#chkIvaAplicado')?.checked;
+    const baseMasTrans = subtotal + transporte;
+    const iva = ivaAplicado ? +(baseMasTrans * 0.04).toFixed(2) : 0;
+
+    // Total
+    const total = +(baseMasTrans + iva).toFixed(2);
+
+    // Pagos
+    const manual = parseNum($('#pagado')?.value || 0);
+    const parciales = pagos.reduce((a,b)=>a + (b.amount||0),0);
+    const pagado = +(manual + parciales).toFixed(2);
+    const pendiente = +(Math.max(0, total - pagado)).toFixed(2);
+
+    // Pintar totales
+    $('#subtotal').textContent = money(subtotal);
+    $('#transp').textContent   = money(transporte);
+    $('#iva').textContent      = money(iva);
+    $('#total').textContent    = money(total);
+    $('#pendiente').textContent= money(pendiente);
+
+    // Estado sugerido
+    if(total<=0){ $('#estado').value='pendiente'; }
+    else if(pagado<=0){ $('#estado').value='pendiente'; }
+    else if(pagado<total){ $('#estado').value='parcial'; }
+    else { $('#estado').value='pagado'; }
+
+    // Pie PDF: si se aplica IVA 4%, NO mostrar “IVA incluido…”
+    const foot = $('#pdf-foot-note');
+    if(foot){
+      if(ivaAplicado){
+        foot.textContent = '';
+      }else{
+        const infoIncluido = $('#chkIvaIncluido')?.checked;
+        foot.textContent = infoIncluido ? 'IVA incluido en los precios.' : '';
+      }
+    }
+
+    // Rellenar la vista previa PDF
+    fillPrintPreview(ls, {subtotal, transporte, iva, total});
+  }
+
+  // Eventos que fuerzan recálculo
+  ['chkTransporte','chkIvaAplicado','chkIvaIncluido','pagado','estado','metodoPago','observaciones']
+    .forEach(id => { const el=$('#'+id); if(el) el.addEventListener('input', recalc); });
+
+  // Delegación de eventos en la tabla para inputs
+  $('#lineasBody').addEventListener('input', e=>{
+    const target = e.target;
+    if(target.matches('.prod')){
+      const name = target.value.trim();
+      // autocargar precio/props si existe en catálogo
+      const p = productos.find(x => (x.nombre||'').toLowerCase() === name.toLowerCase());
+      const row = target.closest('tr');
+      if(p){
+        const modoEl = row.querySelector('.modo');
+        const precioEl = row.querySelector('.precio');
+        const origenEl = row.querySelector('.origen');
+        if(p.modo && modoEl) modoEl.value = p.modo;
+        const lp = lastPrice(p.nombre);
+        if(precioEl){
+          if(p.precio>0) precioEl.value = p.precio;
+          else if(lp!=null) precioEl.value = lp;
+        }
+        if(origenEl && p.origen) origenEl.value = p.origen;
+        showPriceHistory(p.nombre);
+      }else{
+        showPriceHistory(name);
+      }
+    }
+    recalc();
   });
-  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
 
-/* ---------- EVENTOS GENERALES + RENDER ---------- */
-$('#btnAddLinea')?.addEventListener('click', addLinea);
-$('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
-$('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
+  // Eliminar línea
+  $('#lineasBody').addEventListener('click', e=>{
+    if(e.target.matches('.del')){
+      e.target.closest('tr')?.remove();
+      recalc();
+    }
+  });
 
-function renderAll(){
-  renderClientesSelect(); renderClientesLista();
-  populateProductDatalist(); renderProductos(); renderFacturas(); renderPendientes();
-  drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-}
-function drawResumen(){ drawKPIs(); }
+  /* ---------- PREVIEW / PDF ---------- */
+  function fillPrintPreview(lines, totals, fact=null){
+    // Número / Fecha
+    $('#p-num').textContent   = fact?.numero || '(Sin guardar)';
+    $('#p-fecha').textContent = fact?.fecha  ? new Date(fact.fecha).toLocaleString() : new Date().toLocaleString();
 
-/* ---------- BOOT ---------- */
-(function boot(){
-  seedClientesIfEmpty();
-  ensureClienteIDs();
-  seedProductsIfEmpty();
+    // Proveedor
+    $('#p-prov').innerHTML = `
+      <div><strong>${($('#provNombre').value||'')}</strong></div>
+      <div>${($('#provNif').value||'')}</div>
+      <div>${($('#provDir').value||'')}</div>
+      <div>${($('#provTel').value||'')} · ${($('#provEmail').value||'')}</div>
+    `;
 
-  // proveedor por defecto (tus datos)
-  setProviderDefaultsIfEmpty();
+    // Cliente
+    $('#p-cli').innerHTML = `
+      <div><strong>${($('#cliNombre').value||'')}</strong></div>
+      <div>${($('#cliNif').value||'')}</div>
+      <div>${($('#cliDir').value||'')}</div>
+      <div>${($('#cliTel').value||'')} · ${($('#cliEmail').value||'')}</div>
+    `;
 
-  // 5 líneas iniciales
-  const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
+    // Tabla
+    const tbody = $('#p-tabla tbody');
+    tbody.innerHTML = '';
+    (lines||[]).forEach(l=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML = `
+        <td>${l.nombre}</td>
+        <td>${l.modo}</td>
+        <td>${l.cant||''}</td>
+        <td>${l.bruto?l.bruto.toFixed(2):''}</td>
+        <td>${l.tara?l.tara.toFixed(2):''}</td>
+        <td>${l.neto?l.neto.toFixed(2):''}</td>
+        <td>${money(l.precio||0)}</td>
+        <td>${l.origen||''}</td>
+        <td>${money(l.importe||0)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
 
-  renderPagosTemp();
-  renderAll(); recalc();
+    // Totales
+    $('#p-sub').textContent = money(totals?.subtotal||0);
+    $('#p-tra').textContent = money(totals?.transporte||0);
+    $('#p-iva').textContent = money(totals?.iva||0);
+    $('#p-tot').textContent = money(totals?.total||0);
+    $('#p-estado').textContent = $('#estado')?.value || 'Impagada';
+    $('#p-metodo').textContent = $('#metodoPago')?.value || 'Efectivo';
+    $('#p-obs').textContent    = $('#observaciones')?.value || '—';
 
-  // entrar por defecto en Factura
-  document.querySelector('[data-tab="factura"]')?.click();
-})();
-})();
+    // QR (nº factura | cliente | total | estado)
+    try{
+      const canvas = $('#p-qr');
+      const numero = fact?.numero || '(Sin guardar)';
+      const cliente= $('#cliNombre').value || '';
+      const total  = totals?.total || 0;
+      const estado = $('#estado').value;
+      const payload = `ARSLAN|${numero}|${cliente}|${total}|${estado}`;
+      if(window.QRCode && canvas){
+        window.QRCode.toCanvas(canvas, payload, { width: 92, margin: 0 });
+      }
+    }catch(e){}
+  }
+
+  $('#btnImprimir').onclick = ()=>{
+    recalc(); // asegurar totales al día
+    const el = document.getElementById('printArea');
+    const d = new Date();
+    const file = `Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.pdf`;
+    const opt = {
+      margin:[10,10,10,10],
+      filename:file,
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    };
+    window.html2pdf().set(opt).from(el).save();
+  };
+
+  /* ---------- PAGOS PARCIALES ---------- */
+  function renderPagos(){
+    const list = $('#listaPagos');
+    list.innerHTML = '';
+    if(pagos.length===0){
+      list.innerHTML = `<div class="item">Sin pagos parciales.</div>`;
+      return;
+    }
+    pagos.forEach((p,i)=>{
+      const div=document.createElement('div');
+      div.className='item';
+      div.innerHTML = `<div>${new Date(p.date).toLocaleString()} · <strong>${money(p.amount)}</strong></div>
+                       <button class="ghost" data-i="${i}">✖</button>`;
+      div.querySelector('button').onclick=()=>{
+        pagos.splice(i,1);
+        renderPagos();
+        recalc();
+        saveAll();
+      };
+      list.appendChild(div);
+    });
+  }
+
+  $('#btnAddPago').onclick = ()=>{
+    const val = parseNum($('#inpPagoParcial').value || 0);
+    if(!(val>0)) return;
+    pagos.unshift({date:new Date().toISOString(), amount: val});
+    $('#inpPagoParcial').value='';
+    renderPagos();
+    recalc();
+    saveAll();
+  };
+  /* ---------- GUARDAR FACTURA ---------- */
+  function genNum() { return uid(); }
+
+  $('#btnGuardar').onclick = ()=>{
+    const ls = captureLineas();
+    if(ls.length===0){ alert('Añade al menos una línea.'); return; }
+
+    // Empujar historial de precios
+    ls.forEach(l=> pushPriceHistory(l.nombre, l.precio||0));
+
+    // Recalcular para asegurar totales
+    recalc();
+
+    const numero = genNum();
+    const fecha  = new Date().toISOString();
+
+    const subtotal   = parseFloat(String($('#subtotal').textContent).replace(/[^\d.,]/g,'').replace(',','.'))||0;
+    const transporte = parseFloat(String($('#transp').textContent).replace(/[^\d.,]/g,'').replace(',','.'))||0;
+    const iva        = parseFloat(String($('#iva').textContent).replace(/[^\d.,]/g,'').replace(',','.'))||0;
+    const total      = parseFloat(String($('#total').textContent).replace(/[^\d.,]/g,'').replace(',','.'))||0;
+
+    const manual = parseNum($('#pagado').value||0);
+    const parciales = pagos.reduce((a,b)=>a+(b.amount||0),0);
+    const pagado = +(manual + parciales).toFixed(2);
+    const pendiente = +(Math.max(0,total - pagado)).toFixed(2);
+
+    const factura = {
+      numero, fecha,
+      proveedor:{
+        nombre: $('#provNombre').value || '',
+        nif:    $('#provNif').value    || '',
+        dir:    $('#provDir').value    || '',
+        tel:    $('#provTel').value    || '',
+        email:  $('#provEmail').value  || '',
+      },
+      cliente:{
+        nombre: $('#cliNombre').value || '',
+        nif:    $('#cliNif').value    || '',
+        dir:    $('#cliDir').value    || '',
+        tel:    $('#cliTel').value    || '',
+        email:  $('#cliEmail').value  || '',
+      },
+      lineas: ls,
+      flags:{
+        transporte: !!$('#chkTransporte').checked,
+        ivaAplicado: !!$('#chkIvaAplicado').checked,
+        ivaIncluidoMsg: !!$('#chkIvaIncluido')?.checked
+      },
+      estado: $('#estado').value || 'pendiente',
+      metodo: $('#metodoPago').value || 'Efectivo',
+      obs:    $('#observaciones').value || '',
+      pagos:  [...pagos],
+      totals:{ subtotal, transporte, iva, total, pagado, pendiente }
+    };
+
+    // Ajustar estado consistente
+    if(total<=0) factura.estado='pendiente';
+    else if(pagado<=0) factura.estado='pendiente';
+    else if(pagado<total) factura.estado='parcial';
+    else factura.estado='pagado';
+
+    facturas.unshift(factura);
+    saveAll();
+
+    // Reset pagos parciales temporales
+    pagos = [];
+    renderPagos();
+
+    alert(`Factura ${numero} guardada.`);
+    renderFacturas();
+    renderPendientes();
+    drawKPIs(); drawCharts(); drawTop(); renderVentasCliente();
+
+    // Rellenar preview con la factura recién guardada
+    fillPrintPreview(factura.lineas, factura.totals, factura);
+  };
+
+  /* ---------- LISTA DE FACTURAS ---------- */
+  function badgeEstado(f){
+    const t=f.totals?.total||0, p=f.totals?.pagado||0;
+    if(p>=t) return `<span class="state-badge state-green">Pagada</span>`;
+    if(p>0 && p<t) return `<span class="state-badge state-amber">Parcial</span>`;
+    return `<span class="state-badge state-red">Impagada</span>`;
+  }
+
+  function renderFacturas(){
+    const cont = $('#listaFacturas');
+    if(!cont) return;
+    cont.innerHTML = '';
+
+    const q  = ($('#buscaCliente')?.value||'').toLowerCase();
+    const fe = $('#filtroEstado')?.value || 'todas';
+
+    let arr = facturas.slice();
+    if(fe!=='todas') arr = arr.filter(f=>f.estado===fe);
+    if(q) arr = arr.filter(f => (f.cliente?.nombre||'').toLowerCase().includes(q));
+
+    if(arr.length===0){ cont.innerHTML = '<div class="item">No hay facturas.</div>'; return; }
+
+    arr.slice(0,400).forEach((f,idx)=>{
+      const fecha = new Date(f.fecha).toLocaleString();
+      const div = document.createElement('div');
+      div.className='item';
+      div.innerHTML = `
+        <div>
+          <strong>${f.numero}</strong> ${badgeEstado(f)}
+          <div class="muted">${fecha} · ${f.cliente?.nombre||''}</div>
+        </div>
+        <div class="row">
+          <strong>${money(f.totals?.total||0)}</strong>
+          <button class="ghost" data-e="ver" data-i="${idx}">Ver</button>
+          <button data-e="cobrar" data-i="${idx}">💶 Cobrar</button>
+          <button class="ghost" data-e="parcial" data-i="${idx}">+ Parcial</button>
+          <button class="ghost" data-e="pdf" data-i="${idx}">PDF</button>
+        </div>`;
+      cont.appendChild(div);
+    });
+
+    cont.querySelectorAll('button').forEach(b=>{
+      const i = +b.dataset.i;
+      b.onclick = ()=>{
+        const f = facturas[i]; if(!f) return;
+
+        if(b.dataset.e==='ver'){
+          // Cargar a la vista de impresión
+          fillPrintPreview(f.lineas, f.totals, f);
+          document.querySelector('.tab[data-tab="factura"]').click();
+          document.getElementById('printArea')?.scrollIntoView({behavior:'smooth'});
+
+        }else if(b.dataset.e==='cobrar'){
+          const tot = f.totals.total||0;
+          f.totals.pagado = tot;
+          f.totals.pendiente = 0;
+          f.estado = 'pagado';
+          (f.pagos??=[]).push({date:new Date().toISOString(), amount: tot});
+          saveAll();
+          renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente();
+
+        }else if(b.dataset.e==='parcial'){
+          const max = (f.totals.total||0) - (f.totals.pagado||0);
+          const val = parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
+          if(val>0){
+            f.pagos = f.pagos || [];
+            f.pagos.push({date:new Date().toISOString(), amount: val});
+            f.totals.pagado = +( (f.totals.pagado||0) + val ).toFixed(2);
+            f.totals.pendiente = +( Math.max(0,(f.totals.total||0) - f.totals.pagado) ).toFixed(2);
+            f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
+            saveAll();
+            renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente();
+          }
+
+        }else if(b.dataset.e==='pdf'){
+          // Forzar render de la factura seleccionada y descargar PDF
+          fillPrintPreview(f.lineas, f.totals, f);
+          const el = document.getElementById('printArea');
+          const dt = new Date(f.fecha);
+          const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
+          const filename=`Factura-${nombreCliente}-${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,'0')}${String(dt.getDate()).padStart(2,'0')}.pdf`;
+          const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+          window.html2pdf().set(opt).from(el).save();
+        }
+      };
+    });
+  }
+
+  $('#filtroEstado')?.addEventListener('input', renderFacturas);
+  $('#buscaCliente')?.addEventListener('input', renderFacturas);
+
+  /* ---------- PENDIENTES POR CLIENTE ---------- */
+  function renderPendientes(){
+    const tb = $('#tblPendientes tbody');
+    if(!tb) return;
+    tb.innerHTML='';
+
+    const map = new Map(); // nombre -> {count,total,lastDate}
+    facturas.forEach(f=>{
+      const pend = f.totals?.pendiente||0;
+      if(pend<=0) return;
+      const nom = f.cliente?.nombre || '(s/cliente)';
+      const cur = map.get(nom) || {count:0,total:0,lastDate:null};
+      cur.count++;
+      cur.total += pend;
+      cur.lastDate = !cur.lastDate || new Date(f.fecha) > new Date(cur.lastDate) ? f.fecha : cur.lastDate;
+      map.set(nom,cur);
+    });
+
+    let global=0;
+    const rows=[...map.entries()].sort((a,b)=>b[1].total-a[1].total);
+    rows.forEach(([nom,info])=>{
+      global += info.total;
+      const tr=document.createElement('tr');
+      const color = info.total>500 ? 'state-red' : info.total>=100 ? 'state-amber' : 'state-green';
+      tr.innerHTML = `
+        <td>${nom}</td>
+        <td>${info.count}</td>
+        <td><span class="state-badge ${color}">${money(info.total)}</span></td>
+        <td>${new Date(info.lastDate).toLocaleString()}</td>
+        <td><button class="ghost" data-c="${nom}">Ver facturas</button></td>`;
+      tb.appendChild(tr);
+    });
+    $('#resGlobal').textContent = money(global);
+
+    tb.querySelectorAll('button').forEach(b=>{
+      b.onclick=()=>{
+        $('#buscaCliente').value=b.dataset.c||'';
+        document.querySelector('.tab[data-tab="facturas"]').click();
+        renderFacturas();
+      };
+    });
+  }
+
+  // Reset deudas actuales (cliente visible en formulario)
+  $('#btnResetCliente')?.addEventListener('click', ()=>{
+    const nombre = $('#cliNombre').value.trim();
+    if(!nombre){ alert('Selecciona un cliente primero.'); return; }
+    if(!confirm(`Resetear deudas de ${nombre}?`)) return;
+    facturas.forEach(f=>{
+      if((f.cliente?.nombre||'')===nombre){
+        f.totals.pagado = f.totals.total;
+        f.totals.pendiente = 0;
+        f.estado = 'pagado';
+      }
+    });
+    saveAll();
+    renderPendientes(); renderFacturas(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente();
+  });
+
+  // Reset deudas global
+  $('#btnResetGlobal')?.addEventListener('click', ()=>{
+    if(!confirm('¿Resetear TODAS las deudas (marcar todo como pagado)?')) return;
+    facturas.forEach(f=>{
+      f.totals.pagado = f.totals.total;
+      f.totals.pendiente = 0;
+      f.estado = 'pagado';
+    });
+    saveAll();
+    renderPendientes(); renderFacturas(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente();
+  });
+
+  /* ---------- VENTAS / KPIs / GRÁFICAS ---------- */
+  function sumBetween(d1,d2,filterClient=null){
+    let sum=0;
+    facturas.forEach(f=>{
+      const d=new Date(f.fecha);
+      if(d>=d1 && d<d2 && (!filterClient || (f.cliente?.nombre||'')===filterClient)) sum+=(f.totals?.total||0);
+    });
+    return sum;
+  }
+  function startOfDay(d=new Date()){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
+  function endOfDay(d=new Date()){ const x=new Date(d); x.setHours(23,59,59,999); return x; }
+  function startOfWeek(d=new Date()){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); x.setHours(0,0,0,0); return x; }
+  function startOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+
+  function drawKPIs(){
+    const now=new Date();
+    const hoy = sumBetween(startOfDay(now), endOfDay(now));
+    const semana = sumBetween(startOfWeek(now), endOfDay(now));
+    const mes = sumBetween(startOfMonth(now), endOfDay(now));
+    const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
+    $('#vHoy').textContent=money(hoy);
+    $('#vSemana').textContent=money(semana);
+    $('#vMes').textContent=money(mes);
+    $('#vTotal').textContent=money(total);
+
+    $('#rHoy').textContent=money(hoy);
+    $('#rSemana').textContent=money(semana);
+    $('#rMes').textContent=money(mes);
+    $('#rTotal').textContent=money(total);
+  }
+
+  let chart1, chart2, chartTop;
+  function groupDaily(n=7){
+    const now=new Date(); const buckets=[];
+    for(let i=n-1;i>=0;i--){ const d=new Date(now); d.setDate(d.getDate()-i); const k=d.toISOString().slice(0,10); buckets.push({k,label:k.slice(5),sum:0}); }
+    facturas.forEach(f=>{ const k=f.fecha.slice(0,10); const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
+    return buckets;
+  }
+  function groupMonthly(n=12){
+    const now=new Date(); const buckets=[];
+    for(let i=n-1;i>=0;i--){ const d=new Date(now); d.setMonth(d.getMonth()-i); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; buckets.push({k,label:k,sum:0}); }
+    facturas.forEach(f=>{ const d=new Date(f.fecha); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
+    return buckets;
+  }
+  function drawCharts(){
+    if(typeof Chart==='undefined') return;
+    const daily=groupDaily(7); const monthly=groupMonthly(12);
+    if(chart1) chart1.destroy(); if(chart2) chart2.destroy();
+    chart1=new Chart(document.getElementById('chartDiario').getContext('2d'), {
+      type:'bar',
+      data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]},
+      options:{responsive:true, plugins:{legend:{display:false}}}
+    });
+    chart2=new Chart(document.getElementById('chartMensual').getContext('2d'), {
+      type:'line',
+      data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]},
+      options:{responsive:true, plugins:{legend:{display:false}}}
+    });
+  }
+
+  function drawTop(){
+    if(typeof Chart==='undefined') return;
+    const map=new Map(); // name -> total €
+    facturas.forEach(f=>{
+      (f.lineas||[]).forEach(l=>{
+        map.set(l.nombre, (map.get(l.nombre)||0) + (l.importe||0));
+      });
+    });
+    const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const labels=pairs.map(p=>p[0]); const data=pairs.map(p=>p[1]);
+    if(chartTop) chartTop.destroy();
+    chartTop=new Chart(document.getElementById('chartTop').getContext('2d'), {
+      type:'bar',
+      data:{labels, datasets:[{label:'Top productos (€)', data}]},
+      options:{responsive:true, plugins:{legend:{display:false}}}
+    });
+  }
+
+  function renderVentasCliente(){
+    const tb=$('#tblVentasCliente tbody'); if(!tb) return;
+    tb.innerHTML='';
+    const now=new Date();
+    const sDay=startOfDay(now), eDay=endOfDay(now);
+    const sWeek=startOfWeek(now), eWeek=endOfDay(now);
+    const sMonth=startOfMonth(now), eMonth=endOfDay(now);
+
+    const byClient=new Map(); // cliente -> {hoy,semana,mes,total}
+    facturas.forEach(f=>{
+      const nom=f.cliente?.nombre||'(s/cliente)';
+      const d=new Date(f.fecha); const tot=f.totals?.total||0;
+      const cur=byClient.get(nom)||{hoy:0,semana:0,mes:0,total:0};
+      if(d>=sDay && d<=eDay) cur.hoy+=tot;
+      if(d>=sWeek&&d<=eWeek) cur.semana+=tot;
+      if(d>=sMonth&&d<=eMonth) cur.mes+=tot;
+      cur.total+=tot;
+      byClient.set(nom,cur);
+    });
+
+    [...byClient.entries()].sort((a,b)=>b[1].total-a[1].total).forEach(([nom,v])=>{
+      const tr=document.createElement('tr');
+      const highlight = v.hoy>0 ? 'state-green' : '';
+      tr.innerHTML=`<td>${nom}</td><td class="${highlight}">${money(v.hoy)}</td><td>${money(v.semana)}</td><td>${money(v.mes)}</td><td><strong>${money(v.total)}</strong></td>`;
+      tb.appendChild(tr);
+    });
+  }
+  /* ---------- IMPORT / EXPORT / BACKUP ---------- */
+  function downloadJSON(obj, filename){
+    const blob = new Blob([JSON.stringify(obj,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function uploadJSON(cb){
+    const inp=document.createElement('input');
+    inp.type='file'; inp.accept='application/json';
+    inp.onchange=e=>{
+      const f=e.target.files[0]; if(!f) return;
+      const r=new FileReader();
+      r.onload=()=>{
+        try{ const obj=JSON.parse(r.result); cb(obj); }
+        catch{ alert('JSON inválido'); }
+      };
+      r.readAsText(f);
+    };
+    inp.click();
+  }
+
+  // Exportaciones
+  $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-v104.json'));
+  $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-v104.json'));
+  $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-v104.json'));
+
+  // Importaciones
+  $('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{
+    if(Array.isArray(arr)){ clientes = arr; saveAll(); renderClientes(); }
+  }));
+  $('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{
+    if(Array.isArray(arr)){ productos = arr; saveAll(); renderProductos(); refreshProductDatalist(); }
+  }));
+  $('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{
+    if(Array.isArray(arr)){ facturas = arr; saveAll(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
+  }));
+
+  // Backup / Restore
+  $('#btnBackup')?.addEventListener('click', ()=>{
+    const payload={clientes, productos, facturas, priceHist, ts:new Date().toISOString(), version:'ARSLAN PRO V10.4'};
+    downloadJSON(payload, `backup-${new Date().toISOString().slice(0,10)}.json`);
+  });
+  $('#btnRestore')?.addEventListener('click', ()=>{
+    uploadJSON(payload=>{
+      try{
+        if(payload.clientes) clientes = payload.clientes;
+        if(payload.productos) productos = payload.productos;
+        if(payload.facturas) facturas = payload.facturas;
+        if(payload.priceHist) priceHist = payload.priceHist;
+        saveAll();
+        renderAll();
+        alert('Copia restaurada ✔️');
+      }catch{ alert('Archivo de backup inválido'); }
+    });
+  });
+
+  // Export Ventas CSV
+  $('#btnExportVentas')?.addEventListener('click', ()=>{
+    const rows=[['Cliente','Fecha','Nº','Total','Pagado','Pendiente','Estado']];
+    facturas.forEach(f=>{
+      rows.push([
+        f.cliente?.nombre||'',
+        new Date(f.fecha).toLocaleString(),
+        f.numero,
+        (f.totals?.total||0).toFixed(2).replace('.',','),
+        (f.totals?.pagado||0).toFixed(2).replace('.',','),
+        (f.totals?.pendiente||0).toFixed(2).replace('.',','),
+        f.estado
+      ]);
+    });
+    const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download='ventas.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  /* ---------- BUSCAR LISTAS (Clientes / Productos) ---------- */
+  $('#buscarCliente')?.addEventListener('input', ()=>{
+    // simple re-render filtrado (renderClientes ya pinta todo, aquí hacemos filtro manual rápido)
+    const q=($('#buscarCliente').value||'').toLowerCase();
+    const cont=$('#listaClientes'); if(!cont) return;
+    cont.innerHTML='';
+    clientes
+      .filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q))
+      .forEach((c,i)=>{
+        const div=document.createElement('div'); div.className='item';
+        div.innerHTML=`<span>${c.nombre}</span><span class="muted">${c.nif||''}</span>`;
+        div.onclick=()=>{ loadCliente(i); document.querySelector('.tab[data-tab="factura"]').click(); };
+        cont.appendChild(div);
+      });
+  });
+
+  $('#buscarProducto')?.addEventListener('input', ()=>{
+    const q=($('#buscarProducto').value||'').toLowerCase();
+    const lista=$('#listaProductos'); if(!lista) return;
+    lista.innerHTML='';
+    productos
+      .filter(p=>(p.nombre||'').toLowerCase().includes(q))
+      .forEach((p,i)=>{
+        const row=document.createElement('div');
+        row.className='product-row';
+        row.innerHTML=`
+          <input class="p-nombre" value="${p.nombre||''}" />
+          <select class="p-modo">
+            <option value="">—</option>
+            <option value="kg"${p.modo==='kg'?' selected':''}>kg</option>
+            <option value="caja"${p.modo==='caja'?' selected':''}>caja</option>
+            <option value="ud"${p.modo==='ud'?' selected':''}>ud</option>
+            <option value="manojo"${p.modo==='manojo'?' selected':''}>manojo</option>
+          </select>
+          <input type="number" class="p-kgcaja" step="0.01" placeholder="Kg/caja" value="${p.kgCaja??''}">
+          <input type="number" class="p-precio" step="0.01" placeholder="€ base" value="${p.precio??''}">
+          <input class="p-origen" placeholder="Origen" value="${p.origen||''}">
+          <button class="save" data-i="${i}">💾</button>
+          <button class="del" data-i="${i}">✖</button>
+        `;
+        lista.appendChild(row);
+      });
+  });
+
+  // Delegación de edición/borrado en productos
+  $('#listaProductos')?.addEventListener('click', e=>{
+    const i = +e.target.dataset.i;
+    if(Number.isNaN(i)) return;
+    if(e.target.classList.contains('del')){
+      if(confirm('¿Eliminar producto?')){
+        productos.splice(i,1);
+        saveAll();
+        renderProductos(); refreshProductDatalist();
+      }
+    }else if(e.target.classList.contains('save')){
+      const row=e.target.closest('.product-row');
+      const get = sel => row.querySelector(sel)?.value ?? '';
+      productos[i] = {
+        nombre: get('.p-nombre').trim(),
+        modo:   get('.p-modo') || '',
+        kgCaja: parseNum(get('.p-kgcaja')||0) || 0,
+        precio: parseNum(get('.p-precio')||0) || 0,
+        origen: get('.p-origen').trim() || ''
+      };
+      saveAll();
+      renderProductos(); refreshProductDatalist();
+    }
+  });
+
+  /* ---------- RENDER ALL ---------- */
+  function renderAll(){
+    renderClientes();
+    renderProductos();
+    renderFacturas();
+    renderPendientes();
+    drawKPIs(); drawCharts(); drawTop(); renderVentasCliente();
+    refreshProductDatalist();
+  }
+
+  /* ---------- SEEDS INICIALES (si vacío) ---------- */
+  function seedClientes(){
+    if((clientes||[]).length) return;
+    clientes = [
+      {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, Burgos'},
+      {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
+      {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
+      {nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
+      {nombre:'Hotel Cordon'},
+      {nombre:'Romina — PREMIER'}
+    ];
+  }
+
+  function seedProductos(){
+    if((productos||[]).length) return;
+    productos = [
+      {nombre:'TOMATE DANIELA', modo:'kg', precio:0, kgCaja:0, origen:''},
+      {nombre:'PLÁTANO CANARIO PRIMERA', modo:'caja', precio:0, kgCaja:22, origen:'Canarias'},
+      {nombre:'AGUACATE GRANEL', modo:'kg', precio:0, kgCaja:0, origen:'España'},
+      {nombre:'CILANTRO', modo:'manojo', precio:0, kgCaja:0, origen:''},
+      {nombre:'LIMA', modo:'caja', precio:0, kgCaja:7, origen:'Brasil'},
+      {nombre:'PATATA 10KG', modo:'caja', kgCaja:10, precio:0, origen:'España'}
+    ];
+  }
+
+  function setProviderDefaults(){
+    if(!$('#provNombre').value) $('#provNombre').value='Mohammad Arslan Waris';
+    if(!$('#provNif').value)    $('#provNif').value='X6389988J';
+    if(!$('#provDir').value)    $('#provDir').value='Calle San Pablo 17, 09003 Burgos';
+    if(!$('#provTel').value)    $('#provTel').value='631 667 893';
+    if(!$('#provEmail').value)  $('#provEmail').value='shaniwaris80@gmail.com';
+  }
+
+  /* ---------- ARRANQUE ---------- */
+  (function boot(){
+    // Si Firebase SDK no está cargado, evitamos fallos
+    try{
+      if(!(window.firebase && firebase.apps && firebase.apps.length)){
+        // si no hay SDK, evitamos llamadas
+        console.warn('Firebase SDK no encontrado: el modo sync quedará desactivado hasta que lo añadas en index.html');
+      }
+    }catch(e){}
+
+    // Seeds si vacío
+    if(!(clientes&&clientes.length)) seedClientes();
+    if(!(productos&&productos.length)) seedProductos();
+
+    // Guardamos seeds iniciales para persistir
+    saveAll();
+
+    // Proveedor default
+    setProviderDefaults();
+
+    // Datalist productos
+    refreshProductDatalist();
+
+    // 5 líneas iniciales
+    for(let i=0;i<5;i++){
+      const tr=document.createElement('tr');
+      tr.innerHTML=`
+        <td><input list="productNamesList" class="prod" /></td>
+        <td><select class="modo"><option>kg</option><option>caja</option><option>ud</option><option>manojo</option></select></td>
+        <td><input type="number" class="cant" value="1" /></td>
+        <td><input type="number" class="bruto" /></td>
+        <td><input type="number" class="tara" /></td>
+        <td><input type="number" class="neto" /></td>
+        <td><input type="number" class="precio" /></td>
+        <td><input class="origen" /></td>
+        <td class="importe">0,00 €</td>
+        <td><button class="del">✖</button></td>`;
+      $('#lineasBody').appendChild(tr);
+    }
+
+    // Render general
+    renderAll();
+    // Primer recálculo
+    recalc();
+
+    // Refrescos por pestañas
+    document.querySelector('.tab[data-tab="facturas"]')?.addEventListener('click', renderFacturas);
+    document.querySelector('.tab[data-tab="pendientes"]')?.addEventListener('click', renderPendientes);
+    document.querySelector('.tab[data-tab="ventas"]')?.addEventListener('click', ()=>{ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); });
+  })();
+
+});
