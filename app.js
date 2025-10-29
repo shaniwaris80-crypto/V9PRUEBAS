@@ -988,5 +988,3 @@ window.__arslan_queueSync = async function(key){
   checkStatus();
   setInterval(checkStatus, 15000);
 })();
-
-})(); // end IIFE principal
