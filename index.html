@@ -364,13 +364,11 @@
   </section>
 
 </main>
-<!-- 🔥 Firebase SDKs -->
+<!-- Firebase compat SDKs (v9) -->
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
 
-
 <script>
-  // Configuración de tu proyecto
   const firebaseConfig = {
     apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
     authDomain: "arslan-pro-kiwi.firebaseapp.com",
@@ -378,13 +376,15 @@
     projectId: "arslan-pro-kiwi",
     storageBucket: "arslan-pro-kiwi.firebasestorage.app",
     messagingSenderId: "768704045481",
-    appId: "1:768704045481:web:c60aabc3cd0296f0ec772f",
-    measurementId: "G-6SL4D9QXY9"
+    appId: "1:768704045481:web:c20d2e35f41c8a6fd0f1b9"
   };
 
-  // Inicialización global de Firebase
-  firebase.initializeApp(firebaseConfig);
+  // Evita inicialización duplicada
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
 </script>
+
 
 <!-- Tu app principal -->
 <script src="app.js"></script>
