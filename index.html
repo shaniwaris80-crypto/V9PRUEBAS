@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ARSLAN PRO V10.4 — KIWI Edition</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -56,30 +56,20 @@
 
     <div class="card">
       <div class="title-row">
-        <h3>Cuadro de cálculo (cuadrícula)</h3>
+        <h3>Cuadro de cálculo (líneas de producto)</h3>
         <div class="row">
           <button id="btnAddLinea">+ Añadir línea</button>
           <button id="btnVaciarLineas" class="ghost">Vaciar</button>
         </div>
       </div>
 
-      <!-- Autocompletado -->
       <datalist id="productNamesList"></datalist>
 
       <div class="table-wrap">
         <table class="calc-table">
           <thead>
             <tr>
-              <th>Producto</th>
-              <th>Modo</th>
-              <th>Cant.</th>
-              <th>Bruto (kg)</th>
-              <th>Tara (kg)</th>
-              <th>Neto (kg)</th>
-              <th>Precio</th>
-              <th>Origen</th>
-              <th>Importe</th>
-              <th></th>
+              <th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto (kg)</th><th>Tara (kg)</th><th>Neto (kg)</th><th>Precio</th><th>Origen</th><th>Importe</th><th></th>
             </tr>
           </thead>
           <tbody id="lineasBody"></tbody>
@@ -90,13 +80,13 @@
     <div class="grid3">
       <div class="card">
         <h3>💶 Totales factura</h3>
-        <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10%</label>
-        <label class="check"><input type="checkbox" id="chkIvaIncluido" checked /> IVA 4% incluido (informativo)</label>
+        <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10 %</label>
+        <label class="check"><input type="checkbox" id="chkIvaIncluido" checked /> IVA 4 % incluido (informativo)</label>
 
         <div class="totals-grid">
           <div>Subtotal</div><div id="subtotal">0,00 €</div>
           <div>Transporte</div><div id="transp">0,00 €</div>
-          <div>IVA (4%)</div><div id="iva">0,00 €</div>
+          <div>IVA (4 %)</div><div id="iva">0,00 €</div>
           <div class="big">TOTAL</div><div class="big" id="total">0,00 €</div>
         </div>
       </div>
@@ -120,7 +110,9 @@
         </label>
         <label>Método
           <select id="metodoPago">
-            <option>Efectivo</option><option>Tarjeta</option><option>Transferencia</option>
+            <option>Efectivo</option>
+            <option>Tarjeta</option>
+            <option>Transferencia</option>
           </select>
         </label>
         <div class="pendiente">Pendiente: <strong id="pendiente">0,00 €</strong></div>
@@ -138,33 +130,18 @@
       <button id="btnNueva" class="ghost">🧾 Nueva</button>
     </div>
 
-    <!-- Área PDF -->
+    <!-- ÁREA PDF -->
     <div id="printArea" class="print">
       <div class="pdf-header">
         <div class="pdf-brand">
-          <!-- Logo kiwi (SVG pequeño) solo en PDF -->
-          <svg id="pdf-kiwi" width="42" height="42" viewBox="0 0 100 100" aria-hidden="true">
-            <circle cx="50" cy="50" r="45" fill="#9acd32" stroke="#5a7f1a" stroke-width="6"></circle>
-            <circle cx="50" cy="50" r="24" fill="#fff" stroke="#7fbf3f" stroke-width="5"></circle>
-            <!-- semillas -->
-            <g fill="#2b2b2b">
-              <circle cx="50" cy="28" r="3"></circle>
-              <circle cx="64" cy="32" r="3"></circle>
-              <circle cx="72" cy="45" r="3"></circle>
-              <circle cx="36" cy="32" r="3"></circle>
-              <circle cx="28" cy="45" r="3"></circle>
-              <circle cx="50" cy="72" r="3"></circle>
-              <circle cx="36" cy="68" r="3"></circle>
-              <circle cx="64" cy="68" r="3"></circle>
-            </g>
-          </svg>
+          <img src="logo.png" alt="ARSLAN" />
           <div>
-            <h2 id="pdf-title">FACTURA</h2>
+            <h2>FACTURA</h2>
             <div id="p-prov"></div>
           </div>
         </div>
         <div class="pdf-meta">
-          <div><span>Nº:</span> <strong id="p-num"></strong></div>
+          <div><span>Nº Factura:</span> <strong id="p-num"></strong></div>
           <div><span>Fecha:</span> <strong id="p-fecha"></strong></div>
           <div><span>Cliente:</span><div id="p-cli"></div></div>
           <canvas id="p-qr" width="92" height="92"></canvas>
@@ -173,9 +150,7 @@
 
       <table id="p-tabla">
         <thead>
-          <tr>
-            <th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th>
-          </tr>
+          <tr><th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -184,7 +159,7 @@
         <div>
           <div>Subtotal: <strong id="p-sub">0,00 €</strong></div>
           <div>Transporte: <strong id="p-tra">0,00 €</strong></div>
-          <div>IVA (4%): <strong id="p-iva">0,00 €</strong></div>
+          <div>IVA (4 %): <strong id="p-iva">0,00 €</strong></div>
           <div class="big">Total: <strong id="p-tot">0,00 €</strong></div>
         </div>
         <div>
@@ -197,7 +172,6 @@
       <div class="pdf-foot" id="pdf-foot-note">IVA incluido en los precios.</div>
     </div>
 
-    <!-- Historial de precios -->
     <aside id="pricePanel" hidden>
       <div class="pp-title">Historial de precios</div>
       <div id="ppBody"></div>
@@ -263,14 +237,12 @@
       <div class="title-row">
         <h3>Deudas por cliente</h3>
         <div class="row">
-          <button id="btnResetCliente" class="ghost">Reset deudas del cliente actual</button>
+          <button id="btnResetCliente" class="ghost">Reset deudas cliente actual</button>
           <button id="btnResetGlobal" class="ghost">Reset deudas global</button>
         </div>
       </div>
       <table class="calc-table" id="tblPendientes">
-        <thead>
-          <tr><th>Cliente</th><th>Nº facturas pendientes</th><th>Total pendiente</th><th>Última factura</th><th>Acciones</th></tr>
-        </thead>
+        <thead><tr><th>Cliente</th><th>Facturas</th><th>Total pendiente</th><th>Última factura</th><th>Acciones</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="pendiente total">Total pendiente global: <strong id="resGlobal">0,00 €</strong></div>
@@ -290,7 +262,7 @@
         </div>
       </div>
       <div class="card">
-        <h3>Top 10 productos (total €)</h3>
+        <h3>Top 10 productos (€)</h3>
         <canvas id="chartTop" height="160"></canvas>
       </div>
     </div>
@@ -315,9 +287,7 @@
         </div>
       </div>
       <table class="calc-table" id="tblVentasCliente">
-        <thead>
-          <tr><th>Cliente</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th></tr>
-        </thead>
+        <thead><tr><th>Cliente</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
