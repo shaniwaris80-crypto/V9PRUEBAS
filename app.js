@@ -1,17 +1,11 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full, estable + Supabase)
-   - Misma base funcional + mejoras de totales, PDF, UX rápido
-   - 4 paletas, sin splash, logo kiwi solo en PDF, "FACTURA"
-   - Clientes: selección segura por ID (evita datos cruzados)
-   - Supabase: carga inicial + sync automático + botón manual
+   ARSLAN PRO V10.4 — KIWI Edition (Full)
+   - Mantiene TODAS las funciones (V10.3) y mejora UI/UX
+   - Totales corregidos, autocompletado real, logo visible
+   - PDF A4 con QR, pagos parciales, pendientes, ventas+top
 ======================================================= */
+(function(){
 "use strict";
-
-/* ---------- SUPABASE (ESM) ---------- */
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
-const SUPABASE_URL = 'https://bbfxtwnuarcneymlixco.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJiZnh0d251YXJjbmV5bWxpeGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE2NjkwMjMsImV4cCI6MjA3NzI0NTAyM30.VW5sX_q8oqaYJDWhUZeaBLn9xIkBcm-_Fr9i8ItHUn8';
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ---------- HELPERS ---------- */
 const $  = (s,root=document)=>root.querySelector(s);
@@ -22,7 +16,19 @@ const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':
 const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
-const uid = ()=>'c'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+
+function downloadJSON(obj, filename){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+function uploadJSON(cb){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
+  inp.onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const r=new FileReader(); r.onload=()=>{ try{ const obj=JSON.parse(r.result); cb(obj); }catch{ alert('JSON inválido'); } }; r.readAsText(f);
+  };
+  inp.click();
+}
 
 /* ---------- KEYS ---------- */
 const K_CLIENTES='arslan_v104_clientes';
@@ -34,29 +40,33 @@ const K_PRICEHIST='arslan_v104_pricehist';
 let clientes  = load(K_CLIENTES, []);
 let productos = load(K_PRODUCTOS, []);
 let facturas  = load(K_FACTURAS, []);
-let priceHist = load(K_PRICEHIST, {}); // { name: [{price, date}, ...] }
+let priceHist = load(K_PRICEHIST, {});
 
-function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
+function load(k, fallback){ 
+  try{ 
+    const raw = localStorage.getItem(k);
+    if(!raw) return fallback;
+    const v = JSON.parse(raw);
+    return v ?? fallback; 
+  } catch{ 
+    return fallback; 
+  } 
+}
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
-/* ---------- SYNC UI ---------- */
-const showSync = (which) => {
-  const b = $('#syncBadge'), ok=$('#syncOk'), er=$('#syncErr');
-  if(b) b.style.display = which==='busy' ? 'inline-block' : 'none';
-  if(ok) ok.style.display = which==='ok' ? 'inline-block' : 'none';
-  if(er) er.style.display = which==='err' ? 'inline-block' : 'none';
-  if(which==='ok' || which==='err'){
-    setTimeout(()=>{ if(ok) ok.style.display='none'; if(er) er.style.display='none'; }, 1800);
-  }
-};
-
-/* ---------- TABS ---------- */
+/* ---------- SPLASH & TABS ---------- */
+window.addEventListener('load', ()=>{
+  setTimeout(()=>{ $('#splash')?.classList.add('fade'); document.querySelector('[data-tab="factura"]')?.click(); }, 900);
+});
 function switchTab(id){
   $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
   $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
   if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
   if(id==='pendientes'){ renderPendientes(); }
   if(id==='resumen'){ drawResumen(); }
+  if(id==='facturas'){ renderFacturas(); }
+  if(id==='productos'){ renderProductos(); }
+  if(id==='clientes'){ renderClientesLista(); }
 }
 $$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
 
@@ -66,40 +76,44 @@ function uniqueByName(arr){
   arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,c); });
   return [...map.values()];
 }
-function ensureClienteIds(){
-  clientes.forEach(c=>{ if(!c.id) c.id=uid(); });
-}
 function seedClientesIfEmpty(){
-  if(clientes.length) return ensureClienteIds();
+  if(clientes.length) return;
   clientes = uniqueByName([
-    {id:uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
-    {id:uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
-    {id:uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
-    {id:uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
-    {id:uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {id:uid(), nombre:'Hotel Cordon'},
-    {id:uid(), nombre:'Vaivén Hostelería'},
-    {id:uid(), nombre:'Grupo Resicare'},
-    {id:uid(), nombre:'Carlos Alameda Peralta & Seis Más'},
-    {id:uid(), nombre:'Tabalou Development SLU', nif:'ES B09567769'},
-    {id:uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
-    {id:uid(), nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
-    {id:uid(), nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
-    {id:uid(), nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
-    {id:uid(), nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
-    {id:uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
-    {id:uid(), nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
-    {id:uid(), nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
-    {id:uid(), nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
-    {id:uid(), nombre:'Angela', dir:'C/ Madrid, Burgos'},
-    {id:uid(), nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
-    {id:uid(), nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
-    {id:uid(), nombre:'Domingo'},
-    {id:uid(), nombre:'Bar Tropical'},
-    {id:uid(), nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
-    {id:uid(), nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
-    {id:uid(), nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
+    {nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
+    {nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
+    {nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda 17, Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
+    {nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
+    {nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
+    {nombre:'Hotel Cordon'},{nombre:'Vaivén Hostelería'},{nombre:'Grupo Resicare'},{nombre:'Carlos Alameda Peralta & Seis Más'},
+    {nombre:'Tabalou Development SLU', nif:'ES B09567769'},
+    {nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
+    {nombre:'Romina — PREMIER', dir:'C/ Madrid 42, Burgos'},
+    {nombre:'Abbas — Locutorio Gamonal', dir:'C/ Derechos Humanos 45, Burgos'},
+    {nombre:'Nadeem Bhai — RIA Locutorio', dir:'C/ Vitoria 137, Burgos'},
+    {nombre:'Mehmood — Mohsin Telecom', dir:'C/ Vitoria 245, Burgos'},
+    {nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos'},
+    {nombre:'Imran Khan — Estambul', dir:'Avda. del Cid, Burgos'},
+    {nombre:'Waqas Sohail', dir:'C/ Vitoria, Burgos'},
+    {nombre:'Malik — Locutorio Malik', dir:'C/ Progreso, Burgos'},
+    {nombre:'Angela', dir:'C/ Madrid, Burgos'},
+    {nombre:'Aslam — Locutorio Aslam', dir:'Avda. del Cid, Burgos'},
+    {nombre:'Victor Pelu — Tienda Centro', dir:'Burgos Centro'},
+    {nombre:'Domingo'},{nombre:'Bar Tropical'},
+    {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
+    {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
+    {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
   ]);
+
+  // ➕ Cliente adicional (no por defecto, se suma a la lista)
+  clientes.push({
+    nombre: 'Restauración Hermanos Marijuán, S.L.U.',
+    comercial: 'Restaurante Los Braseros',
+    nif: 'B09425059',
+    dir: 'Carretera Logroño Km 102, 09193 Castrillo del Val (Burgos)',
+    provincia: 'Burgos',
+    email: 'info@restaurantelosbraseros.com'
+  });
+
   save(K_CLIENTES, clientes);
 }
 const PRODUCT_NAMES = [
@@ -154,14 +168,13 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI (IDs seguras) ---------- */
-function saveClientes(){ save(K_CLIENTES, clientes); syncClientes().catch(()=>{}); }
+/* ---------- CLIENTES UI ---------- */
+function saveClientes(){ save(K_CLIENTES, clientes); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  arr.forEach((c)=>{
-    const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt);
+  [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach((c,i)=>{
+    const opt=document.createElement('option'); opt.value=i; opt.textContent=c.nombre||`Cliente ${i+1}`; sel.appendChild(opt);
   });
 }
 function renderClientesLista(){
@@ -171,7 +184,7 @@ function renderClientesLista(){
   const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   const view = q ? arr.filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q)) : arr;
   if(view.length===0){ cont.innerHTML='<div class="item">Sin clientes.</div>'; return; }
-  view.forEach((c)=>{
+  view.forEach((c,idx)=>{
     const row=document.createElement('div'); row.className='item';
     row.innerHTML=`
       <div>
@@ -179,20 +192,20 @@ function renderClientesLista(){
         <div class="muted">${escapeHTML(c.nif||'')} · ${escapeHTML(c.dir||'')}</div>
       </div>
       <div class="row">
-        <button class="ghost" data-e="use" data-id="${c.id}">Usar</button>
-        <button class="ghost" data-e="edit" data-id="${c.id}">Editar</button>
-        <button class="ghost" data-e="del" data-id="${c.id}">Borrar</button>
+        <button class="ghost" data-e="use" data-i="${idx}">Usar</button>
+        <button class="ghost" data-e="edit" data-i="${idx}">Editar</button>
+        <button class="ghost" data-e="del" data-i="${idx}">Borrar</button>
       </div>
     `;
     cont.appendChild(row);
   });
   cont.querySelectorAll('button').forEach(b=>{
-    const id=b.dataset.id;
+    const i=+b.dataset.i;
     b.addEventListener('click', ()=>{
-      const i=clientes.findIndex(x=>x.id===id); if(i<0) return;
       if(b.dataset.e==='use'){
         const c=clientes[i]; if(!c) return;
-        fillClientFields(c); switchTab('factura');
+        $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
+        switchTab('factura');
       }else if(b.dataset.e==='edit'){
         const c=clientes[i];
         const nombre=prompt('Nombre',c.nombre||'')??c.nombre;
@@ -200,19 +213,30 @@ function renderClientesLista(){
         const dir=prompt('Dirección',c.dir||'')??c.dir;
         const tel=prompt('Tel',c.tel||'')??c.tel;
         const email=prompt('Email',c.email||'')??c.email;
-        clientes[i]={...c,nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
+        clientes[i]={nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
       }else{
         if(confirm('¿Eliminar cliente?')){ clientes.splice(i,1); saveClientes(); renderClientesSelect(); renderClientesLista(); }
       }
     });
   });
 }
-function fillClientFields(c){
+$('#selCliente')?.addEventListener('change', (e)=>{
+  const i=+e.target.value; const c=clientes[i]; if(!c) return;
   $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-}
+});
+
+/* Añadir cliente manual */
+$('#btnAddCliente')?.addEventListener('click', ()=>{
+  const nombre=prompt('Nombre / Razón social:'); if(!nombre) return;
+  const nif=prompt('CIF/NIF (opcional):')||'';
+  const dir=prompt('Dirección (opcional):')||'';
+  const tel=prompt('Tel (opcional):')||'';
+  const email=prompt('Email (opcional):')||'';
+  clientes.push({nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
+});
 
 /* ---------- PRODUCTOS UI ---------- */
-function saveProductos(){ save(K_PRODUCTOS, productos); syncProductos().catch(()=>{}); }
+function saveProductos(){ save(K_PRODUCTOS, productos); }
 function populateProductDatalist(){
   const dl=$('#productNamesList'); if(!dl) return;
   dl.innerHTML='';
@@ -220,8 +244,7 @@ function populateProductDatalist(){
 }
 function renderProductos(){
   const cont = $('#listaProductos'); if(!cont) return;
-  const inputSearch = $('#buscarProducto2') || $('#buscarProducto');
-  const q = (inputSearch?.value||'').toLowerCase();
+  const q = ($('#buscarProducto')?.value||'').toLowerCase();
   const view = q ? productos.filter(p=>(p.name||'').toLowerCase().includes(q)) : productos;
   cont.innerHTML='';
   if(view.length===0){ cont.innerHTML='<div class="item">Sin resultados.</div>'; return; }
@@ -258,7 +281,10 @@ function renderProductos(){
   });
 }
 $('#buscarProducto')?.addEventListener('input', renderProductos);
-$('#buscarProducto2')?.addEventListener('input', renderProductos);
+$('#btnAddProducto')?.addEventListener('click', ()=>{
+  productos.push({name:'', mode:'', boxKg:null, price:null, origin:''});
+  saveProductos(); renderProductos(); populateProductDatalist();
+});
 
 /* ---------- FACTURA: LÍNEAS ---------- */
 function findProducto(name){ return productos.find(p=>(p.name||'').toLowerCase()===String(name).toLowerCase()); }
@@ -377,6 +403,7 @@ function recalc(){
   const iva = baseMasTrans * 0.04; // informativo
   const total = baseMasTrans;
 
+  // pagado = pagosTemp + input manual
   const manual = parseNum($('#pagado')?.value||0);
   const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + parcial;
@@ -388,22 +415,24 @@ function recalc(){
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
+  // estado sugerido
   if(total<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<total){ $('#estado').value='parcial'; }
   else { $('#estado').value='pagado'; }
 
+  // Pie de PDF
   const foot=$('#pdf-foot-note');
   if(foot){
     foot.textContent = $('#chkIvaIncluido')?.checked ? 'IVA incluido en los precios.' : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
   }
 
-  fillPrint(ls,{subtotal,transporte,iva,total},null,null);
-  drawResumen();
+  fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente});
+  drawResumen(); // KPIs rápidos
 }
 ;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
-function fillPrint(lines, totals, _temp=null, f=null){
+function fillPrint(lines, totals, temp=null, f=null){
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
@@ -457,9 +486,9 @@ function fillPrint(lines, totals, _temp=null, f=null){
 
 /* ---------- GUARDAR / NUEVA / PDF ---------- */
 function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
-function saveFacturas(){ save(K_FACTURAS, facturas); syncFacturas().catch(()=>{}); }
+function saveFacturas(){ save(K_FACTURAS, facturas); }
 
-$('#btnGuardar')?.addEventListener('click', async ()=>{
+$('#btnGuardar')?.addEventListener('click', ()=>{
   const ls=captureLineas(); if(ls.length===0){ alert('Añade al menos una línea.'); return; }
   const numero=genNumFactura(); const now=todayISO();
   ls.forEach(l=> pushPriceHistory(l.name, l.price));
@@ -470,7 +499,7 @@ $('#btnGuardar')?.addEventListener('click', async ()=>{
   const total=unMoney($('#total').textContent);
 
   const manual = parseNum($('#pagado').value||0);
-  const pagos = [...pagosTemp];
+  const pagos = [...pagosTemp]; // copiar
   const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + pagadoParcial;
   const pendiente=Math.max(0,total-pagadoTotal);
@@ -484,16 +513,13 @@ $('#btnGuardar')?.addEventListener('click', async ()=>{
     lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
     estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
-    pagos
+    pagos // historial de pagos parciales
   };
   facturas.unshift(f); saveFacturas();
   pagosTemp = []; renderPagosTemp();
   alert(`Factura ${numero} guardada.`);
   renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
   fillPrint(ls,{subtotal,transporte,iva,total},null,f);
-
-  // Sync historial de precios también
-  syncPriceHist().catch(()=>{});
 });
 
 $('#btnNueva')?.addEventListener('click', ()=>{
@@ -505,7 +531,6 @@ $('#btnNueva')?.addEventListener('click', ()=>{
 });
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
-  recalc();
   const element = document.getElementById('printArea');
   const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
   const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
@@ -581,6 +606,8 @@ function renderFacturas(){
 }
 $('#filtroEstado')?.addEventListener('input', renderFacturas);
 $('#buscaCliente')?.addEventListener('input', renderFacturas);
+$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
+$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
 
 /* ---------- PENDIENTES ---------- */
 function renderPendientes(){
@@ -719,251 +746,70 @@ function renderVentasCliente(){
 $('#btnBackup')?.addEventListener('click', ()=>{
   const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  downloadJSON(payload, filename);
 });
 $('#btnRestore')?.addEventListener('click', ()=>{
-  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
-  inp.onchange=e=>{
-    const f=e.target.files[0]; if(!f) return;
-    const reader=new FileReader(); reader.onload=()=>{
-      try{
-        const obj=JSON.parse(reader.result);
-        if(obj.clientes){ clientes=obj.clientes; ensureClienteIds(); }
-        if(obj.productos) productos=obj.productos;
-        if(obj.facturas) facturas=obj.facturas;
-        if(obj.priceHist) priceHist=obj.priceHist;
-        save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
-        renderAll(); alert('Copia restaurada ✔️');
-        // Sincronizamos nube tras restaurar
-        syncAll().catch(()=>{});
-      }catch{ alert('JSON inválido'); }
-    }; reader.readAsText(f);
-  };
-  inp.click();
+  uploadJSON(obj=>{
+    try{
+      if(obj.clientes) clientes=obj.clientes;
+      if(obj.productos) productos=obj.productos;
+      if(obj.facturas) facturas=obj.facturas;
+      if(obj.priceHist) priceHist=obj.priceHist;
+      save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
+      renderAll(); alert('Copia restaurada ✔️');
+    }catch{ alert('JSON inválido'); }
+  });
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr).map(c=>({...c, id:c.id||uid()})); saveClientes(); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
-$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; saveProductos(); populateProductDatalist(); renderProductos(); } }));
-$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
-$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
-$('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
-
-function downloadJSON(obj, filename){
-  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
-function uploadJSON(cb){
-  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
-  inp.onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)); }catch{ alert('JSON inválido'); } }; r.readAsText(f); };
-  inp.click();
-}
-function exportVentasCSV(){
-  const rows=[['Cliente','Fecha','Nº','Total','Pagado','Pendiente','Estado']];
-  facturas.forEach(f=>{
-    rows.push([f.cliente?.nombre||'', new Date(f.fecha).toLocaleString(), f.numero, (f.totals?.total||0), (f.totals?.pagado||0), (f.totals?.pendiente||0), f.estado]);
-  });
-  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); } }));
+$('#btnExportVentas')?.addEventListener('click', ()=>{
+  // CSV por cliente (totales globales actuales)
+  const rows=[['Cliente','Hoy','Semana','Mes','Total']];
+  const tb=$('#tblVentasCliente tbody'); if(tb){
+    tb.querySelectorAll('tr').forEach(tr=>{
+      const tds=[...tr.querySelectorAll('td')].map(td=>td.textContent.replace(/\s+/g,' ').trim());
+      rows.push(tds);
+    });
+  }
+  const csv = rows.map(r=>r.map(v=>`"${(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
-
-/* ---------- EVENTOS GENERALES ---------- */
-$('#btnAddLinea')?.addEventListener('click', addLinea);
-$('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
-$('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
-$('#selCliente')?.addEventListener('change', ()=>{
-  const id=$('#selCliente').value; if(!id) return; const c=clientes.find(x=>x.id===id); if(!c) return;
-  fillClientFields(c);
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`ventas-por-cliente-${fmtDateDMY(new Date())}.csv`; a.click(); URL.revokeObjectURL(a.href);
 });
-$('#btnAddCliente')?.addEventListener('click', ()=>{
-  const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
-  const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  clientes.push({id:uid(), nombre,nif,dir,tel,email}); saveClientes(); renderClientesSelect(); renderClientesLista();
-});
-$('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
-/* ---------- RESUMEN ---------- */
+/* ---------- KPI RESUMEN ---------- */
+function drawResumen(){ try{ drawKPIs(); }catch{} }
+
+/* ---------- RENDER INICIAL ---------- */
 function renderAll(){
-  renderClientesSelect(); renderClientesLista();
-  populateProductDatalist(); renderProductos(); renderFacturas(); renderPendientes();
-  drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
-}
-function drawResumen(){ drawKPIs(); }
-
-/* ---------- SUPABASE SYNC ---------- */
-/* Nota importante:
-   Para evitar conflictos con UUID en tus tablas, en la subida
-   usamos estrategia "replace": borramos y reinsertamos (RLS OFF).
-   Si quieres upsert con clave única, crea unique index:
-   - clientes(nombre) o clientes(nif)
-   - productos(name)
-   - facturas(numero)
-*/
-async function replaceTable(table, rows){
-  showSync('busy');
-  // Borrado completo
-  const del = await supabase.from(table).delete().neq('id', null);
-  if(del.error){ console.error('Delete error', table, del.error); showSync('err'); return; }
-  if(!rows?.length){ showSync('ok'); return; }
-  // Mapeo: no enviar id locales (para no chocar con uuid)
-  const sanitized = rows.map(r=>{
-    const { id, ...rest } = r || {};
-    return rest;
-  });
-  const ins = await supabase.from(table).insert(sanitized);
-  if(ins.error){ console.error('Insert error', table, ins.error); showSync('err'); return; }
-  showSync('ok');
+  seedClientesIfEmpty();
+  seedProductsIfEmpty();
+  setProviderDefaultsIfEmpty();
+  renderClientesSelect();
+  renderClientesLista();
+  populateProductDatalist();
+  renderProductos();
+  renderFacturas();
+  renderPendientes();
+  drawKPIs();
+  drawCharts();
+  drawTop();
+  renderVentasCliente();
+  drawResumen();
 }
 
-async function syncClientes(){ await replaceTable('clientes', clientes); }
-async function syncProductos(){ await replaceTable('productos', productos); }
-async function syncFacturas(){ await replaceTable('facturas', facturas); }
-async function syncPriceHist(){
-  // priceHist: {name:[{price,date}]} -> tabla precios_historial(name, price, date)
-  const rows=[];
-  Object.entries(priceHist||{}).forEach(([name, arr])=>{
-    (arr||[]).forEach(h=> rows.push({name, price:h.price, date:h.date}));
-  });
-  await replaceTable('precios_historial', rows);
-}
-async function syncAll(){
-  await syncClientes();
-  await syncProductos();
-  await syncFacturas();
-  await syncPriceHist();
-}
-
-async function loadFromSupabase(){
-  try{
-    showSync('busy');
-    const { data: c, error: e1 } = await supabase.from('clientes').select('*');
-    const { data: p, error: e2 } = await supabase.from('productos').select('*');
-    const { data: f, error: e3 } = await supabase.from('facturas').select('*');
-    const { data: ph, error: e4 } = await supabase.from('precios_historial').select('*');
-
-    if(e1||e2||e3||e4){ console.warn('Carga parcial Supabase', e1||e2||e3||e4); }
-
-    if (c?.length) {
-      // Asegurar ID local para UI
-      clientes = c.map(x=>({...x, id: x.id || uid()}));
-      save(K_CLIENTES, clientes);
-    }
-    if (p?.length) {
-      productos = p;
-      save(K_PRODUCTOS, productos);
-    }
-    if (f?.length) {
-      facturas = f;
-      save(K_FACTURAS, facturas);
-    }
-    if (ph?.length){
-      const map={};
-      ph.forEach(row=>{
-        const name=row.name;
-        if(!map[name]) map[name]=[];
-        map[name].push({price:Number(row.price)||0, date:row.date});
-      });
-      // Ordenar desc por fecha y limitar 10 por producto
-      Object.keys(map).forEach(n=>{
-        map[n].sort((a,b)=>new Date(b.date)-new Date(a.date));
-        map[n]=map[n].slice(0,10);
-      });
-      priceHist = map;
-      save(K_PRICEHIST, priceHist);
-    }
-
-    renderAll(); recalc();
-    showSync('ok');
-    console.log('✅ Datos cargados desde Supabase');
-  }catch(err){
-    console.error('Supabase load error', err);
-    showSync('err');
-  }
-}
-
-/* Botón Sync manual */
-$('#btnSync')?.addEventListener('click', async ()=>{
-  try{
-    await syncAll();
-    alert('✅ Sincronizado correctamente con Supabase');
-  }catch(err){
-    alert('❌ Error al sincronizar. Revisa consola.');
-  }
+/* ---------- INICIO ---------- */
+document.addEventListener('DOMContentLoaded', ()=>{
+  renderAll();
+  // 5 líneas por defecto al abrir
+  const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
+  // Botones factura
+  $('#btnAddLinea')?.addEventListener('click', addLinea);
+  $('#btnVaciarLineas')?.addEventListener('click', ()=>{ $('#lineasBody').innerHTML=''; recalc(); });
+  // Ir a clientes
+  $('#btnNuevoCliente')?.addEventListener('click', ()=>{ switchTab('clientes'); renderClientesLista(); });
+  recalc();
 });
 
-/* ---------- BOOT ---------- */
-(function boot(){
-  seedClientesIfEmpty();
-  ensureClienteIds();
-  seedProductsIfEmpty();
-
-  setProviderDefaultsIfEmpty();
-
-  const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
-
-  renderPagosTemp();
-  renderAll(); recalc();
-
-  // Carga inicial desde Supabase (si hay datos)
-  loadFromSupabase();
-
-  // Paletas/tema selector (al final para no bloquear)
-  setupPaletas();
 })();
-
-/* ================================
-   🎨 SELECTOR DE PALETAS (4 temas)
-   ================================ */
-function setupPaletas(){
-  const PALETAS = {
-    kiwi:    {bg:'#ffffff', text:'#1e293b', accent:'#16a34a', border:'#d1d5db', muted:'#6b7280'},
-    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151', muted:'#94a3b8'},
-    sand:    {bg:#'fefce8', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4', muted:'#78716c'},
-    mint:    {bg:'#ecfdf5', text:'#065f46', accent:'#059669', border:'#a7f3d0', muted:'#0f766e'}
-  };
-
-  const bar = document.createElement('div');
-  bar.id = 'colorToolbar';
-  document.body.appendChild(bar);
-
-  for(const [name,p] of Object.entries(PALETAS)){
-    const b=document.createElement('button');
-    b.title=name; b.style.background=p.accent;
-    b.onclick=()=>aplicarTema(name);
-    bar.appendChild(b);
-  }
-
-  const toggle=document.createElement('button');
-  toggle.className='dark-toggle';
-  toggle.textContent='🌞/🌙';
-  toggle.onclick=()=>toggleDark();
-  bar.appendChild(toggle);
-
-  function aplicarTema(nombre){
-    const pal=PALETAS[nombre];
-    if(!pal) return;
-    const root=document.documentElement;
-    root.style.setProperty(`--bg`, pal.bg);
-    root.style.setProperty(`--text`, pal.text);
-    root.style.setProperty(`--accent`, pal.accent);
-    root.style.setProperty(`--accent-dark`, nombre==='graphite' ? '#1d4ed8' : (nombre==='sand'?'#a16207':(nombre==='mint'?'#047857':'#15803d')));
-    root.style.setProperty(`--border`, pal.border);
-    root.style.setProperty(`--muted`, pal.muted);
-    root.setAttribute('data-theme', nombre);
-    localStorage.setItem('arslan_tema', nombre);
-  }
-
-  function toggleDark(){
-    const isDark=document.body.classList.toggle('dark-mode');
-    localStorage.setItem('arslan_dark', isDark);
-  }
-
-  const guardadoTema = localStorage.getItem('arslan_tema') || 'kiwi';
-  const guardadoDark = localStorage.getItem('arslan_dark') === 'true';
-  aplicarTema(guardadoTema);
-  if(guardadoDark) toggleDark();
-}
-
-/* ====== FIN ====== */
