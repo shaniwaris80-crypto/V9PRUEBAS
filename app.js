@@ -814,13 +814,26 @@ function renderVentas(){
     cur.total+=tot; byClient.set(nom,cur);
   });
 
-  [...byClient.entries()].sort((a,b)=>b[1].total-a[1].total).forEach(([nom,v])=>{
-    const tr=document.createElement('tr');
-    const highlight=v.hoy>0 ? 'state-green' : '';
-    tr.innerHTML=`<td>${nom}</td><td class="${highlight}">${money(v.hoy)}</td><td>${money(v.semana)}</td><td>${money(v.mes)}</td><td><strong>${money(v.total)}</strong></td>`;
+cur.total += tot;
+byClient.set(nom, cur);
+});
+
+[...byClient.entries()]
+  .sort((a,b) => b[1].total - a[1].total)
+  .forEach(([nom,v]) => {
+    const tr = document.createElement('tr');
+    const highlight = v.hoy>0 ? 'state-green' : '';
+    tr.innerHTML = `
+      <td>${nom}</td>
+      <td class="${highlight}">${money(v.hoy)}</td>
+      <td>${money(v.semana)}</td>
+      <td>${money(v.mes)}</td>
+      <td><strong>${money(v.total)}</strong></td>
+    `;
     tb.appendChild(tr);
   });
 }
+
 
 // ---------- Export CSV ----------
 $('#btnExportVentas')?.addEventListener('click', ()=>{
