@@ -1,7 +1,6 @@
 /* ===========================================================
    ARSLAN PRO V10.4 — KIWI Edition
    Tema: Blanco + Negro + Verde
-   Tipografía: Poppins
    =========================================================== */
 
 :root {
@@ -17,12 +16,8 @@
   --amber: #facc15;
 }
 
-/* ---------- RESETEO ---------- */
-* {
-  box-sizing: border-box;
-  font-family: 'Poppins', sans-serif;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
+/* ---------- RESET ---------- */
+* { box-sizing: border-box; font-family: 'Poppins', sans-serif; }
 body {
   margin: 0;
   background: var(--bg);
@@ -31,7 +26,7 @@ body {
   line-height: 1.4;
 }
 
-/* ---------- TOPBAR ---------- */
+/* ---------- HEADER ---------- */
 .topbar {
   display: flex;
   align-items: center;
@@ -48,24 +43,15 @@ body {
   align-items: center;
   gap: .6rem;
 }
-.brand img {
-  width: 36px;
-  height: 36px;
-}
-.brand span {
-  font-weight: 600;
-  font-size: 1.1rem;
-}
+.brand img { width: 36px; height: 36px; }
+.brand span { font-weight: 600; font-size: 1.1rem; }
 
 /* ---------- TABS ---------- */
-.tabs {
-  display: flex;
-  gap: 0.3rem;
-}
+.tabs { display: flex; gap: .3rem; }
 .tab {
-  background: transparent;
   border: 1px solid var(--green);
   color: var(--green-dark);
+  background: transparent;
   padding: .3rem .7rem;
   border-radius: .4rem;
   cursor: pointer;
@@ -77,68 +63,33 @@ body {
   box-shadow: 0 2px 6px rgba(22,163,74,.3);
 }
 
-/* ---------- SYNC INDICATOR ---------- */
-.sync-indicator {
-  display: flex;
-  align-items: center;
-  gap: .3rem;
-  font-size: .85rem;
-  color: var(--muted);
-}
-.sync-indicator .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--green);
-}
-
 /* ---------- CONTAINER ---------- */
-.container {
-  padding: 1rem;
-  max-width: 1250px;
-  margin: auto;
-}
-
-/* ---------- PANELS ---------- */
+.container { padding: 1rem; max-width: 1250px; margin: auto; }
 .panel { display: none; }
 .panel.active { display: block; }
 
-/* ---------- GRID LAYOUTS ---------- */
-.grid2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-.grid3 {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-}
-@media (max-width: 900px) {
-  .grid2, .grid3 { grid-template-columns: 1fr; }
-}
+/* ---------- GRID ---------- */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+@media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
 
 /* ---------- CARDS ---------- */
 .card {
   background: var(--bg-alt);
   border: 1px solid var(--border);
-  border-radius: 0.8rem;
+  border-radius: .8rem;
   padding: 1rem;
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
 }
-.card h3 {
-  margin-top: 0;
-  font-weight: 600;
-  color: var(--green-dark);
-}
+.card h3 { margin-top: 0; color: var(--green-dark); }
 
-/* ---------- BUTTONS ---------- */
+/* ---------- BOTONES ---------- */
 button {
-  background: linear-gradient(180deg, #22c55e 0%, #15803d 100%);
-  color: white;
+  background: linear-gradient(180deg,#22c55e 0%,#15803d 100%);
+  color: #fff;
   border: none;
-  padding: 0.5rem 0.9rem;
-  border-radius: 0.5rem;
+  padding: .5rem .9rem;
+  border-radius: .5rem;
   cursor: pointer;
   font-weight: 500;
 }
@@ -150,7 +101,7 @@ button.ghost {
 }
 button.ghost:hover { background: var(--green-light); }
 
-/* ---------- FORMS ---------- */
+/* ---------- FORMULARIOS ---------- */
 input, select, textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -159,48 +110,105 @@ input, select, textarea {
   font-size: .95rem;
 }
 input:disabled { background: #f3f4f6; }
-label {
-  display: block;
-  margin-top: .5rem;
+
+/* ---------- TABLA FACTURA (CUADRÍCULA COMPLETA) ---------- */
+.table-wrap { overflow-x: auto; }
+.calc-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--green);
   font-size: .9rem;
 }
+.calc-table th {
+  background: var(--green-light);
+  border: 1px solid var(--green);
+  padding: .4rem;
+  text-align: center;
+  font-weight: 600;
+}
+.calc-table td {
+  border: 1px solid var(--border);
+  padding: .3rem .4rem;
+  text-align: center;
+  vertical-align: middle;
+}
+.calc-table input {
+  width: 100%;
+  border: none;
+  text-align: center;
+  background: transparent;
+  font-size: .9rem;
+}
+.calc-table input:focus {
+  outline: none;
+  background: #f0fff4;
+}
+.calc-table td button.del {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: .3rem;
+  padding: .2rem .4rem;
+  cursor: pointer;
+}
+.calc-table td button.del:hover { background: #dc2626; }
+
+/* ---------- BLOQUE “TOTALES FACTURA” ---------- */
+.card h3 + .check { margin-top: .4rem; }
+.card.totales {
+  background: #f3faf5;
+  border: 1px solid var(--green-light);
+  box-shadow: inset 0 0 4px rgba(22,163,74,0.1);
+}
+.totals-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: .4rem .8rem;
+  margin-top: .8rem;
+  font-size: .95rem;
+  background: #fff;
+  border-radius: .5rem;
+  padding: .6rem .8rem;
+  box-shadow: inset 0 0 3px rgba(0,0,0,0.05);
+}
+.totals-grid div:nth-child(odd) {
+  color: var(--muted);
+  text-align: right;
+}
+.totals-grid div:nth-child(even) {
+  text-align: right;
+  font-weight: 500;
+}
+.totals-grid .big {
+  color: var(--green-dark);
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-top: 2px solid var(--border);
+  margin-top: .5rem;
+  padding-top: .4rem;
+}
+
+/* ---------- CHECKBOXES ---------- */
 label.check {
   display: flex;
   align-items: center;
   gap: .4rem;
   margin-top: .3rem;
+  font-size: .9rem;
 }
-.mt8 { margin-top: .8rem; }
+label.check input { transform: scale(1.1); }
 
-/* ---------- TABLES ---------- */
-.table-wrap { overflow-x: auto; }
-.calc-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
+/* ---------- PAGOS / OBSERVACIONES ---------- */
+.pendiente {
+  margin-top: .4rem;
+  font-weight: 500;
+  color: var(--green-dark);
 }
-.calc-table th {
-  background: var(--green-light);
-  border-bottom: 1px solid var(--green);
-  padding: .3rem .4rem;
-  text-align: left;
-}
-.calc-table td {
-  border-bottom: 1px solid var(--border);
-  padding: .3rem .4rem;
-}
-.calc-table input { width: 100%; }
-/* Evita desbordes y que "todo se mueva" */
-.calc-table td, .calc-table th { word-break: break-word; }
 
-/* ---------- LISTS ---------- */
-.list, .listaProductos {
-  display: flex;
-  flex-direction: column;
-  gap: .4rem;
-  margin-top: .6rem;
-}
-.item, .product-row {
+/* ---------- LISTAS ---------- */
+.list { display: flex; flex-direction: column; gap: .4rem; }
+.item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -209,41 +217,12 @@ label.check {
   border-radius: .5rem;
   padding: .5rem .7rem;
 }
-.product-row { flex-wrap: wrap; gap: .3rem; align-items: center; }
-.product-row input, .product-row select {
-  width: auto;
-  min-width: 120px;
-  font-size: .85rem;
-  padding: .25rem .4rem;
-}
 
-/* ---------- BADGES / ESTADOS ---------- */
-.state-badge {
-  padding: .15rem .5rem;
-  border-radius: .4rem;
-  font-size: .8rem;
-  color: #fff;
-  font-weight: 500;
-}
-.state-green { background: var(--green-dark); }
-.state-amber { background: var(--amber); color: #000; }
-.state-red { background: var(--danger); }
-
-/* ---------- TOTALS ---------- */
-.totals-grid {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: .3rem .6rem;
-  margin-top: .6rem;
-}
-.totals-grid .big { font-weight: 600; color: var(--green-dark); }
-
-/* ---------- KPI CARDS ---------- */
+/* ---------- KPI & RESUMEN ---------- */
 .kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(150px,1fr));
   gap: .8rem;
-  margin-top: .5rem;
 }
 .kpi {
   background: var(--bg);
@@ -252,79 +231,53 @@ label.check {
   padding: .5rem;
   text-align: center;
 }
-.kpi span {
-  display: block;
-  font-size: .85rem;
-  color: var(--muted);
-}
-.kpi strong { font-size: 1.1rem; color: var(--green-dark); }
+.kpi span { color: var(--muted); font-size: .85rem; display: block; }
+.kpi strong { color: var(--green-dark); font-size: 1.1rem; }
 
-/* ---------- PRINT AREA ---------- */
+/* ---------- IMPRESIÓN ---------- */
 .print {
-  background: white;
-  color: #000;
+  background: #fff;
+  border: 1px solid var(--border);
   padding: 1rem;
-  border: 1px solid #e5e7eb;
   margin-top: 1rem;
+  color: #000;
 }
-.pdf-header { display: flex; justify-content: space-between; align-items: center; }
-.pdf-brand { display: flex; align-items: center; gap: .6rem; }
-.pdf-brand img { width: 42px; height: 42px; }
-.pdf-brand h2 { margin: 0; color: var(--green-dark); }
-.pdf-meta { font-size: .85rem; color: #333; }
-.pdf-meta div { margin-bottom: .2rem; }
 .pdf-totales {
-  display: flex; justify-content: space-between;
+  display: flex;
+  justify-content: space-between;
+  margin-top: .8rem;
   border-top: 1px solid var(--border);
-  margin-top: .6rem; padding-top: .6rem;
+  padding-top: .5rem;
   font-size: .9rem;
 }
-.pdf-foot { text-align: right; margin-top: .5rem; font-size: .85rem; color: var(--muted); }
+.pdf-totales strong { color: var(--green-dark); }
 
-#printArea { background: #fff !important; color: #000 !important; page-break-inside: avoid; }
-@media print {
-  .topbar, .tabs, .sync-indicator { display: none !important; }
-  body { background: #fff !important; }
+/* ---------- BADGES / ESTADOS ---------- */
+.state-badge {
+  padding: .15rem .5rem;
+  border-radius: .4rem;
+  font-size: .8rem;
+  font-weight: 500;
+  color: #fff;
 }
-
-/* ---------- PRICE PANEL ---------- */
-#pricePanel {
-  position: fixed;
-  bottom: 20px; right: 20px;
-  background: var(--bg);
-  border: 1px solid var(--green);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-  border-radius: .6rem;
-  padding: .7rem 1rem;
-  width: 240px;
-  z-index: 200;
-}
-.pp-title { font-weight: 600; color: var(--green-dark); margin-bottom: .4rem; }
-.pp-row { display: flex; justify-content: space-between; font-size: .85rem; padding: .1rem 0; }
-.pp-row strong { color: var(--green-dark); }
-
-/* ---------- ROWS / ACTIONS ---------- */
-.row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
-.actions { margin-top: 1rem; justify-content: flex-end; }
-
-/* ---------- PENDIENTE ---------- */
-.pendiente { margin-top: .4rem; font-weight: 500; color: var(--green-dark); }
-.pendiente.total { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .5rem; }
+.state-green { background: var(--green-dark); }
+.state-amber { background: var(--amber); color: #000; }
+.state-red { background: var(--danger); }
 
 /* ---------- SCROLL ---------- */
 ::-webkit-scrollbar { height: 6px; width: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--green-dark); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg-alt); }
 
-/* ---------- UTILS ---------- */
-.muted { color: var(--muted); font-size: .85rem; }
+/* ---------- UTILIDADES ---------- */
 .text-right { text-align: right; }
 .center { text-align: center; }
+.mt8 { margin-top: .8rem; }
 
-/* === DESTACAR CUADRO DE PRECIO (highlight) === */
+/* ---------- EFECTO CUADRO PRECIO ---------- */
 input.price {
   border: 2px solid var(--green-dark);
-  background: #f0fff4; /* tono verde muy claro */
+  background: #f0fff4;
   font-weight: 600;
   color: var(--green-dark);
   box-shadow: 0 0 4px rgba(22,163,74,0.3);
@@ -335,4 +288,3 @@ input.price:focus {
   box-shadow: 0 0 6px rgba(34,197,94,0.4);
   background: #ecfdf5;
 }
-
