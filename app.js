@@ -1,11 +1,10 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full)
-   - Mantiene TODAS las funciones
-   - Selección de clientes SIN errores (IDs estables)
-   - IVA 4% opcional; si aplica, no mostrar "IVA incluido"
-   - PDF pro con logo kiwi; QR robusto
+   ARSLAN PRO V10.4 — KIWI Edition (FULL)
    - Firebase Realtime (compat) auto-sync
-   - Arranque DOMContentLoaded para evitar null refs
+   - Selección clientes estable (IDs persistentes)
+   - IVA 4% opcional; pie “IVA incluido” solo si NO se aplica
+   - Cálculo en vivo + PDF con QR
+   - KPIs, gráficos y exportaciones
 ======================================================== */
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -41,43 +40,40 @@ function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||'
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
 /* ---------- FIREBASE ---------- */
-const db = window.db; // puesto en index.html (expuesto en DOMContentLoaded)
 const FB_PATH = "arslan_pro_v104";
 let syncing=false, pullOnStart=true;
 
-function pushFirebase(){
-  if(!window.db || syncing) return;
-  syncing=true;
-  setSyncUI('Syncing...');
-  const payload={clientes,productos,facturas,priceHist,ts:Date.now()};
-  window.db.ref(FB_PATH).set(payload).then(()=>{
-    syncing=false; lastTs=payload.ts; save(K_TS,lastTs); setSyncUI('Sync ✓');
-  }).catch(e=>{ syncing=false; console.error('FB set error',e); setSyncUI('Error'); });
-}
 function setSyncUI(text){
   const dot=$('#syncDot'), t=$('#syncText');
   if(dot) dot.style.background = (text==='Error')?'#ef4444':(text.includes('Sync')?'#16a34a':'#9ca3af');
   if(t) t.textContent=text;
+}
+function pushFirebase(){
+  if(!window.db || syncing) return;
+  syncing=true; setSyncUI('Syncing...');
+  const payload={clientes,productos,facturas,priceHist,ts:Date.now()};
+  window.db.ref(FB_PATH).set(payload).then(()=>{
+    syncing=false; lastTs=payload.ts; save(K_TS,lastTs); setSyncUI('Sync ✓');
+  }).catch(e=>{ syncing=false; console.error('FB set error',e); setSyncUI('Error'); });
 }
 function schedulePush(){ clearTimeout(schedulePush.t); schedulePush.t=setTimeout(pushFirebase, 1200); }
 
 if(window.db){
   window.db.ref(FB_PATH).on('value', snap=>{
     const v=snap.val(); if(!v) return;
-    if(v.ts && v.ts<=lastTs) return; // ya tenemos más nuevo
-    // Pull (solo al cargar o si detectas cambios externos)
+    if(v.ts && v.ts<=lastTs) return; // ya tenemos igual o más nuevo
     clientes=v.clientes||clientes;
     productos=v.productos||productos;
     facturas=v.facturas||facturas;
     priceHist=v.priceHist||priceHist;
     lastTs=v.ts||Date.now();
     save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist); save(K_TS,lastTs);
-    if(pullOnStart){ console.log('✅ Datos restaurados automáticamente desde Firebase'); pullOnStart=false; }
+    if(pullOnStart){ console.log('✅ Datos restaurados desde Firebase'); pullOnStart=false; }
     renderAll(); recalc();
   });
 }
 
-/* ---------- SPLASH & TABS (sin splash, directo) ---------- */
+/* ---------- TABS ---------- */
 function switchTab(id){
   $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
   $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
@@ -153,7 +149,7 @@ function renderPriceHistory(name){
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI (IDs estables) ---------- */
+/* ---------- CLIENTES UI ---------- */
 function saveClientes(){ save(K_CLIENTES, clientes); schedulePush(); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
@@ -169,7 +165,7 @@ function renderClientesLista(){
   const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   const view = q ? arr.filter(c=>(c.nombre||'').toLowerCase().includes(q) || (c.nif||'').toLowerCase().includes(q) || (c.dir||'').toLowerCase().includes(q)) : arr;
   if(view.length===0){ cont.innerHTML='<div class="item">Sin clientes.</div>'; return; }
-  view.forEach((c,idx)=>{
+  view.forEach((c)=>{
     const row=document.createElement('div'); row.className='item';
     row.innerHTML=`
       <div>
@@ -377,6 +373,7 @@ $('#btnAddPago')?.addEventListener('click', ()=>{
   $('#inpPagoParcial').value='';
   renderPagosTemp(); recalc();
 });
+
 /* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
 function recalc(){
   const ls=captureLineas();
@@ -421,8 +418,10 @@ function recalc(){
 ;['chkTransporte','chkIvaAplicado','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
 function fillPrint(lines, totals, temp=null, extra=null){
-  $('#p-num') && ($('#p-num').textContent = extra?.numero || '(Sin guardar)');
-  $('#p-fecha') && ($('#p-fecha').textContent = (extra?new Date(extra.fecha):new Date()).toLocaleString());
+  if($('#p-num')) $('#p-num').textContent = extra?.numero || '(Sin guardar)';
+
+  // FIX: si no hay fecha en extra, usa ahora; evita "Invalid Date"
+  if($('#p-fecha')) $('#p-fecha').textContent = extra?.fecha ? new Date(extra.fecha).toLocaleString() : new Date().toLocaleString();
 
   if($('#p-prov')){
     $('#p-prov').innerHTML = `
@@ -467,7 +466,7 @@ function fillPrint(lines, totals, temp=null, extra=null){
   $('#p-metodo') && ($('#p-metodo').textContent = extra?.metodo || $('#metodoPago')?.value || 'Efectivo');
   $('#p-obs') && ($('#p-obs').textContent = extra?.obs || ($('#observaciones')?.value||'—'));
 
-  // QR con datos básicos (robusto)
+  // QR
   try{
     const canvas = document.getElementById('p-qr');
     if (canvas && window.QRCode && typeof window.QRCode.toCanvas === 'function') {
@@ -527,7 +526,7 @@ $('#btnNueva')?.addEventListener('click', ()=>{
 });
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
-  // Asegura que el área PDF está actualizada
+  // Actualiza vista antes de generar
   const ls=captureLineas();
   const subtotal=unMoney($('#subtotal').textContent);
   const transporte=unMoney($('#transp').textContent);
@@ -693,7 +692,6 @@ function groupMonthly(n=12){
   facturas.forEach(f=>{ const d=new Date(f.fecha); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
   return buckets;
 }
-
 function destroyIfChart(c){ if(c && typeof c.destroy==='function'){ c.destroy(); } }
 
 function drawCharts(){
@@ -780,8 +778,7 @@ $('#btnRestore')?.addEventListener('click', ()=>{
   inp.click();
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ // asignar id a los que no tengan
-  arr=arr.map(c=>({id:c.id||uid('CLI'), ...c})); clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); schedulePush(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ arr=arr.map(c=>({id:c.id||uid('CLI'), ...c})); clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); schedulePush(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
 $('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr.map(p=>({id:p.id||uid('PROD'),...p})); save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); schedulePush(); } }));
 $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
@@ -807,7 +804,7 @@ function exportVentasCSV(){
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/* ---------- EXTRA: RESETEO FACTORY ---------- */
+/* ---------- EXTRA: FACTORY RESET ---------- */
 document.getElementById('btnFactoryReset')?.addEventListener('click', () => {
   if (!confirm('Esto borrará clientes, productos y facturas locales. ¿Continuar?')) return;
   localStorage.removeItem(K_CLIENTES);
@@ -838,14 +835,11 @@ function drawResumen(){ drawKPIs(); }
 
 /* ---------- BOOT ---------- */
 (function boot(){
-  // Siembra inicial
   seedClientesIfEmpty();
   seedProductsIfEmpty();
-
-  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
 
-  // 5 líneas iniciales
+  // 5 líneas iniciales al abrir
   const tb=$('#lineasBody');
   if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
 
@@ -859,4 +853,3 @@ function drawResumen(){ drawKPIs(); }
 })();
 })(); // IIFE
 }); // DOMContentLoaded
-
