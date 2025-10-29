@@ -18,28 +18,39 @@ document.addEventListener('DOMContentLoaded', () => {
   let productos = JSON.parse(localStorage.getItem('productos') || '[]');
   let facturas = JSON.parse(localStorage.getItem('facturas') || '[]');
   let priceHist = JSON.parse(localStorage.getItem('priceHist') || '{}');
-   /* ---------- AUTO RESTORE desde Firebase si localStorage está vacío ---------- */
+/* ---------- AUTO RESTORE desde Firebase si localStorage está vacío ---------- */
 (async () => {
   try {
+    // Evita ejecutar dos veces
+    if (window._restoreDone) return;
+    window._restoreDone = true;
+
     if ((!clientes || !clientes.length) || (!productos || !productos.length)) {
+      console.log('🔄 Restaurando datos desde Firebase...');
       const res = await fetch("https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/arslan_pro_v104.json");
       const data = await res.json();
+
       if (data && (data.clientes?.length || data.productos?.length)) {
         clientes = data.clientes || [];
         productos = data.productos || [];
         if (data.facturas) facturas = data.facturas;
         if (data.priceHist) priceHist = data.priceHist;
+
         localStorage.setItem('clientes', JSON.stringify(clientes));
         localStorage.setItem('productos', JSON.stringify(productos));
         localStorage.setItem('facturas', JSON.stringify(facturas));
         localStorage.setItem('priceHist', JSON.stringify(priceHist));
+
         console.log('✅ Datos restaurados automáticamente desde Firebase');
+      } else {
+        console.log('⚠️ No se encontraron datos válidos en Firebase');
       }
     }
   } catch (err) {
     console.warn('⚠️ Error al restaurar desde Firebase:', err);
   }
 })();
+
 
 
   let lineas = [];
