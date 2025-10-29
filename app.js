@@ -1,14 +1,13 @@
 /* ===========================================================
    ARSLAN PRO V10.4 — KIWI Edition (Firebase Secure Sync + Live)
-   🔥 Firebase Auth anónima + sincronización en tiempo real
-   - Seguridad: solo usuarios autenticados (auth != null)
-   - Sin tocar ninguna función existente
+   ✅ Sincronización en tiempo real (clientes, productos, facturas, precios)
+   ✅ Autenticación anónima
+   ✅ Carga y escritura segura (auth != null)
 =========================================================== */
 
-// --- 🔥 FIREBASE CORE (antes de todo el sistema) ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import { getDatabase, ref, set, get, update, onValue } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-analytics.js";
 
 // --- Configuración de tu proyecto ---
@@ -25,22 +24,26 @@ const firebaseConfig = {
 
 // --- Inicializar Firebase ---
 const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
 const analytics = getAnalytics(app);
-const auth = getAuth();
+const auth = getAuth(app);
+const db = getDatabase(app);
 
-// --- 🧭 Autenticación anónima automática (segura) ---
+// --- 🔐 Autenticación anónima + inicio sincronización cuando esté lista ---
 signInAnonymously(auth)
-  .then(() => {
-    console.log("🔒 Conectado a Firebase (anónimo seguro)");
+  .catch(err => console.error("❌ Error al iniciar sesión anónima:", err));
 
-    // ✅ Iniciar sincronización solo cuando Firebase está listo
-    startRealtimeSync();
-  })
-  .catch(err => console.error("❌ Error de login Firebase", err));
+onAuthStateChanged(auth, user => {
+  if (user) {
+    console.log("🔒 Firebase conectado (usuario anónimo)", user.uid);
+    startRealtimeSync(); // 👈 Se ejecuta solo cuando db y auth están listos
+  } else {
+    console.warn("Esperando autenticación Firebase...");
+  }
+});
 
-// --- 🔄 Sincronización automática con Firebase ---
+// --- 🔄 Sincronización en tiempo real ---
 function startRealtimeSync() {
+  console.log("🚀 Sincronización en tiempo real iniciada...");
   const paths = ["clientes", "productos", "facturas", "priceHist"];
   for (const path of paths) {
     const r = ref(db, `arslan_pro_v104/${path}`);
