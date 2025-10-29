@@ -1033,6 +1033,102 @@ function drawResumen(){ drawKPIs(); }
   }catch(e){
     console.error("❌ Error al hidratar Firebase:", e);
   }
+/* ================================
+   🔄 BOTÓN MANUAL + INDICADOR FIREBASE
+   ================================ */
+(function firebaseStatusAndManualSync(){
+  // Crear barra de estado pequeña
+  const bar = document.createElement("div");
+  bar.id = "firebaseStatusBar";
+  bar.innerHTML = `
+    <style>
+      #firebaseStatusBar {
+        position: fixed; 
+        bottom: 10px; 
+        left: 10px;
+        background: #fff;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        padding: 6px 10px;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        z-index: 9999;
+        font-family: 'Poppins', sans-serif;
+      }
+      #firebaseStatusLight {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #aaa;
+      }
+      #firebaseSyncBtn {
+        border: none;
+        background: var(--green, #16a34a);
+        color: #fff;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #firebaseSyncBtn:hover {
+        filter: brightness(1.1);
+      }
+    </style>
+    <div id="firebaseStatusLight"></div>
+    <div id="firebaseStatusText">Conectando...</div>
+    <button id="firebaseSyncBtn">🔄 Sincronizar</button>
+  `;
+  document.body.appendChild(bar);
+
+  const light = document.getElementById("firebaseStatusLight");
+  const text = document.getElementById("firebaseStatusText");
+  const btn  = document.getElementById("firebaseSyncBtn");
+
+  // Verificar estado actual
+  async function checkStatus(){
+    try{
+      const res = await fetch("https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/.info/connected.json");
+      if(!res.ok) throw new Error();
+      const data = await res.json();
+      if(data === true || data?.connected){
+        light.style.background = "#16a34a";
+        text.textContent = "🟢 Firebase Online";
+      }else{
+        light.style.background = "#dc2626";
+        text.textContent = "🔴 Firebase Offline";
+      }
+    }catch{
+      light.style.background = "#dc2626";
+      text.textContent = "🔴 Firebase Offline";
+    }
+  }
+
+  // Botón manual para forzar sincronización (subida + hidratación)
+  btn.addEventListener("click", async ()=>{
+    text.textContent = "⏳ Sincronizando...";
+    light.style.background = "#f59e0b";
+
+    try{
+      await window.__arslan_queueSync?.("arslan_v104_clientes");
+      await window.__arslan_queueSync?.("arslan_v104_productos");
+      await window.__arslan_queueSync?.("arslan_v104_facturas");
+      setTimeout(checkStatus, 1000);
+      text.textContent = "✅ Sincronización completada";
+      light.style.background = "#16a34a";
+    }catch(e){
+      console.error("❌ Error al sincronizar manualmente:", e);
+      text.textContent = "❌ Error al sincronizar";
+      light.style.background = "#dc2626";
+    }
+  });
+
+  // Comprobar conexión periódicamente
+  checkStatus();
+  setInterval(checkStatus, 15000); // cada 15 segundos
+})();
 })();
 
 })();
