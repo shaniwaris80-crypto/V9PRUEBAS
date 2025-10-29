@@ -10,6 +10,24 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebas
 import { getDatabase, ref, set, get, update } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-analytics.js";
+import { onValue } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+
+// 🔄 Sincronización automática con Firebase
+function startRealtimeSync() {
+  const paths = ["clientes", "productos", "facturas", "priceHist"];
+  for (const path of paths) {
+    const r = ref(db, `arslan_pro_v104/${path}`);
+    onValue(r, snapshot => {
+      const data = snapshot.val() || {};
+      localStorage.setItem(`arslan_${path}`, JSON.stringify(data));
+      console.log(`🌐 ${path} sincronizado (${Object.keys(data).length} registros)`);
+      // Opcional: recargar UI si es necesario
+      if (typeof renderUI === "function") renderUI();
+    });
+  }
+}
+startRealtimeSync();
+
 
 // --- Configuración de tu proyecto ---
 const firebaseConfig = {
