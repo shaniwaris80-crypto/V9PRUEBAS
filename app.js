@@ -995,5 +995,45 @@ function drawResumen(){ drawKPIs(); }
   const guardadoDark = localStorage.getItem('arslan_dark') === 'true';
   aplicarTema(guardadoTema);
   if(guardadoDark) toggleDark();
+   /* ================================
+   ☁️ HIDRATACIÓN AUTOMÁTICA DESDE FIREBASE
+   ================================ */
+(async function hydrateFromFirebase(){
+  try{
+    const dbUrl = "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/arslan_pro_v104.json";
+    const res = await fetch(dbUrl);
+    if(!res.ok) return console.warn("⚠️ Firebase no respondió correctamente");
+    const data = await res.json();
+    if(!data) return console.log("☁️ No hay datos en Firebase aún.");
+
+    let cambios = false;
+
+    if((!localStorage.getItem("arslan_v104_clientes") || localStorage.getItem("arslan_v104_clientes")==="[]") && data.clientes){
+      localStorage.setItem("arslan_v104_clientes", JSON.stringify(data.clientes));
+      cambios = true;
+      console.log("☁️➡️💾 Clientes importados desde Firebase");
+    }
+
+    if((!localStorage.getItem("arslan_v104_productos") || localStorage.getItem("arslan_v104_productos")==="[]") && data.productos){
+      localStorage.setItem("arslan_v104_productos", JSON.stringify(data.productos));
+      cambios = true;
+      console.log("☁️➡️💾 Productos importados desde Firebase");
+    }
+
+    if((!localStorage.getItem("arslan_v104_facturas") || localStorage.getItem("arslan_v104_facturas")==="[]") && data.facturas){
+      localStorage.setItem("arslan_v104_facturas", JSON.stringify(data.facturas));
+      cambios = true;
+      console.log("☁️➡️💾 Facturas importadas desde Firebase");
+    }
+
+    if(cambios){
+      console.log("✅ Datos restaurados desde la nube. Recargando interfaz...");
+      setTimeout(()=>location.reload(), 1500);
+    }
+  }catch(e){
+    console.error("❌ Error al hidratar Firebase:", e);
+  }
+})();
+
 })();
 
