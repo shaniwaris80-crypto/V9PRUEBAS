@@ -154,7 +154,6 @@ input:disabled { background: #f3f4f6; }
 .calc-table td button.del:hover { background: #dc2626; }
 
 /* ---------- BLOQUE “TOTALES FACTURA” ---------- */
-.card h3 + .check { margin-top: .4rem; }
 .card.totales {
   background: #f3faf5;
   border: 1px solid var(--green-light);
@@ -199,7 +198,7 @@ label.check {
 }
 label.check input { transform: scale(1.1); }
 
-/* ---------- PAGOS / OBSERVACIONES ---------- */
+/* ---------- BLOQUE PAGOS / OBSERVACIONES ---------- */
 .pendiente {
   margin-top: .4rem;
   font-weight: 500;
@@ -234,14 +233,35 @@ label.check input { transform: scale(1.1); }
 .kpi span { color: var(--muted); font-size: .85rem; display: block; }
 .kpi strong { color: var(--green-dark); font-size: 1.1rem; }
 
-/* ---------- IMPRESIÓN ---------- */
-.print {
-  background: #fff;
-  border: 1px solid var(--border);
-  padding: 1rem;
+/* ---------- ÁREA DE IMPRESIÓN / PDF ---------- */
+#printArea {
   margin-top: 1rem;
-  color: #000;
+  border: 1px solid var(--border);
+  border-radius: .6rem;
+  background: #fff;
+  padding: 1rem;
 }
+#p-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.8rem;
+  font-size: 0.9rem;
+}
+#p-tabla th {
+  background: var(--green-light);
+  border: 1px solid var(--border);
+  padding: 0.35rem;
+  text-align: center;
+  font-weight: 600;
+}
+#p-tabla td {
+  border: 1px solid var(--border);
+  padding: 0.35rem;
+  text-align: center;
+  vertical-align: middle;
+}
+#p-tabla tr:nth-child(even) td { background: #fafafa; }
+
 .pdf-totales {
   display: flex;
   justify-content: space-between;
@@ -252,17 +272,12 @@ label.check input { transform: scale(1.1); }
 }
 .pdf-totales strong { color: var(--green-dark); }
 
-/* ---------- BADGES / ESTADOS ---------- */
-.state-badge {
-  padding: .15rem .5rem;
-  border-radius: .4rem;
-  font-size: .8rem;
-  font-weight: 500;
-  color: #fff;
+.pdf-foot {
+  text-align: right;
+  margin-top: .4rem;
+  color: var(--muted);
+  font-size: .85rem;
 }
-.state-green { background: var(--green-dark); }
-.state-amber { background: var(--amber); color: #000; }
-.state-red { background: var(--danger); }
 
 /* ---------- SCROLL ---------- */
 ::-webkit-scrollbar { height: 6px; width: 6px; }
@@ -273,18 +288,3 @@ label.check input { transform: scale(1.1); }
 .text-right { text-align: right; }
 .center { text-align: center; }
 .mt8 { margin-top: .8rem; }
-
-/* ---------- EFECTO CUADRO PRECIO ---------- */
-input.price {
-  border: 2px solid var(--green-dark);
-  background: #f0fff4;
-  font-weight: 600;
-  color: var(--green-dark);
-  box-shadow: 0 0 4px rgba(22,163,74,0.3);
-}
-input.price:focus {
-  outline: none;
-  border-color: #22c55e;
-  box-shadow: 0 0 6px rgba(34,197,94,0.4);
-  background: #ecfdf5;
-}
