@@ -1,74 +1,347 @@
-:root{
-  --accent:#22c55e;
-  --bg:#ffffff;
-  --text:#111111;
-  --muted:#6b7280;
-  --border:#e5e7eb;
-  --row:#f8f9fb;
-  --shadow:0 6px 16px rgba(0,0,0,.05);
+/* ===========================================================
+   ARSLAN PRO V10.4 — KIWI Edition (Full Pack)
+   Esquema base blanco/negro con acento verde kiwi
+   Tipografía Poppins
+   =========================================================== */
+
+:root {
+  --accent: #22c55e;
+  --bg: #ffffff;
+  --text: #111111;
+  --border: #e5e7eb;
+  --row: #f8f9fb;
 }
 
-/* Temas adicionales (se aplican dinámicamente desde JS) */
-html,body{margin:0;padding:0;font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);transition:.3s all}
+* {
+  box-sizing: border-box;
+  font-family: 'Poppins', sans-serif;
+}
 
-/* Topbar */
-.topbar{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px}
-.brand{display:flex;align-items:center;gap:8px;font-weight:700}
-.brand img{width:32px;height:32px;border-radius:6px}
-.brand small{color:var(--muted);font-weight:500}
-.tabs{display:flex;flex-wrap:wrap;gap:6px}
-.tab{border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:#fff;cursor:pointer;font-weight:500}
-.tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-.tab:hover{background:var(--accent);color:#fff}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
 
-/* Palette buttons */
-#palette{display:flex;gap:6px}
-#palette button{width:16px;height:16px;border-radius:50%;border:1px solid #ccc;cursor:pointer}
-#palette [data-theme=kiwi]{background:#22c55e}
-#palette [data-theme=graphite]{background:#1f2937}
-#palette [data-theme=sand]{background:#d97706}
-#palette [data-theme=mint]{background:#34d399}
+h1, h2, h3 {
+  margin: 0;
+}
 
-/* Layout cards */
-.container{max-width:1200px;margin:18px auto;padding:0 12px}
-.panel{display:none}
-.panel.active{display:block}
-.card{background:var(--bg);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:14px;margin-bottom:14px}
-.title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
-@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+.hidden {
+  display: none !important;
+}
 
-input,select,textarea{width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
-button{border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}
-button:hover{filter:brightness(1.1)}
-button.ghost{background:#f9fafb;color:#111}
+/* ---------- HEADER ---------- */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 18px;
+}
 
-/* Tables */
-.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
-.calc-table{width:100%;border-collapse:collapse}
-.calc-table th,.calc-table td{border-bottom:1px solid var(--border);padding:6px;text-align:left;font-size:13px}
-.calc-table tbody tr:nth-child(2n){background:var(--row)}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-/* Totales */
-.totals-grid{display:grid;grid-template-columns:1fr auto;gap:6px;border:1px solid var(--border);border-radius:12px;padding:8px}
-.totals-grid .big{font-size:18px;font-weight:700}
+.brand img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
 
-/* PDF */
-.print{background:#fff;border:1px solid #ddd;padding:10px;border-radius:12px;margin-top:12px}
-.pdf-header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.pdf-brand{display:flex;align-items:center;gap:10px}
-.pdf-brand img{width:46px;height:46px;border-radius:6px}
-.pdf-totales{display:flex;justify-content:space-between;margin-top:10px}
-.pdf-foot{margin-top:8px;text-align:right;color:#555;font-size:12px}
+.brand h1 {
+  font-size: 18px;
+  font-weight: 700;
+}
 
-/* KPIs */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.kpi{background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center}
-.kpi span{display:block;color:var(--muted);font-size:12px}
-.kpi strong{font-size:16px;font-weight:600}
+.brand span {
+  color: var(--accent);
+  font-weight: 600;
+}
 
-/* Animaciones */
-@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.card,.calc-table tr{animation:fadeIn .4s ease}
+/* ---------- PALETA ---------- */
+#palette {
+  display: flex;
+  gap: 8px;
+}
+
+#palette button {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+
+#palette [data-theme="kiwi"] { background: #22c55e; }
+#palette [data-theme="graphite"] { background: #1f2937; }
+#palette [data-theme="sand"] { background: #d97706; }
+#palette [data-theme="mint"] { background: #34d399; }
+
+/* ---------- TABS ---------- */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+
+.tabs button {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  transition: all .2s;
+}
+
+.tabs button:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tabs button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ---------- PANELS ---------- */
+.panel {
+  padding: 14px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+/* ---------- GRID LAYOUTS ---------- */
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .grid2, .grid3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- INPUTS & BUTTONS ---------- */
+input, select, textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+button {
+  border: 1px solid #111;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: 0.2s all;
+}
+
+button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+button.ghost {
+  background: #f9f9f9;
+  color: #111;
+  border: 1px solid #ccc;
+}
+
+button.ghost:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ---------- TABLES ---------- */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.calc-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.calc-table th, .calc-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.calc-table tbody tr:nth-child(2n) {
+  background: var(--row);
+}
+
+/* ---------- TOTALS GRID ---------- */
+.totals-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+}
+
+.totals-grid .big {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* ---------- LISTS ---------- */
+.list .item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 6px;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.list .muted {
+  color: #777;
+  font-size: 12px;
+}
+
+.state-badge {
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.state-green { background: #22c55e; }
+.state-amber { background: #f59e0b; }
+.state-red { background: #dc2626; }
+
+/* ---------- PDF AREA ---------- */
+.print {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.pdf-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pdf-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pdf-brand img {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.25));
+}
+
+.pdf-totales {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.pdf-foot {
+  margin-top: 8px;
+  text-align: right;
+  color: #555;
+  font-size: 12px;
+}
+
+/* ---------- KPIS ---------- */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.kpi {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  text-align: center;
+}
+
+.kpi strong {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.kpi span {
+  display: block;
+  color: #777;
+  font-size: 12px;
+}
+
+/* ---------- ANIMACIONES ---------- */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.fadeIn {
+  animation: fadeIn .4s ease both;
+}
+
+/* ---------- UTILIDADES ---------- */
+.btns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 6px 0;
+}
