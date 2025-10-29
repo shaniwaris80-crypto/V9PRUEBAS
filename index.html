@@ -1,21 +1,23 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ARSLAN PRO V10.4 — KIWI Edition</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Libs externas (sin imports de módulos) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
 </head>
 <body>
 
 <header class="topbar">
   <div class="brand">
-    <!-- Solo branding de app (sin splash ni logo grande) -->
-    <span>ARSLAN PRO <small>V10.4</small></span>
+    <!-- Sin logo en la UI (logo solo en PDF) -->
+    <span>ARSLAN PRO <small>V10.4 — KIWI</small></span>
   </div>
   <nav class="tabs">
     <button class="tab active" data-tab="factura">Factura</button>
@@ -59,7 +61,7 @@
       <div class="title-row">
         <h3>Cuadro de cálculo (cuadrícula)</h3>
         <div class="row">
-          <button id="btnAddLinea" class="primary">+ Añadir línea</button>
+          <button id="btnAddLinea">+ Añadir línea</button>
           <button id="btnVaciarLineas" class="ghost">Vaciar</button>
         </div>
       </div>
@@ -92,7 +94,7 @@
       <div class="card">
         <h3>💶 Totales factura</h3>
         <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10%</label>
-        <label class="check"><input type="checkbox" id="chkAddIVA" /> Añadir IVA 4%</label>
+        <label class="check"><input type="checkbox" id="chkIvaIncluido" /> IVA 4% (aplicar)</label>
 
         <div class="totals-grid">
           <div>Subtotal</div><div id="subtotal">0,00 €</div>
@@ -100,6 +102,7 @@
           <div>IVA (4%)</div><div id="iva">0,00 €</div>
           <div class="big">TOTAL</div><div class="big" id="total">0,00 €</div>
         </div>
+        <small id="ivaIncluidoMsg" class="muted-note">IVA incluido en los precios.</small>
       </div>
 
       <div class="card">
@@ -134,17 +137,16 @@
     </div>
 
     <div class="row actions">
-      <button id="btnGuardar" class="primary">💾 Guardar</button>
-      <button id="btnImprimir" class="primary">🖨️ Generar PDF</button>
+      <button id="btnGuardar">💾 Guardar</button>
+      <button id="btnImprimir">🖨️ Generar PDF</button>
       <button id="btnNueva" class="ghost">🧾 Nueva</button>
     </div>
 
-    <!-- Área PDF (SIEMPRE VISIBLE para evitar PDF en blanco) -->
+    <!-- Área PDF (se rellena al vuelo; logo embebido por app.js) -->
     <div id="printArea" class="print">
       <div class="pdf-header">
         <div class="pdf-brand">
-          <!-- Logo KIWI pequeño SOLO en PDF -->
-          <img src="logo.png" alt="Kiwi" />
+          <img id="pdf-logo" alt="Kiwi" />
           <div>
             <h2>FACTURA</h2>
             <div id="p-prov"></div>
@@ -198,7 +200,7 @@
         <h3>Clientes</h3>
         <div class="row">
           <input id="buscarCliente" class="search" placeholder="Buscar cliente…" />
-          <button id="btnAddCliente" class="primary">+ Añadir</button>
+          <button id="btnAddCliente">+ Añadir</button>
           <button id="btnExportClientes" class="ghost">⤓ Exportar</button>
           <button id="btnImportClientes" class="ghost">⤒ Importar</button>
         </div>
@@ -235,7 +237,7 @@
         <h3>Productos</h3>
         <div class="row">
           <input id="buscarProducto" class="search" placeholder="Buscar producto…" />
-          <button id="btnAddProducto" class="primary">+ Añadir</button>
+          <button id="btnAddProducto">+ Añadir</button>
           <button id="btnExportProductos" class="ghost">⤓ Exportar</button>
           <button id="btnImportProductos" class="ghost">⤒ Importar</button>
         </div>
@@ -321,7 +323,7 @@
         <div class="kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
       </div>
       <div class="row actions mt8">
-        <button id="btnBackup" class="primary">Backup</button>
+        <button id="btnBackup">Backup</button>
         <button id="btnRestore" class="ghost">Restaurar</button>
       </div>
     </div>
@@ -329,6 +331,7 @@
 
 </main>
 
-<script src="app.js"></script>
+<!-- Cargar app como módulo para permitir imports internos si hicieran falta -->
+<script type="module" src="app.js"></script>
 </body>
 </html>
