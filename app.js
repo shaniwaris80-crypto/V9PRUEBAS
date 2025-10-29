@@ -1,18 +1,45 @@
 /* ===========================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Firebase Secure Sync)
-   - Firebase Auth anónima activada
+   ARSLAN PRO V10.4 — KIWI Edition (Firebase Secure Sync + Live)
+   🔥 Firebase Auth anónima + sincronización en tiempo real
    - Seguridad: solo usuarios autenticados (auth != null)
-   - Resto del código sin cambios
+   - Sin tocar ninguna función existente
 =========================================================== */
 
 // --- 🔥 FIREBASE CORE (antes de todo el sistema) ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-import { getDatabase, ref, set, get, update } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+import { getDatabase, ref, set, get, update, onValue } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-analytics.js";
-import { onValue } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 
-// 🔄 Sincronización automática con Firebase
+// --- Configuración de tu proyecto ---
+const firebaseConfig = {
+  apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
+  authDomain: "arslan-pro-kiwi.firebaseapp.com",
+  databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "arslan-pro-kiwi",
+  storageBucket: "arslan-pro-kiwi.firebasestorage.app",
+  messagingSenderId: "768704045481",
+  appId: "1:768704045481:web:668acb151a2181368864b8",
+  measurementId: "G-RNWLRLS47Z"
+};
+
+// --- Inicializar Firebase ---
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const analytics = getAnalytics(app);
+const auth = getAuth();
+
+// --- 🧭 Autenticación anónima automática (segura) ---
+signInAnonymously(auth)
+  .then(() => {
+    console.log("🔒 Conectado a Firebase (anónimo seguro)");
+
+    // ✅ Iniciar sincronización solo cuando Firebase está listo
+    startRealtimeSync();
+  })
+  .catch(err => console.error("❌ Error de login Firebase", err));
+
+// --- 🔄 Sincronización automática con Firebase ---
 function startRealtimeSync() {
   const paths = ["clientes", "productos", "facturas", "priceHist"];
   for (const path of paths) {
@@ -21,11 +48,11 @@ function startRealtimeSync() {
       const data = snapshot.val() || {};
       localStorage.setItem(`arslan_${path}`, JSON.stringify(data));
       console.log(`🌐 ${path} sincronizado (${Object.keys(data).length} registros)`);
-      // Opcional: recargar UI si es necesario
       if (typeof renderUI === "function") renderUI();
     });
   }
 }
+
 startRealtimeSync();
 
 
