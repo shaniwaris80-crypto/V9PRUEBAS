@@ -1,262 +1,171 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
-  <link rel="icon" href="logo-kiwi.png">
-  <link rel="stylesheet" href="style.css">
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#16a34a">
+/* ===========================================================
+   ARSLAN PRO V10.4 — KIWI Edition
+   Tema: Blanco + Negro + Verde
+   Tipografía: Poppins
+   =========================================================== */
 
-  <!-- Librerías externas -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-</head>
+:root {
+  --green: #16a34a;
+  --green-dark: #15803d;
+  --green-light: #dcfce7;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --bg: #ffffff;
+  --bg-alt: #f9fafb;
+  --danger: #ef4444;
+  --amber: #facc15;
+}
 
-<body>
-  <div class="topbar">
-    <div class="brand">
-      <img src="logo-kiwi.png" alt="Logo">
-      <span>ARSLAN PRO V10.4 — KIWI Edition</span>
-    </div>
-    <div class="tabs">
-      <button class="tab active" data-tab="factura">Factura</button>
-      <button class="tab" data-tab="clientes">Clientes</button>
-      <button class="tab" data-tab="facturas">Facturas</button>
-      <button class="tab" data-tab="productos">Productos</button>
-      <button class="tab" data-tab="pendientes">Pendientes</button>
-      <button class="tab" data-tab="ventas">Ventas</button>
-      <button class="tab" data-tab="resumen">Resumen</button>
-    </div>
-    <div class="sync-indicator">
-      <div class="dot" id="syncDot"></div>
-      <span id="syncText">Sync</span>
-    </div>
-  </div>
+/* ---------- BASE ---------- */
+* { box-sizing: border-box; font-family: 'Poppins', sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.4; }
 
-  <div class="container">
-    <!-- FACTURA -->
-    <section class="panel active" data-tab-panel="factura">
-      <div class="grid2">
-        <div class="card">
-          <h3>Datos del proveedor</h3>
-          <label>Nombre</label><input id="provNombre">
-          <label>NIF</label><input id="provNif">
-          <label>Dirección</label><input id="provDir">
-          <label>Teléfono</label><input id="provTel">
-          <label>Email</label><input id="provEmail">
-        </div>
+/* ---------- TOPBAR ---------- */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg); border-bottom: 2px solid var(--green);
+  padding: .5rem 1rem; position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: .6rem; }
+.brand img { width: 36px; height: 36px; }
+.brand span { font-weight: 600; font-size: 1.1rem; }
 
-        <div class="card">
-          <h3>Datos del cliente</h3>
-          <label>Seleccionar</label>
-          <select id="selCliente"></select>
-          <label>Nombre</label><input id="cliNombre">
-          <label>NIF</label><input id="cliNif">
-          <label>Dirección</label><input id="cliDir">
-          <label>Teléfono</label><input id="cliTel">
-          <label>Email</label><input id="cliEmail">
-        </div>
-      </div>
+/* ---------- TABS ---------- */
+.tabs { display: flex; gap: .3rem; }
+.tab {
+  background: transparent; border: 1px solid var(--green);
+  color: var(--green-dark); padding: .3rem .7rem; border-radius: .4rem;
+  cursor: pointer; font-weight: 500;
+}
+.tab.active { background: var(--green); color: #fff; }
 
-      <div class="card mt8">
-        <h3>Productos</h3>
-        <button id="btnAddLinea">+ Añadir línea</button>
-        <button class="ghost" id="btnVaciarLineas">Vaciar líneas</button>
-        <table class="calc-table mt8">
-          <thead>
-            <tr>
-              <th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="lineasBody"></tbody>
-        </table>
-      </div>
+/* ---------- SYNC INDICATOR ---------- */
+.sync-indicator { display: flex; align-items: center; gap: .3rem; font-size: .85rem; color: var(--muted); }
+.sync-indicator .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
 
-      <div class="grid2">
-        <div class="card">
-          <h3>Opciones</h3>
-          <label class="check"><input type="checkbox" id="chkTransporte"> Transporte (10%)</label>
-          <label class="check"><input type="checkbox" id="chkIvaAplicado"> Aplicar IVA (4%)</label>
-          <label class="check"><input type="checkbox" id="chkIvaIncluido" checked> Mostrar "IVA incluido"</label>
-          <label class="check"><input type="checkbox" id="chkMostrarOrigen" checked> Mostrar origen en PDF</label>
-          <label>Estado</label>
-          <select id="estado">
-            <option value="pendiente">Pendiente</option>
-            <option value="parcial">Parcial</option>
-            <option value="pagado">Pagado</option>
-          </select>
-          <label>Método de pago</label>
-          <select id="metodoPago">
-            <option>Efectivo</option>
-            <option>Bizum</option>
-            <option>Transferencia</option>
-          </select>
-          <label>Observaciones</label>
-          <textarea id="observaciones" rows="3"></textarea>
-        </div>
+/* ---------- CONTAINER ---------- */
+.container { padding: 1rem; max-width: 1250px; margin: auto; }
 
-        <div class="card">
-          <h3>Totales</h3>
-          <div class="totals-grid">
-            <div>Subtotal:</div><div id="subtotal">0,00 €</div>
-            <div>Transporte:</div><div id="transp">0,00 €</div>
-            <div>IVA:</div><div id="iva">0,00 €</div>
-            <div>Total:</div><div class="big" id="total">0,00 €</div>
-            <div>Pagado:</div><div><input id="pagado" type="number" step="0.01" placeholder="0.00"></div>
-            <div>Pendiente:</div><div class="big" id="pendiente">0,00 €</div>
-          </div>
+/* ---------- PANELS ---------- */
+.panel { display: none; }
+.panel.active { display: block; }
 
-          <h4 class="mt8">Pagos parciales</h4>
-          <input id="inpPagoParcial" type="number" step="0.01" placeholder="Importe parcial">
-          <button id="btnAddPago">Añadir pago parcial</button>
-          <div id="listaPagos" class="list mt8"></div>
+/* ---------- GRID ---------- */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+@media (max-width:900px){ .grid2,.grid3{grid-template-columns:1fr;} }
 
-          <div class="actions row">
-            <button id="btnGuardar">Guardar</button>
-            <button class="ghost" id="btnNueva">Nueva</button>
-            <button id="btnImprimir">PDF</button>
-          </div>
-        </div>
-      </div>
+/* ---------- CARD ---------- */
+.card {
+  background: var(--bg-alt); border: 1px solid var(--border);
+  border-radius: .8rem; padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+.card h3 { margin-top: 0; font-weight: 600; color: var(--green-dark); }
 
-      <div id="printArea" class="print">
-        <div class="pdf-header">
-          <div class="pdf-brand"><img src="logo-kiwi.png" alt=""><h2>Factura</h2></div>
-          <div class="pdf-meta">
-            <div>Nº: <span id="p-num"></span></div>
-            <div>Fecha: <span id="p-fecha"></span></div>
-          </div>
-        </div>
-        <hr>
-        <div class="grid2">
-          <div id="p-prov"></div>
-          <div id="p-cli"></div>
-        </div>
-        <table id="p-tabla" class="calc-table mt8">
-          <thead><tr><th>Producto</th><th>Modo</th><th>Cant</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <div class="pdf-totales">
-          <div>Subtotal: <span id="p-sub"></span><br>Transporte: <span id="p-tra"></span><br>IVA: <span id="p-iva"></span></div>
-          <div>Total: <strong id="p-tot"></strong></div>
-        </div>
-        <canvas id="p-qr"></canvas>
-        <div class="pdf-foot">
-          <div id="p-estado"></div>
-          <div id="p-metodo"></div>
-          <div id="p-obs"></div>
-          <div id="pdf-foot-note"></div>
-        </div>
-      </div>
-    </section>
+/* ---------- BUTTONS ---------- */
+button {
+  background: var(--green); color: #fff; border: none;
+  padding: .5rem .9rem; border-radius: .5rem; cursor: pointer; font-weight: 500;
+  transition: background .2s;
+}
+button:hover { background: var(--green-dark); }
+button.ghost {
+  background: transparent; border: 1px solid var(--green); color: var(--green-dark);
+}
+button.ghost:hover { background: var(--green-light); }
 
-    <!-- CLIENTES -->
-    <section class="panel" data-tab-panel="clientes">
-      <div class="row">
-        <input id="buscarCliente" placeholder="Buscar cliente...">
-        <button id="btnAddCliente">+ Añadir cliente</button>
-      </div>
-      <div id="listaClientes" class="list mt8"></div>
-    </section>
+/* ---------- FORMS ---------- */
+input, select, textarea {
+  width: 100%; border: 1px solid var(--border); border-radius: .4rem;
+  padding: .45rem .5rem; font-size: .95rem;
+}
+input:disabled { background: #f3f4f6; }
+label { display: block; margin-top: .5rem; font-size: .9rem; }
+label.check { display: flex; align-items: center; gap: .4rem; margin-top: .3rem; }
+.mt8 { margin-top: .8rem; }
 
-    <!-- FACTURAS -->
-    <section class="panel" data-tab-panel="facturas">
-      <div class="row">
-        <input id="buscaCliente" placeholder="Filtrar por cliente">
-        <select id="filtroEstado">
-          <option value="todas">Todas</option>
-          <option value="pendiente">Pendiente</option>
-          <option value="parcial">Parcial</option>
-          <option value="pagado">Pagadas</option>
-        </select>
-      </div>
-      <div id="listaFacturas" class="list mt8"></div>
-    </section>
+/* ---------- TABLES ---------- */
+.table-wrap { overflow-x: auto; }
+.calc-table {
+  width: 100%; border-collapse: collapse; font-size: .9rem;
+}
+.calc-table th {
+  background: var(--green-light); border-bottom: 1px solid var(--green);
+  padding: .3rem .4rem; text-align: left;
+}
+.calc-table td { border-bottom: 1px solid var(--border); padding: .3rem .4rem; }
+.calc-table input { width: 100%; }
 
-    <!-- PRODUCTOS -->
-    <section class="panel" data-tab-panel="productos">
-      <div class="row">
-        <input id="buscarProducto" placeholder="Buscar producto...">
-        <button id="btnAddProducto">+ Añadir producto</button>
-      </div>
-      <div id="listaProductos" class="list mt8"></div>
-    </section>
+/* ---------- LISTS ---------- */
+.list, .listaProductos {
+  display: flex; flex-direction: column; gap: .4rem; margin-top: .6rem;
+}
+.item, .product-row {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg); border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .7rem;
+}
+.product-row input, .product-row select { width: auto; font-size: .85rem; padding: .25rem .4rem; }
 
-    <!-- PENDIENTES -->
-    <section class="panel" data-tab-panel="pendientes">
-      <h3>Deudas pendientes</h3>
-      <table class="calc-table">
-        <thead><tr><th>Cliente</th><th>Facturas</th><th>Importe</th><th>Última</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <div class="pendiente total">Deuda total: <strong id="resGlobal">0,00 €</strong></div>
-      <div class="row actions">
-        <button id="btnResetCliente">Reset deudas cliente</button>
-        <button class="ghost" id="btnResetGlobal">Reset global</button>
-      </div>
-    </section>
+/* ---------- BADGES ---------- */
+.state-badge { padding: .15rem .5rem; border-radius: .4rem; font-size: .8rem; color: #fff; font-weight: 500; }
+.state-green { background: var(--green-dark); }
+.state-amber { background: var(--amber); color: #000; }
+.state-red { background: var(--danger); }
 
-    <!-- VENTAS -->
-    <section class="panel" data-tab-panel="ventas">
-      <div class="kpis">
-        <div class="kpi"><span>Hoy</span><strong id="vHoy">0,00 €</strong></div>
-        <div class="kpi"><span>Semana</span><strong id="vSemana">0,00 €</strong></div>
-        <div class="kpi"><span>Mes</span><strong id="vMes">0,00 €</strong></div>
-        <div class="kpi"><span>Total</span><strong id="vTotal">0,00 €</strong></div>
-      </div>
-      <div class="grid2 mt8">
-        <canvas id="chartDiario" height="180"></canvas>
-        <canvas id="chartMensual" height="180"></canvas>
-      </div>
-      <div class="mt8"><canvas id="chartTop" height="220"></canvas></div>
-      <h3>Ventas por cliente</h3>
-      <input id="ventasFiltroMes" type="month">
-      <table class="calc-table mt8" id="tblVentasCliente">
-        <thead><tr><th>Cliente</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </section>
+/* ---------- TOTALS ---------- */
+.totals-grid {
+  display: grid; grid-template-columns: 1fr auto; gap: .3rem .6rem; margin-top: .6rem;
+}
+.totals-grid .big { font-weight: 600; color: var(--green-dark); }
 
-    <!-- RESUMEN -->
-    <section class="panel" data-tab-panel="resumen">
-      <h3>Resumen rápido</h3>
-      <div class="kpis">
-        <div class="kpi"><span>Hoy</span><strong id="rHoy">0,00 €</strong></div>
-        <div class="kpi"><span>Semana</span><strong id="rSemana">0,00 €</strong></div>
-        <div class="kpi"><span>Mes</span><strong id="rMes">0,00 €</strong></div>
-        <div class="kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
-      </div>
-    </section>
-  </div>
+/* ---------- KPI ---------- */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: .8rem; margin-top: .5rem; }
+.kpi { background: var(--bg); border: 1px solid var(--border); border-radius: .6rem; padding: .5rem; text-align: center; }
+.kpi span { display: block; font-size: .85rem; color: var(--muted); }
+.kpi strong { font-size: 1.1rem; color: var(--green-dark); }
 
-  <div id="pricePanel" hidden>
-    <div class="pp-title">Historial de precios</div>
-    <div id="ppBody"></div>
-  </div>
+/* ---------- PRINT ---------- */
+.print { background: white; color: #000; padding: 1rem; border: 1px solid #e5e7eb; margin-top: 1rem; }
+.pdf-header { display: flex; justify-content: space-between; align-items: center; }
+.pdf-brand { display: flex; align-items: center; gap: .6rem; }
+.pdf-brand img { width: 42px; height: 42px; }
+.pdf-brand h2 { margin: 0; color: var(--green-dark); }
+.pdf-meta { font-size: .85rem; color: #333; }
+.pdf-totales { display: flex; justify-content: space-between; border-top: 1px solid var(--border); margin-top: .6rem; padding-top: .6rem; font-size: .9rem; }
+.pdf-foot { text-align: right; margin-top: .5rem; font-size: .85rem; color: var(--muted); }
 
-  <datalist id="productNamesList"></datalist>
+/* ---------- PRICE PANEL ---------- */
+#pricePanel {
+  position: fixed; bottom: 20px; right: 20px; background: var(--bg);
+  border: 1px solid var(--green); box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  border-radius: .6rem; padding: .7rem 1rem; width: 240px; z-index: 200;
+}
+.pp-title { font-weight: 600; color: var(--green-dark); margin-bottom: .4rem; }
+.pp-row { display: flex; justify-content: space-between; font-size: .85rem; padding: .1rem 0; }
+.pp-row strong { color: var(--green-dark); }
 
-  <!-- Firebase config (rellena con tus credenciales reales) -->
-  <script>
-    const firebaseConfig = {
-      apiKey: "TU_API_KEY",
-      authDomain: "TU_DOMINIO.firebaseapp.com",
-      databaseURL: "https://TU_DB.firebaseio.com",
-      projectId: "TU_PROJECT_ID",
-      storageBucket: "TU_BUCKET.appspot.com",
-      messagingSenderId: "TU_SENDER_ID",
-      appId: "TU_APP_ID"
-    };
-    firebase.initializeApp(firebaseConfig);
-    window.db = firebase.database();
-  </script>
+/* ---------- SCROLL ---------- */
+::-webkit-scrollbar { height: 6px; width: 6px; }
+::-webkit-scrollbar-thumb { background: var(--green-dark); border-radius: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-alt); }
 
-  <!-- Script principal -->
-  <script src="app.js"></script>
-</body>
-</html>
+/* ---------- EXTRAS ---------- */
+.muted { color: var(--muted); font-size: .85rem; }
+.text-right { text-align: right; }
+
+/* --- Cuadro precio destacado --- */
+input.price {
+  border: 2px solid var(--green-dark);
+  background: #f0fff4;
+  font-weight: 600;
+  color: var(--green-dark);
+  box-shadow: 0 0 4px rgba(22,163,74,0.3);
+  transition: all .2s ease;
+}
+input.price:focus {
+  outline: none;
+  border-color: #22c55e;
+  box-shadow: 0 0 6px rgba(34,197,94,0.4);
+  background: #ecfdf5;
+}
