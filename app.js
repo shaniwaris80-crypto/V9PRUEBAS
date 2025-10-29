@@ -827,5 +827,3 @@ function drawResumen(){ drawKPIs(); }
   }catch(e){ console.error('Init error',e); } }, 400));
 })();
 })();
-
-});
