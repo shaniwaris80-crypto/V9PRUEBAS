@@ -1,137 +1,10 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (Full)
-   - Mantiene TODAS las funciones (V10.3) y mejora UI/UX
-   - Totales corregidos, autocompletado real, logo visible SOLO en PDF
+   ARSLAN PRO V10.4 — KIWI Edition (Full + Firebase Sync)
+   - Mantiene TODAS las funciones
+   - Totales corregidos, autocompletado real
    - PDF A4 con QR, pagos parciales, pendientes, ventas+top
-   - 🔗 Firebase Realtime Database: AUTO-SYNC + Hidratación inicial
+   - Firebase REST: auto-sync + hidratación + botón manual
 ======================================================= */
-
-/* ===========================================================
-   🔗 Firebase AUTO Sync — ARSLAN PRO V10.4 (Kiwi Edition)
-   - Sin cambios en index.html / style.css
-   - Modo híbrido: localStorage + Realtime Database
-   - Sync automático cuando se llama a save()
-=========================================================== */
-(function(){
-  // --- Config confirmada por Arslan ---
-  const firebaseConfig = {
-    apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
-    authDomain: "arslan-pro-kiwi.firebaseapp.com",
-    databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "arslan-pro-kiwi",
-    storageBucket: "arslan-pro-kiwi.firebasestorage.app",
-    messagingSenderId: "768704045481",
-    appId: "1:768704045481:web:defaultconfigv10"
-  };
-
-  // Carga scripts compat de Firebase (no rompe tu index.html)
-  const loadFirebaseCompat = () => new Promise((resolve, reject) => {
-    const add = (src) => new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = src; s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-    // Usa versiones compat estables
-    add("https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js")
-      .then(()=>add("https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"))
-      .then(resolve).catch(reject);
-  });
-
-  // Inicia Firebase y expone helpers globales cuando esté listo
-  window.__arslan_firebase_ready = (async function initFirebase(){
-    try{
-      await loadFirebaseCompat();
-      // eslint-disable-next-line no-undef
-      const app = firebase.initializeApp(firebaseConfig);
-      // eslint-disable-next-line no-undef
-      const db  = firebase.database();
-
-      // Helpers de nube
-      const dbRef = (path) => db.ref(path);
-
-      // Guardado
-      async function cloudSet(path, value){
-        try{
-          await dbRef(path).set(value);
-          console.log("✅ Firebase set:", path);
-        }catch(e){ console.error("❌ Firebase set error:", path, e); }
-      }
-
-      // Lectura
-      async function cloudGet(path){
-        try{
-          const snap = await dbRef(path).get();
-          return snap.exists() ? snap.val() : null;
-        }catch(e){ console.error("❌ Firebase get error:", path, e); return null; }
-      }
-
-      return { db, cloudSet, cloudGet };
-    }catch(e){
-      console.error("❌ Firebase init error:", e);
-      return null;
-    }
-  })();
-
-  // Mapa de claves locales -> rutas en la nube
-  window.__arslan_cloud_paths = {
-    arslan_v104_clientes:  "/clientes",
-    arslan_v104_productos: "/productos",
-    arslan_v104_facturas:  "/facturas",
-    arslan_v104_pricehist: "/priceHist"
-  };
-
-  // Cola y debounce de sincronización
-  const pending = new Set();
-  let syncTimer = null;
-
-  async function doSync(){
-    clearTimeout(syncTimer); syncTimer = null;
-    if(pending.size === 0) return;
-    const ready = await window.__arslan_firebase_ready;
-    if(!ready){ console.warn("⚠️ Firebase no listo; reintentando sync…"); syncTimer = setTimeout(doSync, 1500); return; }
-    const { cloudSet } = ready;
-
-    // Volcar cada clave en su ruta
-    for(const k of Array.from(pending)){
-      pending.delete(k);
-      try{
-        const path = window.__arslan_cloud_paths[k];
-        if(!path) continue;
-        const raw = localStorage.getItem(k);
-        const value = raw ? JSON.parse(raw) : null;
-        await cloudSet(path, value);
-      }catch(e){ console.error("❌ Error sync key:", k, e); }
-    }
-  }
-
-  // Encola una sync (debounced)
-  window.__arslan_queueSync = function queueSync(localKey){
-    pending.add(localKey);
-    clearTimeout(syncTimer);
-    syncTimer = setTimeout(doSync, 600); // 0.6s debounce
-  };
-
-  // Hidratar desde la nube si local está vacío
-  window.__arslan_hydrate_if_empty = async function(){
-    const ready = await window.__arslan_firebase_ready;
-    if(!ready) return;
-    const { cloudGet } = ready;
-
-    const pairs = Object.entries(window.__arslan_cloud_paths);
-    for(const [localKey, cloudPath] of pairs){
-      const hasLocal = !!localStorage.getItem(localKey);
-      if(!hasLocal){
-        const val = await cloudGet(cloudPath);
-        if(val != null){
-          localStorage.setItem(localKey, JSON.stringify(val));
-          console.log("☁️➡️💾 Hidratado:", localKey, "desde", cloudPath);
-        }
-      }
-    }
-  };
-})();
-
-/* ---------- APP PRINCIPAL ---------- */
 (function(){
 "use strict";
 
@@ -159,17 +32,53 @@ let priceHist = load(K_PRICEHIST, {});
 
 function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
 
-/* 🔁 SAVE con AUTO-SYNC Firebase */
-function save(k, v){
-  try{
-    localStorage.setItem(k, JSON.stringify(v));
-    if(typeof window.__arslan_queueSync === 'function'){
-      window.__arslan_queueSync(k);
-    }
-  }catch(e){ console.error("❌ save() error:", k, e); }
+/* ====== 🔗 Firebase (REST) ====== */
+const DB_BASE = "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/arslan_pro_v104";
+
+/** PATCH al root con varios nodos a la vez */
+async function fbPatch(obj){
+  const res = await fetch(`${DB_BASE}.json`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(obj)
+  });
+  if(!res.ok) throw new Error('PATCH failed');
+  return res.json();
+}
+/** PUT a un nodo concreto */
+async function fbPut(path, data){
+  const res = await fetch(`${DB_BASE}/${path}.json`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if(!res.ok) throw new Error(`PUT failed: ${path}`);
+  return res.json();
+}
+/** GET a un nodo */
+async function fbGet(path=""){
+  const url = path ? `${DB_BASE}/${path}.json` : `${DB_BASE}.json`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('GET failed');
+  return res.json();
 }
 
-/* ---------- TABS ---------- */
+/* ---------- SAVE (localStorage + cola de sync) ---------- */
+const _syncDebounce = new Map();
+function save(k, v){
+  localStorage.setItem(k, JSON.stringify(v));
+  // Encolar sync (debounce 900ms) por clave
+  if(_syncDebounce.get(k)) clearTimeout(_syncDebounce.get(k));
+  _syncDebounce.set(k, setTimeout(()=>window.__arslan_queueSync(k), 900));
+}
+
+/* ---------- SPLASH/TABS (nota: splash puede no existir según tu HTML) ---------- */
+window.addEventListener('load', ()=>{
+  // Si existiera splash, dejarlo desaparecer; si no, ignorar
+  const sp = $('#splash');
+  if(sp) setTimeout(()=>{ sp.classList.add('fade'); }, 400);
+  document.querySelector('[data-tab="factura"]')?.click();
+});
 function switchTab(id){
   $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
   $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
@@ -239,11 +148,11 @@ function seedProductsIfEmpty(){
 
 /* ---------- PROVIDER DEFAULTS (tus datos) ---------- */
 function setProviderDefaultsIfEmpty(){
-  if(!$('#provNombre').value) $('#provNombre').value = 'Mohammad Arslan Waris';
-  if(!$('#provNif').value)    $('#provNif').value    = 'X6389988J';
-  if(!$('#provDir').value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
-  if(!$('#provTel').value)    $('#provTel').value    = '631 667 893';
-  if(!$('#provEmail').value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
+  if(!$('#provNombre')?.value) $('#provNombre').value = 'Mohammad Arslan Waris';
+  if(!$('#provNif')?.value)    $('#provNif').value    = 'X6389988J';
+  if(!$('#provDir')?.value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
+  if(!$('#provTel')?.value)    $('#provTel').value    = '631 667 893';
+  if(!$('#provEmail')?.value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
 }
 
 /* ---------- HISTORIAL DE PRECIOS ---------- */
@@ -517,19 +426,19 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
   $('#p-prov').innerHTML = `
-    <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre').value || '')}</strong></div>
-    <div>${escapeHTML(f?.proveedor?.nif || $('#provNif').value || '')}</div>
-    <div>${escapeHTML(f?.proveedor?.dir || $('#provDir').value || '')}</div>
-    <div>${escapeHTML(f?.proveedor?.tel || $('#provTel').value || '')} · ${escapeHTML(f?.proveedor?.email || $('#provEmail').value || '')}</div>
+    <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre')?.value || '')}</strong></div>
+    <div>${escapeHTML(f?.proveedor?.nif || $('#provNif')?.value || '')}</div>
+    <div>${escapeHTML(f?.proveedor?.dir || $('#provDir')?.value || '')}</div>
+    <div>${escapeHTML(f?.proveedor?.tel || $('#provTel')?.value || '')} · ${escapeHTML(f?.proveedor?.email || $('#provEmail')?.value || '')}</div>
   `;
   $('#p-cli').innerHTML = `
-    <div><strong>${escapeHTML(f?.cliente?.nombre || $('#cliNombre').value || '')}</strong></div>
-    <div>${escapeHTML(f?.cliente?.nif || $('#cliNif').value || '')}</div>
-    <div>${escapeHTML(f?.cliente?.dir || $('#cliDir').value || '')}</div>
-    <div>${escapeHTML(f?.cliente?.tel || $('#cliTel').value || '')} · ${escapeHTML(f?.cliente?.email || $('#cliEmail').value || '')}</div>
+    <div><strong>${escapeHTML(f?.cliente?.nombre || $('#cliNombre')?.value || '')}</strong></div>
+    <div>${escapeHTML(f?.cliente?.nif || $('#cliNif')?.value || '')}</div>
+    <div>${escapeHTML(f?.cliente?.dir || $('#cliDir')?.value || '')}</div>
+    <div>${escapeHTML(f?.cliente?.tel || $('#cliTel')?.value || '')} · ${escapeHTML(f?.cliente?.email || $('#cliEmail')?.value || '')}</div>
   `;
 
-  const tbody = $('#p-tabla tbody'); tbody.innerHTML='';
+  const tbody = $('#p-tabla tbody'); if(tbody) tbody.innerHTML='';
   (lines||[]).forEach(l=>{
     const tr=document.createElement('tr');
     tr.innerHTML = `
@@ -543,7 +452,7 @@ function fillPrint(lines, totals, temp=null, f=null){
       <td>${escapeHTML(l.origin||'')}</td>
       <td>${money((l.mode==='unidad') ? l.qty*l.price : l.net*l.price)}</td>
     `;
-    tbody.appendChild(tr);
+    tbody?.appendChild(tr);
   });
 
   $('#p-sub').textContent = money(totals?.subtotal||0);
@@ -557,10 +466,12 @@ function fillPrint(lines, totals, temp=null, f=null){
   // QR con datos básicos
   try{
     const canvas = $('#p-qr');
-    const numero = f?.numero || '(Sin guardar)';
-    const cliente = f?.cliente?.nombre || $('#cliNombre').value || '';
-    const payload = `ARSLAN-Factura|${numero}|${cliente}|${money(totals?.total||0)}|${$('#p-estado').textContent}`;
-    window.QRCode.toCanvas(canvas, payload, {width:92, margin:0});
+    if(canvas && window.QRCode){
+      const numero = f?.numero || '(Sin guardar)';
+      const cliente = f?.cliente?.nombre || $('#cliNombre')?.value || '';
+      const payload = `ARSLAN-Factura|${numero}|${cliente}|${money(totals?.total||0)}|${$('#p-estado').textContent}`;
+      window.QRCode.toCanvas(canvas, payload, {width:92, margin:0});
+    }
   }catch(e){}
 }
 
@@ -588,10 +499,10 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
 
   const f={
     numero, fecha:now,
-    proveedor:{nombre:$('#provNombre').value,nif:$('#provNif').value,dir:$('#provDir').value,tel:$('#provTel').value,email:$('#provEmail').value},
-    cliente:{nombre:$('#cliNombre').value,nif:$('#cliNif').value,dir:$('#cliDir').value,tel:$('#cliTel').value,email:$('#cliEmail').value},
-    lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
-    estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
+    proveedor:{nombre:$('#provNombre')?.value,nif:$('#provNif')?.value,dir:$('#provDir')?.value,tel:$('#provTel')?.value,email:$('#provEmail')?.value},
+    cliente:{nombre:$('#cliNombre')?.value,nif:$('#cliNif')?.value,dir:$('#cliDir')?.value,tel:$('#cliTel')?.value,email:$('#cliEmail')?.value},
+    lineas:ls, transporte:$('#chkTransporte')?.checked, ivaIncluido:$('#chkIvaIncluido')?.checked,
+    estado, metodo:$('#metodoPago')?.value, obs:$('#observaciones')?.value,
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
     pagos // historial de pagos parciales
   };
@@ -612,9 +523,9 @@ $('#btnNueva')?.addEventListener('click', ()=>{
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
   const element = document.getElementById('printArea');
-  const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
+  const d=new Date(); const file=`Factura-${($('#cliNombre')?.value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
   const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-  window.html2pdf().set(opt).from(element).save();
+  if(window.html2pdf) window.html2pdf().set(opt).from(element).save();
 });
 
 /* ---------- LISTA DE FACTURAS ---------- */
@@ -679,7 +590,7 @@ function renderFacturas(){
         const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
         const filename=`Factura-${nombreCliente}-${fmtDateDMY(dt)}.pdf`;
         const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-        window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
+        if(window.html2pdf) window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
       }
     });
   });
@@ -746,15 +657,15 @@ function drawKPIs(){
   const semana = sumBetween(startOfWeek(now), endOfDay(now));
   const mes = sumBetween(startOfMonth(now), endOfDay(now));
   const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
-  $('#vHoy').textContent=money(hoy);
-  $('#vSemana').textContent=money(semana);
-  $('#vMes').textContent=money(mes);
-  $('#vTotal').textContent=money(total);
+  $('#vHoy') && ($('#vHoy').textContent=money(hoy));
+  $('#vSemana') && ($('#vSemana').textContent=money(semana));
+  $('#vMes') && ($('#vMes').textContent=money(mes));
+  $('#vTotal') && ($('#vTotal').textContent=money(total));
 
-  $('#rHoy').textContent=money(hoy);
-  $('#rSemana').textContent=money(semana);
-  $('#rMes').textContent=money(mes);
-  $('#rTotal').textContent=money(total);
+  $('#rHoy') && ($('#rHoy').textContent=money(hoy));
+  $('#rSemana') && ($('#rSemana').textContent=money(semana));
+  $('#rMes') && ($('#rMes').textContent=money(mes));
+  $('#rTotal') && ($('#rTotal').textContent=money(total));
 }
 
 let chart1, chart2, chartTop;
@@ -774,8 +685,9 @@ function drawCharts(){
   if(typeof Chart==='undefined') return;
   const daily=groupDaily(7); const monthly=groupMonthly(12);
   if(chart1) chart1.destroy(); if(chart2) chart2.destroy();
-  chart1=new Chart(document.getElementById('chartDiario').getContext('2d'), {type:'bar', data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
-  chart2=new Chart(document.getElementById('chartMensual').getContext('2d'), {type:'line', data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
+  const c1 = document.getElementById('chartDiario'); const c2 = document.getElementById('chartMensual');
+  if(c1) chart1=new Chart(c1.getContext('2d'), {type:'bar', data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
+  if(c2) chart2=new Chart(c2.getContext('2d'), {type:'line', data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
 }
 function drawTop(){
   if(typeof Chart==='undefined') return;
@@ -789,7 +701,8 @@ function drawTop(){
   const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
   const labels=pairs.map(p=>p[0]); const data=pairs.map(p=>p[1]);
   if(chartTop) chartTop.destroy();
-  chartTop=new Chart(document.getElementById('chartTop').getContext('2d'), {type:'bar', data:{labels, datasets:[{label:'Top productos (€)', data} ]}, options:{responsive:true, plugins:{legend:{display:false}}}});
+  const c = document.getElementById('chartTop');
+  if(c) chartTop=new Chart(c.getContext('2d'), {type:'bar', data:{labels, datasets:[{label:'Top productos (€)', data} ]}, options:{responsive:true, plugins:{legend:{display:false}}}});
 }
 
 function renderVentasCliente(){
@@ -897,19 +810,9 @@ function drawResumen(){ drawKPIs(); }
 
 /* ---------- BOOT ---------- */
 (function boot(){
-  // Semillas locales si no hay datos
   seedClientesIfEmpty();
   seedProductsIfEmpty();
-
-  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
-
-  // Hidratar desde Firebase si local está vacío
-  if(typeof window.__arslan_hydrate_if_empty === 'function'){
-    window.__arslan_hydrate_if_empty().then(()=> {
-      try { renderAll?.(); recalc?.(); } catch(e){}
-    });
-  }
 
   // 5 líneas iniciales
   const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
@@ -917,198 +820,100 @@ function drawResumen(){ drawKPIs(); }
   renderPagosTemp();
   renderAll(); recalc();
 
-  // Verificación inicial tras cargar assets
   window.addEventListener('load', ()=>setTimeout(()=>{ try{
     populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
   }catch(e){ console.error('Init error',e); } }, 600));
 })();
-})();
 
 /* ================================
-   🎨 MODO CLARO / OSCURO + PALETAS
-   ================================ */
-(function(){
-  // Paletas predefinidas
-  const PALETAS = {
-    kiwi:    {bg:'#ffffff', text:'#1f2937', accent:'#22c55e', border:'#e5e7eb'},
-    graphite:{bg:'#111827', text:'#f9fafb', accent:'#3b82f6', border:'#374151'},
-    sand:    {bg:'#fdf6e3', text:'#3f3f46', accent:'#ca8a04', border:'#e7e5e4'},
-    mint:    {bg:'#ecfdf5', text:'#064e3b', accent:'#10b981', border:'#a7f3d0'}
-  };
-
-  // Crear menú visual de selección
-  const bar = document.createElement('div');
-  bar.id = 'colorToolbar';
-  bar.innerHTML = `
-    <style>
-      #colorToolbar{
-        position:fixed; bottom:12px; right:12px; z-index:9999;
-        display:flex; gap:6px; background:rgba(255,255,255,.7);
-        border:1px solid #ccc; border-radius:8px; padding:6px 10px; 
-        box-shadow:0 2px 5px rgba(0,0,0,.2); backdrop-filter:blur(6px);
-      }
-      #colorToolbar button{
-        width:28px; height:28px; border-radius:50%; border:none; cursor:pointer;
-        transition:transform .2s; outline:none;
-      }
-      #colorToolbar button:hover{ transform:scale(1.2); }
-      #colorToolbar .dark-toggle{ width:auto; padding:0 10px; font-size:13px; font-weight:600; border-radius:6px; background:#222; color:#fff; }
-    </style>
-  `;
-  document.body.appendChild(bar);
-
-  // Botones de paleta
-  for(const [name,p] of Object.entries(PALETAS)){
-    const b=document.createElement('button');
-    b.title=name; b.style.background=p.accent;
-    b.onclick=()=>aplicarTema(name);
-    bar.appendChild(b);
-  }
-
-  // Botón modo claro/oscuro
-  const toggle=document.createElement('button');
-  toggle.className='dark-toggle';
-  toggle.textContent='🌞/🌙';
-  toggle.onclick=()=>toggleDark();
-  bar.appendChild(toggle);
-
-  // Aplicar tema seleccionado
-  function aplicarTema(nombre){
-    const pal=PALETAS[nombre];
-    if(!pal) return;
-    for(const [k,v] of Object.entries(pal)){
-      document.documentElement.style.setProperty(`--${k}`, v);
-    }
-    localStorage.setItem('arslan_tema', nombre);
-  }
-
-  // Alternar modo oscuro/claro
-  function toggleDark(){
-    const isDark=document.body.classList.toggle('dark-mode');
-    localStorage.setItem('arslan_dark', isDark);
-    document.body.style.background=isDark?'#111':'var(--bg)';
-    document.body.style.color=isDark?'#f9fafb':'var(--text)';
-  }
-
-  // Restaurar configuración al cargar
-  const guardadoTema = localStorage.getItem('arslan_tema') || 'kiwi';
-  const guardadoDark = localStorage.getItem('arslan_dark') === 'true';
-  aplicarTema(guardadoTema);
-  if(guardadoDark) toggleDark();
-   /* ================================
    ☁️ HIDRATACIÓN AUTOMÁTICA DESDE FIREBASE
-   ================================ */
+   - Si no hay datos locales, trae clientes/productos/facturas
+   - priceHist es opcional (si existe en la nube)
+   - Recarga la UI tras hidratar
+================================ */
 (async function hydrateFromFirebase(){
   try{
-    const dbUrl = "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/arslan_pro_v104.json";
-    const res = await fetch(dbUrl);
-    if(!res.ok) return console.warn("⚠️ Firebase no respondió correctamente");
-    const data = await res.json();
-    if(!data) return console.log("☁️ No hay datos en Firebase aún.");
+    const data = await fbGet(); // root arslan_pro_v104
+    if(!data){ console.log("☁️ No hay datos en Firebase aún."); return; }
 
     let cambios = false;
 
-    if((!localStorage.getItem("arslan_v104_clientes") || localStorage.getItem("arslan_v104_clientes")==="[]") && data.clientes){
-      localStorage.setItem("arslan_v104_clientes", JSON.stringify(data.clientes));
+    if((!localStorage.getItem(K_CLIENTES) || localStorage.getItem(K_CLIENTES)==="[]") && data.clientes){
+      localStorage.setItem(K_CLIENTES, JSON.stringify(data.clientes));
       cambios = true;
       console.log("☁️➡️💾 Clientes importados desde Firebase");
     }
-
-    if((!localStorage.getItem("arslan_v104_productos") || localStorage.getItem("arslan_v104_productos")==="[]") && data.productos){
-      localStorage.setItem("arslan_v104_productos", JSON.stringify(data.productos));
+    if((!localStorage.getItem(K_PRODUCTOS) || localStorage.getItem(K_PRODUCTOS)==="[]") && data.productos){
+      localStorage.setItem(K_PRODUCTOS, JSON.stringify(data.productos));
       cambios = true;
       console.log("☁️➡️💾 Productos importados desde Firebase");
     }
-
-    if((!localStorage.getItem("arslan_v104_facturas") || localStorage.getItem("arslan_v104_facturas")==="[]") && data.facturas){
-      localStorage.setItem("arslan_v104_facturas", JSON.stringify(data.facturas));
+    if((!localStorage.getItem(K_FACTURAS) || localStorage.getItem(K_FACTURAS)==="[]") && data.facturas){
+      localStorage.setItem(K_FACTURAS, JSON.stringify(data.facturas));
       cambios = true;
       console.log("☁️➡️💾 Facturas importadas desde Firebase");
     }
+    if((!localStorage.getItem(K_PRICEHIST) || localStorage.getItem(K_PRICEHIST)==="{}") && data.priceHist){
+      localStorage.setItem(K_PRICEHIST, JSON.stringify(data.priceHist));
+      cambios = true;
+      console.log("☁️➡️💾 Historial de precios importado desde Firebase");
+    }
 
     if(cambios){
-      console.log("✅ Datos restaurados desde la nube. Recargando interfaz...");
-      setTimeout(()=>location.reload(), 1500);
+      // volver a cargar estado en memoria + re-render
+      clientes  = load(K_CLIENTES, []);
+      productos = load(K_PRODUCTOS, []);
+      facturas  = load(K_FACTURAS, []);
+      priceHist = load(K_PRICEHIST, {});
+      renderAll(); recalc();
+      console.log("✅ Datos restaurados desde la nube.");
     }
   }catch(e){
     console.error("❌ Error al hidratar Firebase:", e);
   }
+})();
+
 /* ================================
-   🔄 BOTÓN MANUAL + INDICADOR FIREBASE
-   ================================ */
-(function firebaseStatusAndManualSync(){
-  // Crear barra de estado pequeña
-  const bar = document.createElement("div");
-  bar.id = "firebaseStatusBar";
-  bar.innerHTML = `
-    <style>
-      #firebaseStatusBar {
-        position: fixed; 
-        bottom: 10px; 
-        left: 10px;
-        background: #fff;
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-        padding: 6px 10px;
-        font-size: 13px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        z-index: 9999;
-        font-family: 'Poppins', sans-serif;
-      }
-      #firebaseStatusLight {
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: #aaa;
-      }
-      #firebaseSyncBtn {
-        border: none;
-        background: var(--green, #16a34a);
-        color: #fff;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      #firebaseSyncBtn:hover {
-        filter: brightness(1.1);
-      }
-    </style>
-    <div id="firebaseStatusLight"></div>
-    <div id="firebaseStatusText">Conectando...</div>
-    <button id="firebaseSyncBtn">🔄 Sincronizar</button>
-  `;
-  document.body.appendChild(bar);
+   🔁 COLA DE SYNC: LOCAL → FIREBASE
+   window.__arslan_queueSync(key?)  -> sube esa clave o TODO
+   - Actualiza también ts (timestamp ISO)
+================================ */
+window.__arslan_queueSync = async function(key){
+  try{
+    const payload = {};
+    const now = todayISO();
 
-  const light = document.getElementById("firebaseStatusLight");
-  const text = document.getElementById("firebaseStatusText");
-  const btn  = document.getElementById("firebaseSyncBtn");
-
-  // Verificar estado actual
-  async function checkStatus(){
-    try{
-      const res = await fetch("https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/.info/connected.json");
-      if(!res.ok) throw new Error();
-      const data = await res.json();
-      if(data === true || data?.connected){
-        light.style.background = "#16a34a";
-        text.textContent = "🟢 Firebase Online";
-      }else{
-        light.style.background = "#dc2626";
-        text.textContent = "🔴 Firebase Offline";
+    const addIf = (k, node) => {
+      const raw = localStorage.getItem(k);
+      if(raw!=null){
+        try{ payload[node] = JSON.parse(raw); }
+        catch{ payload[node] = raw; }
       }
-    }catch{
-      light.style.background = "#dc2626";
-      text.textContent = "🔴 Firebase Offline";
+    };
+
+    if(!key){ // subir todo
+      addIf(K_CLIENTES,'clientes');
+      addIf(K_PRODUCTOS,'productos');
+      addIf(K_FACTURAS,'facturas');
+      addIf(K_PRICEHIST,'priceHist');
+    }else{
+      if(key===K_CLIENTES)  addIf(K_CLIENTES,'clientes');
+      if(key===K_PRODUCTOS) addIf(K_PRODUCTOS,'productos');
+      if(key===K_FACTURAS)  addIf(K_FACTURAS,'facturas');
+      if(key===K_PRICEHIST) addIf(K_PRICEHIST,'priceHist');
     }
+    payload.ts = now;
+
+    await fbPatch(payload);
+    console.log('✅ Firebase set:', Object.keys(payload).join(', '));
+  }catch(e){
+    console.error('❌ Firebase sync error:', e);
   }
+};
 
 /* ================================
-   🔄 BOTÓN MANUAL + INDICADOR FIREBASE (v2 visible fix)
-   ================================ */
+   🔄 BOTÓN MANUAL + INDICADOR FIREBASE (visible)
+================================ */
 (function firebaseStatusAndManualSync(){
   const bar = document.createElement("div");
   bar.id = "firebaseStatusBar";
@@ -1148,13 +953,11 @@ function drawResumen(){ drawKPIs(); }
   const text  = document.getElementById("firebaseStatusText");
   const btn   = document.getElementById("firebaseSyncBtn");
 
-  // 🔍 Verificar conexión Firebase
+  // Comprobar conexión (simple: GET al root)
   async function checkStatus(){
     try{
-      const res = await fetch("https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app/.info/connected.json");
-      if(!res.ok) throw new Error();
-      const data = await res.json();
-      if(data === true || data?.connected){
+      const res = await fetch(`${DB_BASE}.json?ns=arslan-pro-kiwi-default-rtdb`);
+      if(res.ok){
         light.style.background = "#16a34a";
         text.textContent = "🟢 Firebase Online";
       }else{
@@ -1167,14 +970,12 @@ function drawResumen(){ drawKPIs(); }
     }
   }
 
-  // 🔄 Sincronización manual
+  // Botón: subir TODO manualmente
   btn.addEventListener("click", async ()=>{
     text.textContent = "⏳ Sincronizando...";
     light.style.background = "#f59e0b";
     try{
-      await window.__arslan_queueSync?.("arslan_v104_clientes");
-      await window.__arslan_queueSync?.("arslan_v104_productos");
-      await window.__arslan_queueSync?.("arslan_v104_facturas");
+      await window.__arslan_queueSync(); // todo
       text.textContent = "✅ Sincronización completada";
       light.style.background = "#16a34a";
     }catch(e){
@@ -1184,8 +985,8 @@ function drawResumen(){ drawKPIs(); }
     }
   });
 
-  // Verificación inicial y periódica
   checkStatus();
   setInterval(checkStatus, 15000);
 })();
 
+})(); // end IIFE principal
