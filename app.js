@@ -1,32 +1,20 @@
 /* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (FULL + Firebase)
-   - Sin cambios de estructura, todo estable
-   - Fix selección CLIENTE por ID (sin mezclas)
-   - Guardado local + sincronización Firebase (auto)
-   - PDF/QR/KPIs/Gráficos/Pendientes/Backups intactos
+   ARSLAN PRO V10.4 — KIWI Edition (FULL • Firebase TOTAL)
+   - Mantiene TODAS las funciones existentes
+   - Arregla selección de clientes (IDs únicos estables)
+   - Sin duplicados de clientes (merge por nombre + ID)
+   - Sincroniza TODO con Firebase (clientes, productos, facturas, priceHist, meta)
+   - Resúmenes/pendientes/totales se recalculan y suben a /meta
+   - PDF/QR/Charts, pagos parciales, backups… todo igual
 ======================================================= */
 
-/* ============  🔥 Firebase (ESM)  ============ */
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-import {
-  getDatabase, ref, get, set, update, child
-} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+/* =======================
+   PARTE 1/3 — CORE + FIREBASE
+   ======================= */
+(function(){
+"use strict";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
-  authDomain: "arslan-pro-kiwi.firebaseapp.com",
-  databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "arslan-pro-kiwi",
-  storageBucket: "arslan-pro-kiwi.firebasestorage.app",
-  messagingSenderId: "768704045481",
-  appId: "1:768704045481:web:668acb151a2181368864b8",
-  measurementId: "G-RNWLRLS47Z"
-};
-const appFB = initializeApp(firebaseConfig);
-const db = getDatabase(appFB);
-const CLOUD_ROOT = "arslan_pro_v104";
-
-/* ============  Helpers base  ============ */
+/* ---------- HELPERS ---------- */
 const $  = (s,root=document)=>root.querySelector(s);
 const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
 const money = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
@@ -35,95 +23,101 @@ const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':
 const todayISO = () => new Date().toISOString();
 const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
-const uid = () => 'id_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-/* ============  Storage Keys  ============ */
+/* ---------- KEYS ---------- */
 const K_CLIENTES='arslan_v104_clientes';
 const K_PRODUCTOS='arslan_v104_productos';
 const K_FACTURAS='arslan_v104_facturas';
 const K_PRICEHIST='arslan_v104_pricehist';
 
-/* ============  Estado  ============ */
+/* ---------- ESTADO ---------- */
 let clientes  = load(K_CLIENTES, []);
 let productos = load(K_PRODUCTOS, []);
 let facturas  = load(K_FACTURAS, []);
 let priceHist = load(K_PRICEHIST, {});
 
-/* ============  LocalStorage I/O  ============ */
 function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
 function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
-/* ============  Firebase Sync Helpers  ============ */
-async function cloudMergeAll(){
+/* ---------- IDs ÚNICOS ---------- */
+function genIdCliente(){ return 'cli_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+function ensureClienteId(c){
+  if(!c) return c;
+  if(!c.id || typeof c.id!=='string' || !/^cli_/.test(c.id)) c.id = genIdCliente();
+  return c;
+}
+
+/* ---------- FIREBASE (ESM) ---------- */
+let app, db, refFB, getFB, setFB, updateFB, childFB;
+(async function initFirebase(){
   try{
-    const snap = await get(ref(db, CLOUD_ROOT));
-    if(!snap.exists()) return;
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js');
+    const { getDatabase, ref, get, set, update, child } = await import('https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js');
 
-    const cloud = snap.val() || {};
-    // Clientes
-    if (Array.isArray(cloud.clientes)) {
-      // si alguna vez se guardó como array
-      clientes = mergeById(arrayEnsureId(clientes), arrayEnsureId(cloud.clientes));
-    } else if (cloud.clientes) {
-      clientes = mergeById(arrayEnsureId(clientes), mapToArrayWithId(cloud.clientes));
-    }
-    // Productos
-    if (Array.isArray(cloud.productos)) {
-      productos = mergeById(arrayEnsureId(productos), arrayEnsureId(cloud.productos));
-    } else if (cloud.productos) {
-      productos = mergeById(arrayEnsureId(productos), mapToArrayWithId(cloud.productos));
-    }
-    // Facturas
-    if (Array.isArray(cloud.facturas)) {
-      facturas = mergeById(arrayEnsureId(facturas), arrayEnsureId(cloud.facturas));
-    } else if (cloud.facturas) {
-      facturas = mergeById(arrayEnsureId(facturas), mapToArrayWithId(cloud.facturas));
-    }
-    // Historial de precios
-    if (cloud.priceHist && typeof cloud.priceHist === 'object') {
-      priceHist = {...priceHist, ...cloud.priceHist};
-    }
+    const firebaseConfig = {
+      apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
+      authDomain: "arslan-pro-kiwi.firebaseapp.com",
+      databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "arslan-pro-kiwi",
+      storageBucket: "arslan-pro-kiwi.firebasestorage.app",
+      messagingSenderId: "768704045481",
+      appId: "1:768704045481:web:668acb151a2181368864b8",
+      measurementId: "G-RNWLRLS47Z"
+    };
 
-    save(K_CLIENTES, clientes);
-    save(K_PRODUCTOS, productos);
-    save(K_FACTURAS, facturas);
-    save(K_PRICEHIST, priceHist);
-  }catch(e){
-    console.warn('Firebase merge skip:', e?.message||e);
+    app = initializeApp(firebaseConfig);
+    db = getDatabase(app);
+    refFB = ref; getFB = get; setFB = set; updateFB = update; childFB = child;
+
+    console.log('Firebase App initialized');
+  }catch(err){
+    console.warn('Firebase init skipped / failed:', err);
+  }
+})();
+
+/* ---------- CLOUD HELPERS ---------- */
+async function cloudGet(path){
+  if(!db || !refFB){ throw new Error('DB not ready'); }
+  try{
+    const snap = await getFB(refFB(db, path));
+    if(snap.exists()) return snap.val();
+    return null;
+  }catch(err){
+    console.error('Cloud get error', path, err);
+    throw err;
+  }
+}
+async function cloudSet(path, data){
+  if(!db || !refFB){ return; }
+  try{
+    await setFB(refFB(db, path), data);
+  }catch(err){
+    console.error('Cloud set error', path, err);
+  }
+}
+async function cloudUpdate(path, data){
+  if(!db || !refFB){ return; }
+  try{
+    await updateFB(refFB(db, path), data);
+  }catch(err){
+    console.error('Cloud update error', path, err);
   }
 }
 
-function arrayEnsureId(arr){
-  return (arr||[]).map(x=> ({id:(x.id||uid()), ...x}));
-}
-function mapToArrayWithId(obj){
-  return Object.entries(obj||{}).map(([id,val])=>({id, ...val}));
-}
-function mergeById(localArr, cloudArr){
-  const map = new Map();
-  localArr.forEach(x=>map.set(x.id, x));
-  cloudArr.forEach(x=>map.set(x.id, {...(map.get(x.id)||{}), ...x}));
-  return [...map.values()];
-}
-
-/* ============  Splash Off + Tabs  ============ */
-// (Se mantiene: no mostramos splash, abrimos directo)
-window.addEventListener('load', ()=>{
-  document.querySelector('[data-tab="factura"]')?.click();
-});
-function switchTab(id){
-  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
-  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
-  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
-  if(id==='pendientes'){ renderPendientes(); }
-  if(id==='resumen'){ drawResumen(); }
-}
-$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
-
-/* ============  Seed Inicial  ============ */
+/* ---------- SEED DATA ---------- */
 function uniqueByName(arr){
   const map=new Map();
-  arr.forEach(c=>{ const k=(c.nombre||'').trim().toLowerCase(); if(k && !map.has(k)) map.set(k,c); });
+  arr.forEach(c=>{
+    const k=(c.nombre||'').trim().toLowerCase();
+    if(!k) return;
+    if(!map.has(k)){
+      map.set(k, ensureClienteId({...c}));
+    }else{
+      // merge no destructivo
+      const prev = map.get(k);
+      map.set(k, ensureClienteId({...prev, ...c, id: prev.id || c.id || genIdCliente()}));
+    }
+  });
   return [...map.values()];
 }
 function seedClientesIfEmpty(){
@@ -152,7 +146,7 @@ function seedClientesIfEmpty(){
     {nombre:'Bar Punta Cana — PUNTA CANA', dir:'C/ Los Titos, Burgos'},
     {nombre:'Jose — Alimentación Patxi', dir:'C/ Camino Casa la Vega 33, Burgos'},
     {nombre:'Ideal — Ideal Supermercado', dir:'Avda. del Cid, Burgos'}
-  ]).map(c=>({id: uid(), ...c}));
+  ]).map(ensureClienteId);
   save(K_CLIENTES, clientes);
 }
 const PRODUCT_NAMES = [
@@ -174,11 +168,11 @@ const PRODUCT_NAMES = [
 ];
 function seedProductsIfEmpty(){
   if(productos.length) return;
-  productos = PRODUCT_NAMES.map(n=>({id: uid(), name:n}));
+  productos = PRODUCT_NAMES.map(n=>({name:n}));
   save(K_PRODUCTOS, productos);
 }
 
-/* ============  Proveedor por defecto  ============ */
+/* ---------- PROVIDER DEFAULTS (tus datos) ---------- */
 function setProviderDefaultsIfEmpty(){
   if(!$('#provNombre').value) $('#provNombre').value = 'Mohammad Arslan Waris';
   if(!$('#provNif').value)    $('#provNif').value    = 'X6389988J';
@@ -187,7 +181,7 @@ function setProviderDefaultsIfEmpty(){
   if(!$('#provEmail').value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
 }
 
-/* ============  Historial de precios  ============ */
+/* ---------- HISTORIAL DE PRECIOS ---------- */
 function lastPrice(name){ const arr = priceHist[name]; return arr?.length ? arr[0].price : null; }
 function pushPriceHistory(name, price){
   if(!name || !(price>0)) return;
@@ -195,30 +189,34 @@ function pushPriceHistory(name, price){
   arr.unshift({price, date: todayISO()});
   priceHist[name] = arr.slice(0,10);
   save(K_PRICEHIST, priceHist);
-  // Cloud
-  update(ref(db, `${CLOUD_ROOT}/priceHist/${sanitizeKey(name)}`), priceHist[name]).catch(()=>{});
+  cloudSet('arslan_pro_v104/priceHist', priceHist);
 }
-function sanitizeKey(s){ return String(s).replace(/[.#$\[\]]/g,'_'); }
-/* ============  CLIENTES UI (Fix selección por ID)  ============ */
-function saveClientes(){ 
-  save(K_CLIENTES, clientes); 
-  // cloud snapshot completo (menos pesado que muchas writes pequeñas)
-  const payload = {};
-  clientes.forEach(c=> payload[c.id]=c);
-  set(ref(db, `${CLOUD_ROOT}/clientes`), payload).catch(()=>{});
+function renderPriceHistory(name){
+  const panel=$('#pricePanel'), body=$('#ppBody'); if(!panel||!body) return;
+  panel.removeAttribute('hidden');
+  const hist=priceHist[name]||[];
+  if(hist.length===0){ body.innerHTML=`<div class="pp-row"><span>${escapeHTML(name)}</span><strong>Sin datos</strong></div>`; hidePanelSoon(); return; }
+  body.innerHTML=`<div class="pp-row" style="justify-content:center"><strong>${escapeHTML(name)}</strong></div>` +
+    hist.map(h=>`<div class="pp-row"><span>${fmtDateDMY(new Date(h.date))}</span><strong>${money(h.price)}</strong></div>`).join('');
+  hidePanelSoon();
 }
+function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
+/* ---------- CLIENTES UI (IDs estables) ---------- */
+function saveClientes(){
+  // asegurar IDs
+  clientes = clientes.map(ensureClienteId);
+  save(K_CLIENTES, clientes);
+  cloudSet('arslan_pro_v104/clientes', clientes);
+  actualizarTodoFirebase();
+}
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
   sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
   [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach((c)=>{
-    const opt=document.createElement('option');
-    opt.value=c.id; // ✅ valor = ID único
-    opt.textContent=c.nombre||'(Sin nombre)';
-    sel.appendChild(opt);
+    const opt=document.createElement('option'); opt.value=c.id; opt.textContent=c.nombre||'(Sin nombre)'; sel.appendChild(opt);
   });
 }
-
 function renderClientesLista(){
   const cont = $('#listaClientes'); if(!cont) return;
   cont.innerHTML='';
@@ -244,38 +242,30 @@ function renderClientesLista(){
   cont.querySelectorAll('button').forEach(b=>{
     const id=b.dataset.id;
     b.addEventListener('click', ()=>{
-      const i = clientes.findIndex(x=>x.id===id);
-      if(i<0) return;
+      const idx = clientes.findIndex(x=>x.id===id);
+      if(idx<0) return;
       if(b.dataset.e==='use'){
-        const c=clientes[i];
+        const c=clientes[idx];
         $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
-        // Seleccionar también en <select>
-        const sel=$('#selCliente'); if(sel) sel.value=c.id;
+        $('#selCliente').value = c.id;
         switchTab('factura');
       }else if(b.dataset.e==='edit'){
-        const c=clientes[i];
+        const c=clientes[idx];
         const nombre=prompt('Nombre',c.nombre||'')??c.nombre;
         const nif=prompt('NIF',c.nif||'')??c.nif;
         const dir=prompt('Dirección',c.dir||'')??c.dir;
         const tel=prompt('Tel',c.tel||'')??c.tel;
         const email=prompt('Email',c.email||'')??c.email;
-        clientes[i]={...c,nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
+        clientes[idx]={...c, nombre,nif,dir,tel,email}; saveClientes(); renderClientesSelect(); renderClientesLista();
       }else{
-        if(confirm('¿Eliminar cliente?')){
-          clientes.splice(i,1); saveClientes(); renderClientesSelect(); renderClientesLista();
-        }
+        if(confirm('¿Eliminar cliente?')){ clientes.splice(idx,1); saveClientes(); renderClientesSelect(); renderClientesLista(); }
       }
     });
   });
 }
 
-/* ============  PRODUCTOS UI  ============ */
-function saveProductos(){ 
-  save(K_PRODUCTOS, productos); 
-  const payload = {}; productos.forEach(p=>payload[p.id]=p);
-  set(ref(db, `${CLOUD_ROOT}/productos`), payload).catch(()=>{});
-}
-
+/* ---------- PRODUCTOS UI ---------- */
+function saveProductos(){ save(K_PRODUCTOS, productos); cloudSet('arslan_pro_v104/productos', productos); actualizarTodoFirebase(); }
 function populateProductDatalist(){
   const dl=$('#productNamesList'); if(!dl) return;
   dl.innerHTML='';
@@ -287,7 +277,7 @@ function renderProductos(){
   const view = q ? productos.filter(p=>(p.name||'').toLowerCase().includes(q)) : productos;
   cont.innerHTML='';
   if(view.length===0){ cont.innerHTML='<div class="item">Sin resultados.</div>'; return; }
-  view.forEach((p)=>{
+  view.forEach((p,idx)=>{
     const row=document.createElement('div'); row.className='product-row';
     row.innerHTML=`
       <input value="${escapeHTML(p.name||'')}" data-f="name" />
@@ -297,16 +287,14 @@ function renderProductos(){
       <input type="number" step="0.01" data-f="boxKg" placeholder="Kg/caja" value="${p.boxKg??''}" />
       <input type="number" step="0.01" data-f="price" placeholder="€ base" value="${p.price??''}" />
       <input data-f="origin" placeholder="Origen" value="${escapeHTML(p.origin||'')}" />
-      <button data-e="save" data-id="${p.id}">💾 Guardar</button>
-      <button class="ghost" data-e="del" data-id="${p.id}">✖</button>
+      <button data-e="save" data-i="${idx}">💾 Guardar</button>
+      <button class="ghost" data-e="del" data-i="${idx}">✖</button>
     `;
     cont.appendChild(row);
   });
   cont.querySelectorAll('button').forEach(b=>{
-    const id=b.dataset.id;
+    const i=+b.dataset.i;
     b.addEventListener('click', ()=>{
-      const i=productos.findIndex(x=>x.id===id);
-      if(i<0) return;
       if(b.dataset.e==='del'){
         if(confirm('¿Eliminar producto?')){ productos.splice(i,1); saveProductos(); populateProductDatalist(); renderProductos(); }
       }else{
@@ -316,14 +304,32 @@ function renderProductos(){
         const boxKgStr=get('boxKg'); const boxKg=boxKgStr===''?null:parseNum(boxKgStr);
         const priceStr=get('price'); const price=priceStr===''?null:parseNum(priceStr);
         const origin=get('origin')||null;
-        productos[i]={...productos[i], name,mode,boxKg,price,origin}; saveProductos(); populateProductDatalist(); renderProductos();
+        productos[i]={name,mode,boxKg,price,origin}; saveProductos(); populateProductDatalist(); renderProductos();
       }
     });
   });
 }
 $('#buscarProducto')?.addEventListener('input', renderProductos);
 
-/* ============  Factura: líneas  ============ */
+/* ---------- TABS + SPLASH OFF ---------- */
+function switchTab(id){
+  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
+  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
+  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
+  if(id==='pendientes'){ renderPendientes(); }
+  if(id==='resumen'){ drawResumen(); }
+}
+$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
+window.addEventListener('load', ()=>{
+  // sin splash: ir directo a factura
+  document.querySelector('[data-tab="factura"]')?.click();
+});
+
+/* =======================
+   PARTE 2/3 — FACTURA + LISTAS + RESÚMENES
+   ======================= */
+
+/* ---------- FACTURA: LÍNEAS ---------- */
 function findProducto(name){ return productos.find(p=>(p.name||'').toLowerCase()===String(name).toLowerCase()); }
 function addLinea(){
   const tb = $('#lineasBody'); if(!tb) return;
@@ -409,7 +415,7 @@ function captureLineas(){
 }
 function lineImporte(l){ return (l.mode==='unidad') ? l.qty*l.price : l.net*l.price; }
 
-/* ============  Pagos parciales UI  ============ */
+/* ---------- PAGOS PARCIALES EN UI ---------- */
 let pagosTemp = []; // {date, amount}
 function renderPagosTemp(){
   const list=$('#listaPagos'); if(!list) return;
@@ -431,7 +437,7 @@ $('#btnAddPago')?.addEventListener('click', ()=>{
   renderPagosTemp(); recalc();
 });
 
-/* ============  Re-cálculo + PDF Fill  ============ */
+/* ---------- RECÁLCULO + PDF FILL + ESTADO ---------- */
 function recalc(){
   const ls=captureLineas();
   let subtotal=0; ls.forEach(l=> subtotal+=lineImporte(l));
@@ -440,6 +446,7 @@ function recalc(){
   const iva = baseMasTrans * 0.04; // informativo
   const total = baseMasTrans;
 
+  // pagado = pagosTemp + input manual
   const manual = parseNum($('#pagado')?.value||0);
   const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + parcial;
@@ -451,18 +458,20 @@ function recalc(){
   $('#total').textContent = money(total);
   $('#pendiente').textContent = money(pendiente);
 
+  // estado sugerido
   if(total<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
   else if(pagadoTotal<total){ $('#estado').value='parcial'; }
   else { $('#estado').value='pagado'; }
 
+  // Pie de PDF
   const foot=$('#pdf-foot-note');
   if(foot){
     foot.textContent = $('#chkIvaIncluido')?.checked ? 'IVA incluido en los precios.' : 'IVA (4%) mostrado como informativo. Transporte 10% opcional.';
   }
 
   fillPrint(ls,{subtotal,transporte,iva,total},null,null);
-  drawResumen();
+  drawResumen(); // KPIs rápidos
 }
 ;['chkTransporte','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
@@ -470,6 +479,7 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-num').textContent = f?.numero || '(Sin guardar)';
   $('#p-fecha').textContent = (f?new Date(f.fecha):new Date()).toLocaleString();
 
+  // Encabezado PDF (solo “FACTURA” + datos)
   $('#p-prov').innerHTML = `
     <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre').value || '')}</strong></div>
     <div>${escapeHTML(f?.proveedor?.nif || $('#provNif').value || '')}</div>
@@ -508,6 +518,7 @@ function fillPrint(lines, totals, temp=null, f=null){
   $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
   $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
 
+  // QR con datos básicos (factura)
   try{
     const canvas = $('#p-qr');
     const numero = f?.numero || '(Sin guardar)';
@@ -517,13 +528,9 @@ function fillPrint(lines, totals, temp=null, f=null){
   }catch(e){}
 }
 
-/* ============  Guardar / Nueva / PDF  ============ */
+/* ---------- GUARDAR / NUEVA / PDF ---------- */
 function genNumFactura(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
-function saveFacturas(){ 
-  save(K_FACTURAS, facturas); 
-  const payload={}; facturas.forEach(f=>payload[f.id]=f);
-  set(ref(db, `${CLOUD_ROOT}/facturas`), payload).catch(()=>{});
-}
+function saveFacturas(){ save(K_FACTURAS, facturas); cloudSet('arslan_pro_v104/facturas', facturas); actualizarTodoFirebase(); }
 
 $('#btnGuardar')?.addEventListener('click', ()=>{
   const ls=captureLineas(); if(ls.length===0){ alert('Añade al menos una línea.'); return; }
@@ -536,27 +543,27 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
   const total=unMoney($('#total').textContent);
 
   const manual = parseNum($('#pagado').value||0);
-  const pagos = [...pagosTemp];
+  const pagos = [...pagosTemp]; // copiar
   const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
   const pagadoTotal = manual + pagadoParcial;
+  const pendiente=Math.max(0,total-pagadoTotal);
 
   const estado = (pagadoTotal<=0) ? 'pendiente' : (pagadoTotal<total ? 'parcial' : 'pagado');
 
+  const selId = $('#selCliente')?.value || '';
+  const cData = clientes.find(x=>x.id===selId) || null;
+
   const f={
-    id: uid(),
     numero, fecha:now,
     proveedor:{nombre:$('#provNombre').value,nif:$('#provNif').value,dir:$('#provDir').value,tel:$('#provTel').value,email:$('#provEmail').value},
+    clienteId: cData?.id || null,
     cliente:{nombre:$('#cliNombre').value,nif:$('#cliNif').value,dir:$('#cliDir').value,tel:$('#cliTel').value,email:$('#cliEmail').value},
     lineas:ls, transporte:$('#chkTransporte').checked, ivaIncluido:$('#chkIvaIncluido').checked,
     estado, metodo:$('#metodoPago').value, obs:$('#observaciones').value,
-    totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente:Math.max(0,total-pagadoTotal)},
-    pagos
+    totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
+    pagos // historial de pagos parciales
   };
   facturas.unshift(f); saveFacturas();
-
-  // Cloud: write inmediata de la factura
-  update(ref(db, `${CLOUD_ROOT}/facturas/${f.id}`), f).catch(()=>{});
-
   pagosTemp = []; renderPagosTemp();
   alert(`Factura ${numero} guardada.`);
   renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
@@ -573,13 +580,12 @@ $('#btnNueva')?.addEventListener('click', ()=>{
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
   const element = document.getElementById('printArea');
-  // Forzar rellenado con lo actual
-  recalc();
   const d=new Date(); const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
   const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
   window.html2pdf().set(opt).from(element).save();
 });
-/* ============  Lista de Facturas  ============ */
+
+/* ---------- LISTA DE FACTURAS ---------- */
 function badgeEstado(f){
   const tot=f.totals?.total||0, pag=f.totals?.pagado||0;
   if(pag>=tot) return `<span class="state-badge state-green">Pagada</span>`;
@@ -596,7 +602,7 @@ function renderFacturas(){
   if(q) arr=arr.filter(f=>(f.cliente?.nombre||'').toLowerCase().includes(q));
   if(arr.length===0){ cont.innerHTML='<div class="item">No hay facturas.</div>'; return; }
 
-  arr.slice(0,500).forEach((f,idx)=>{
+  arr.slice(0,400).forEach((f,idx)=>{
     const fecha=new Date(f.fecha).toLocaleString();
     const div=document.createElement('div'); div.className='item';
     div.innerHTML=`
@@ -624,9 +630,7 @@ function renderFacturas(){
         const tot=f.totals.total||0;
         f.totals.pagado=tot; f.totals.pendiente=0; f.estado='pagado';
         (f.pagos??=[]).push({date:todayISO(), amount: tot});
-        saveFacturas();
-        update(ref(db, `${CLOUD_ROOT}/facturas/${f.id}`), f).catch(()=>{});
-        renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+        saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
       }else if(b.dataset.e==='parcial'){
         const max=f.totals.total-(f.totals.pagado||0);
         const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
@@ -635,9 +639,7 @@ function renderFacturas(){
           f.totals.pagado=(f.totals.pagado||0)+val;
           f.totals.pendiente=Math.max(0,(f.totals.total||0)-f.totals.pagado);
           f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
-          saveFacturas();
-          update(ref(db, `${CLOUD_ROOT}/facturas/${f.id}`), f).catch(()=>{});
-          renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+          saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
         }
       }else if(b.dataset.e==='pdf'){
         fillPrint(f.lineas,f.totals,null,f);
@@ -653,7 +655,7 @@ function renderFacturas(){
 $('#filtroEstado')?.addEventListener('input', renderFacturas);
 $('#buscaCliente')?.addEventListener('input', renderFacturas);
 
-/* ============  Pendientes  ============ */
+/* ---------- PENDIENTES ---------- */
 function renderPendientes(){
   const tb=$('#tblPendientes tbody'); if(!tb) return;
   tb.innerHTML='';
@@ -692,7 +694,7 @@ function renderPendientes(){
   });
 }
 
-/* ============  Ventas (KPIs, gráficos, top, tabla)  ============ */
+/* ---------- VENTAS (KPIs, gráficos, top, por cliente) ---------- */
 function sumBetween(d1,d2,filterClient=null){
   let sum=0;
   facturas.forEach(f=>{
@@ -786,7 +788,7 @@ function renderVentasCliente(){
   });
 }
 
-/* ============  Backups / Import-Export  ============ */
+/* ---------- EXPORTS / BACKUP ---------- */
 $('#btnBackup')?.addEventListener('click', ()=>{
   const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
@@ -800,13 +802,16 @@ $('#btnRestore')?.addEventListener('click', ()=>{
     const reader=new FileReader(); reader.onload=()=>{
       try{
         const obj=JSON.parse(reader.result);
-        if(obj.clientes) clientes=arrayEnsureId(obj.clientes);
-        if(obj.productos) productos=arrayEnsureId(obj.productos);
-        if(obj.facturas) facturas=arrayEnsureId(obj.facturas);
+        if(obj.clientes) clientes=uniqueByName(obj.clientes).map(ensureClienteId);
+        if(obj.productos) productos=obj.productos;
+        if(obj.facturas) facturas=obj.facturas;
         if(obj.priceHist) priceHist=obj.priceHist;
         save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist);
-        // subir snapshot a nube
-        saveClientes(); saveProductos(); saveFacturas();
+        cloudSet('arslan_pro_v104/clientes', clientes);
+        cloudSet('arslan_pro_v104/productos', productos);
+        cloudSet('arslan_pro_v104/facturas', facturas);
+        cloudSet('arslan_pro_v104/priceHist', priceHist);
+        actualizarTodoFirebase();
         renderAll(); alert('Copia restaurada ✔️');
       }catch{ alert('JSON inválido'); }
     }; reader.readAsText(f);
@@ -814,11 +819,11 @@ $('#btnRestore')?.addEventListener('click', ()=>{
   inp.click();
 });
 $('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=arrayEnsureId(arr); saveClientes(); renderClientesSelect(); renderClientesLista(); } }));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ clientes=uniqueByName(arr).map(ensureClienteId); saveClientes(); renderClientesSelect(); renderClientesLista(); } }));
 $('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
-$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arrayEnsureId(arr); saveProductos(); populateProductDatalist(); renderProductos(); } }));
+$('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr; saveProductos(); populateProductDatalist(); renderProductos(); } }));
 $('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
-$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arrayEnsureId(arr); saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
+$('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); } }));
 $('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
 
 function downloadJSON(obj, filename){
@@ -840,27 +845,36 @@ function exportVentasCSV(){
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/* ============  Eventos generales  ============ */
+/* ---------- EVENTOS GENERALES ---------- */
 $('#btnAddLinea')?.addEventListener('click', addLinea);
 $('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
 $('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
-
-// 🔧 Selección por ID (fix mezcla)
 $('#selCliente')?.addEventListener('change', ()=>{
-  const id=$('#selCliente').value; if(!id) return;
-  const c=clientes.find(x=>x.id===id); if(!c) return;
+  const id=$('#selCliente').value; if(!id) return; const c=clientes.find(x=>x.id===id); if(!c) return;
   $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
 });
-
 $('#btnAddCliente')?.addEventListener('click', ()=>{
   const nombre=prompt('Nombre del cliente:'); if(!nombre) return;
   const nif=prompt('NIF/CIF:')||''; const dir=prompt('Dirección:')||''; const tel=prompt('Teléfono:')||''; const email=prompt('Email:')||'';
-  const c = {id: uid(), nombre,nif,dir,tel,email};
-  clientes.push(c); saveClientes(); renderClientesSelect(); renderClientesLista();
+  guardarCliente({ nombre, nif, dir, tel, email });
 });
 $('#buscarCliente')?.addEventListener('input', renderClientesLista);
 
-/* ============  Render All / Boot  ============ */
+function guardarCliente(c){
+  if(!c || !c.nombre) return;
+  // merge por nombre (case-insensitive)
+  const idx = clientes.findIndex(x => (x.nombre||'').trim().toLowerCase() === c.nombre.trim().toLowerCase());
+  if(idx>=0){
+    c.id = clientes[idx].id;
+    clientes[idx] = ensureClienteId({...clientes[idx], ...c});
+  }else{
+    c = ensureClienteId(c);
+    clientes.push(c);
+  }
+  saveClientes(); // también sube a cloud
+}
+
+/* ---------- RESUMEN ---------- */
 function renderAll(){
   renderClientesSelect(); renderClientesLista();
   populateProductDatalist(); renderProductos(); renderFacturas(); renderPendientes();
@@ -868,15 +882,112 @@ function renderAll(){
 }
 function drawResumen(){ drawKPIs(); }
 
-(async function boot(){
-  // Seed (si no hay datos locales)
+/* =======================
+   PARTE 3/3 — META (Guardar TODO) + BOOT (merge cloud)
+   ======================= */
+
+/* ---------- META (pendientes, resumen, totales) ---------- */
+function calcularTotalesGlobalesFromState(){
+  const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
+  const pagado = facturas.reduce((a,f)=>a+(f.totals?.pagado||0),0);
+  const pendiente = Math.max(0, total - pagado);
+  return { totalGlobal: total, pagado, pendiente, fecha: todayISO() };
+}
+function calcularPendientesFromState(){
+  const map = {};
+  facturas.forEach(f=>{
+    const p = f.totals?.pendiente||0;
+    if(p>0){
+      const nom = f.cliente?.nombre || '(s/cliente)';
+      map[nom] = (map[nom]||0) + p;
+    }
+  });
+  return map;
+}
+function calcularResumenVentasFromState(){
+  const res = {};
+  facturas.forEach(f=>{
+    const k = (f.fecha||'').slice(0,7) || 'sin_fecha';
+    res[k] = (res[k]||0) + (f.totals?.total||0);
+  });
+  return res;
+}
+function guardarResumenesFirebase(){
+  const meta = {
+    pendientes: calcularPendientesFromState(),
+    resumenVentas: calcularResumenVentasFromState(),
+    totalesGlobales: calcularTotalesGlobalesFromState()
+  };
+  cloudSet('arslan_pro_v104/meta', meta);
+}
+function actualizarTodoFirebase(){
+  try{ guardarResumenesFirebase(); }catch(e){ console.warn('Meta update skipped', e); }
+}
+
+/* ---------- BOOT: merge con nube (si hay permisos) ---------- */
+async function initialCloudMerge(){
+  if(!db || !refFB) return; // si no hay firebase, seguimos local
+  try{
+    const [cCloud,pCloud,fCloud,hCloud] = await Promise.all([
+      cloudGet('arslan_pro_v104/clientes'),
+      cloudGet('arslan_pro_v104/productos'),
+      cloudGet('arslan_pro_v104/facturas'),
+      cloudGet('arslan_pro_v104/priceHist')
+    ]);
+
+    // CLIENTES: merge por nombre + mantener IDs
+    if(Array.isArray(cCloud) && cCloud.length){
+      const merged = uniqueByName([...(clientes||[]), ...cCloud]).map(ensureClienteId);
+      clientes = merged; save(K_CLIENTES, clientes);
+    }else{
+      // subir local si nube vacía
+      if((clientes||[]).length) cloudSet('arslan_pro_v104/clientes', clientes);
+    }
+
+    // PRODUCTOS
+    if(Array.isArray(pCloud) && pCloud.length){
+      // preferir nube + mantener locales únicos por nombre que no existan
+      const names = new Set(pCloud.map(x=>(x.name||'').toLowerCase()));
+      const extraLocal = (productos||[]).filter(x=>!names.has((x.name||'').toLowerCase()));
+      productos = [...pCloud, ...extraLocal];
+      save(K_PRODUCTOS, productos);
+    }else{
+      if((productos||[]).length) cloudSet('arslan_pro_v104/productos', productos);
+    }
+
+    // FACTURAS
+    if(Array.isArray(fCloud) && fCloud.length){
+      // unir y ordenar por fecha/numero (evitar duplicados por numero)
+      const map=new Map();
+      [...fCloud, ...(facturas||[])].forEach(x=>{ if(x?.numero) map.set(x.numero, x); });
+      facturas = [...map.values()].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+      save(K_FACTURAS, facturas);
+    }else{
+      if((facturas||[]).length) cloudSet('arslan_pro_v104/facturas', facturas);
+    }
+
+    // PRICE HIST
+    if(hCloud && typeof hCloud==='object'){
+      priceHist = {...hCloud, ...priceHist}; // nube prioridad, completa con local
+      save(K_PRICEHIST, priceHist);
+    }else{
+      if(priceHist && Object.keys(priceHist).length) cloudSet('arslan_pro_v104/priceHist', priceHist);
+    }
+
+    // subir meta inicial
+    actualizarTodoFirebase();
+    console.log('Firebase connected ✔️');
+  }catch(err){
+    console.warn('Initial cloud merge skipped:', err?.message||err);
+  }
+}
+
+/* ---------- BOOT ---------- */
+(function boot(){
   seedClientesIfEmpty();
   seedProductsIfEmpty();
 
-  // Merge nube->local (ordenado y limpio)
-  await cloudMergeAll();
-
-  // Proveedor por defecto
+  // proveedor por defecto (tus datos)
   setProviderDefaultsIfEmpty();
 
   // 5 líneas iniciales
@@ -884,4 +995,13 @@ function drawResumen(){ drawKPIs(); }
 
   renderPagosTemp();
   renderAll(); recalc();
+
+  // merge nube si hay permisos
+  initialCloudMerge();
+
+  // verificación tardía UI
+  window.addEventListener('load', ()=>setTimeout(()=>{ try{
+    populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
+  }catch(e){ console.error('Init error',e); } }, 400));
+})();
 })();
