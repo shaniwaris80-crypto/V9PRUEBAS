@@ -1,19 +1,12 @@
 /* =======================================================
-   ARSLAN PRO V10.x — KIWI Edition (FULL)
-   - Mantiene TODAS las funciones originales:
-     • Clientes (IDs estables), Productos (CRUD)
-     • Facturas: líneas, tara/neto, transporte 10%, IVA 4% opcional
-     • Pagos parciales + estado (impagada/parcial/pagada)
-     • Historial de precios (10 últimos)
-     • Listado de facturas con PDF/QR
-     • Pendientes por cliente + total global
-     • KPIs + gráficos (diario/mensual + Top productos)
-     • Export/Import + Backup/Restore
-     • Firebase Realtime Database (compat) + localStorage
-   - Mejoras PDF:
-     • Logo PNG completo (no recortado), márgenes y fondo blanco
-     • Layout estable, tabla y totales alineados
-   - Tolerante a nodos ausentes (index antiguo no rompe).
+   ARSLAN PRO V10.4 — KIWI Edition (Full, Single-File)
+   - Mantiene TODAS las funciones originales
+   - Correcciones: Reset de deudas (cliente/global), filtro ventas por mes
+   - IDs estables para clientes/productos
+   - IVA 4% opcional; si aplica, NO mostrar "IVA incluido"
+   - PDF pro con logo kiwi; QR
+   - Firebase Realtime (compat) auto-sync (con protecciones)
+   - Limpieza de errores visibles y pequeñas robusteces
 ======================================================== */
 
 (function(){
@@ -30,7 +23,7 @@ const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMo
 const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
 const uid = (p='ID') => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
 
-/* ---------- KEYS (conservamos v104 para no perder tus datos) ---------- */
+/* ---------- KEYS ---------- */
 const K_CLIENTES='arslan_v104_clientes';
 const K_PRODUCTOS='arslan_v104_productos';
 const K_FACTURAS='arslan_v104_facturas';
@@ -44,19 +37,21 @@ let facturas  = load(K_FACTURAS, []);
 let priceHist = load(K_PRICEHIST, {});
 let lastTs    = load(K_TS, 0);
 
-function load(k, fallback){ try{ const v = JSON.parse(localStorage.getItem(k)||''); return v ?? fallback; } catch{ return fallback; } }
-function save(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
+function load(k, fallback){
+  try{
+    const raw = localStorage.getItem(k);
+    if(!raw) return fallback;
+    const v = JSON.parse(raw);
+    return (v===undefined || v===null) ? fallback : v;
+  } catch{ return fallback; }
+}
+function save(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){ console.warn('localStorage save error', e);} }
 
 /* ---------- FIREBASE ---------- */
-const db = window.db; // inyectado en index.html
+const db = window.db; // puesto en index.html
 const FB_PATH = "arslan_pro_v104";
 let syncing=false, pullOnStart=true;
 
-function setSyncUI(text){
-  const dot=$('#syncDot'), t=$('#syncText');
-  if(dot) dot.style.background = (text==='Error')?'#ef4444':(text.includes('Sync')?'#16a34a':'#9ca3af');
-  if(t) t.textContent=text;
-}
 function pushFirebase(){
   if(!db || syncing) return;
   syncing=true;
@@ -64,23 +59,37 @@ function pushFirebase(){
   const payload={clientes,productos,facturas,priceHist,ts:Date.now()};
   db.ref(FB_PATH).set(payload).then(()=>{
     syncing=false; lastTs=payload.ts; save(K_TS,lastTs); setSyncUI('Sync ✓');
-  }).catch(e=>{ syncing=false; console.error('FB set error',e); setSyncUI('Error'); });
+  }).catch(e=>{
+    syncing=false; console.error('FB set error',e); setSyncUI('Error');
+  });
 }
-function schedulePush(){ clearTimeout(schedulePush.t); schedulePush.t=setTimeout(pushFirebase, 1200); }
+function setSyncUI(text){
+  const dot=$('#syncDot'), t=$('#syncText');
+  if(dot) dot.style.background = (text==='Error')?'#ef4444':(text.includes('Sync')?'#16a34a':'#9ca3af');
+  if(t) t.textContent=text;
+}
+function schedulePush(){ clearTimeout(schedulePush.t); schedulePush.t=setTimeout(pushFirebase, 900); }
 
 if(db){
-  db.ref(FB_PATH).on('value', snap=>{
-    const v=snap.val(); if(!v) return;
-    if(v.ts && v.ts<=lastTs) return;
-    clientes=v.clientes||clientes;
-    productos=v.productos||productos;
-    facturas=v.facturas||facturas;
-    priceHist=v.priceHist||priceHist;
-    lastTs=v.ts||Date.now();
-    save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist); save(K_TS,lastTs);
-    if(pullOnStart){ console.log('✅ Datos restaurados automáticamente desde Firebase'); pullOnStart=false; }
-    renderAll(); recalc();
-  });
+  try{
+    db.ref(FB_PATH).on('value', snap=>{
+      const v=snap.val(); if(!v) return;
+      if(v.ts && v.ts<=lastTs) return; // ya tenemos más nuevo o igual
+      // Pull
+      clientes=v.clientes||clientes;
+      productos=v.productos||productos;
+      facturas=v.facturas||facturas;
+      priceHist=v.priceHist||priceHist;
+      lastTs=v.ts||Date.now();
+      save(K_CLIENTES,clientes); save(K_PRODUCTOS,productos); save(K_FACTURAS,facturas); save(K_PRICEHIST,priceHist); save(K_TS,lastTs);
+      if(pullOnStart){ console.log('✅ Datos restaurados automáticamente desde Firebase'); pullOnStart=false; }
+      renderAll(); recalc();
+    });
+  }catch(e){
+    console.warn('No se pudo inicializar listener de Firebase', e);
+  }
+}else{
+  console.info('Firebase DB no disponible (window.db no definido).');
 }
 
 /* ---------- TABS ---------- */
@@ -91,7 +100,7 @@ function switchTab(id){
   if(id==='pendientes'){ renderPendientes(); }
   if(id==='resumen'){ drawResumen(); }
 }
-$$('button.tab')?.forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
+$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
 
 /* ---------- SEED DATA ---------- */
 function uniqueByName(arr){
@@ -123,19 +132,20 @@ const PRODUCT_NAMES = [
 function seedProductsIfEmpty(){
   if(productos.length) return;
   productos = PRODUCT_NAMES.map(n=>({id:uid('PROD'),nombre:n,modo:'',kgCaja:null,precio:null,origen:''}));
+  // ejemplos con caja:
   const p = productos.find(x=>x.nombre==='PATATA 10KG'); if(p){ p.modo='caja'; p.kgCaja=10; p.origen='España'; }
   const l = productos.find(x=>x.nombre==='LIMA'); if(l){ l.modo='caja'; l.kgCaja=7; l.origen='Brasil'; }
   const c = productos.find(x=>x.nombre==='CILANTRO'); if(c){ c.modo='manojo'; }
   save(K_PRODUCTOS, productos);
 }
 
-/* ---------- PROVEEDOR: valores por defecto ---------- */
+/* ---------- PROVIDER DEFAULTS ---------- */
 function setProviderDefaultsIfEmpty(){
-  if(!$('#provNombre')?.value) $('#provNombre').value = 'Mohammad Arslan Waris';
-  if(!$('#provNif')?.value)    $('#provNif').value    = 'X6389988J';
-  if(!$('#provDir')?.value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
-  if(!$('#provTel')?.value)    $('#provTel').value    = '631 667 893';
-  if(!$('#provEmail')?.value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
+  $('#provNombre') && !$('#provNombre').value && ($('#provNombre').value = 'Mohammad Arslan Waris');
+  $('#provNif') && !$('#provNif').value && ($('#provNif').value    = 'X6389988J');
+  $('#provDir') && !$('#provDir').value && ($('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos');
+  $('#provTel') && !$('#provTel').value && ($('#provTel').value    = '631 667 893');
+  $('#provEmail') && !$('#provEmail').value && ($('#provEmail').value  = 'shaniwaris80@gmail.com');
 }
 
 /* ---------- HISTORIAL DE PRECIOS ---------- */
@@ -152,13 +162,13 @@ function renderPriceHistory(name){
   panel.removeAttribute('hidden');
   const hist=priceHist[name]||[];
   if(hist.length===0){ body.innerHTML=`<div class="pp-row"><span>${escapeHTML(name)}</span><strong>Sin datos</strong></div>`; hidePanelSoon(); return; }
-  body.innerHTML=`<div class="pp-row" style="justify-content:center"><strong>${escapeHTML(name)}</strong></div>` +
+  body.innerHTML=`<div class="pp-row" style="justify-content:center"><strong>${escapeHTML(name)}</strong></div>`+
     hist.map(h=>`<div class="pp-row"><span>${fmtDateDMY(new Date(h.date))}</span><strong>${money(h.price)}</strong></div>`).join('');
   hidePanelSoon();
 }
 function hidePanelSoon(){ clearTimeout(hidePanelSoon.t); hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800); }
 
-/* ---------- CLIENTES UI ---------- */
+/* ---------- CLIENTES UI (IDs estables) ---------- */
 function saveClientes(){ save(K_CLIENTES, clientes); schedulePush(); }
 function renderClientesSelect(){
   const sel = $('#selCliente'); if(!sel) return;
@@ -195,11 +205,7 @@ function renderClientesLista(){
       const i=clientes.findIndex(x=>x.id===id); if(i<0) return;
       if(b.dataset.e==='use'){
         const c=clientes[i]; if(!c) return;
-        $('#cliNombre') && ($('#cliNombre').value=c.nombre||'');
-        $('#cliNif')    && ($('#cliNif').value=c.nif||'');
-        $('#cliDir')    && ($('#cliDir').value=c.dir||'');
-        $('#cliTel')    && ($('#cliTel').value=c.tel||'');
-        $('#cliEmail')  && ($('#cliEmail').value=c.email||'');
+        $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
         switchTab('factura');
       }else if(b.dataset.e==='edit'){
         const c=clientes[i];
@@ -223,11 +229,7 @@ $('#btnAddCliente')?.addEventListener('click', ()=>{
 });
 $('#selCliente')?.addEventListener('change', ()=>{
   const id=$('#selCliente').value; if(!id) return; const c=clientes.find(x=>x.id===id); if(!c) return;
-  $('#cliNombre') && ($('#cliNombre').value=c.nombre||'');
-  $('#cliNif')    && ($('#cliNif').value=c.nif||'');
-  $('#cliDir')    && ($('#cliDir').value=c.dir||'');
-  $('#cliTel')    && ($('#cliTel').value=c.tel||'');
-  $('#cliEmail')  && ($('#cliEmail').value=c.email||'');
+  $('#cliNombre').value=c.nombre||''; $('#cliNif').value=c.nif||''; $('#cliDir').value=c.dir||''; $('#cliTel').value=c.tel||''; $('#cliEmail').value=c.email||'';
 });
 
 /* ---------- PRODUCTOS UI ---------- */
@@ -251,7 +253,7 @@ function renderProductos(){
         <option value="">—</option><option value="kg"${p.modo==='kg'?' selected':''}>kg</option><option value="unidad"${p.modo==='unidad'?' selected':''}>unidad</option><option value="caja"${p.modo==='caja'?' selected':''}>caja</option><option value="manojo"${p.modo==='manojo'?' selected':''}>manojo</option>
       </select>
       <input type="number" step="0.01" data-f="kgCaja" placeholder="Kg/caja" value="${p.kgCaja??''}" />
-      <input type="number" step="0.01" data-f="precio" placeholder="€ base" value="${p.precio??''}" />
+      <input class="price" type="number" step="0.01" data-f="precio" placeholder="€ base" value="${p.precio??''}" />
       <input data-f="origen" placeholder="Origen" value="${escapeHTML(p.origen||'')}" />
       <button data-e="save" data-id="${p.id}">💾 Guardar</button>
       <button class="ghost" data-e="del" data-id="${p.id}">✖</button>
@@ -299,7 +301,7 @@ function addLinea(){
     <td><input class="gross" type="number" step="0.01" placeholder="Bruto" /></td>
     <td><input class="tare"  type="number" step="0.01" placeholder="Tara" /></td>
     <td><input class="net"   type="number" step="0.01" placeholder="Neto" disabled /></td>
-    <td><input class="price" type="number" step="0.01" placeholder="Precio" /></td>
+    <td><input class="price price" type="number" step="0.01" placeholder="Precio" /></td>
     <td><input class="origin" placeholder="Origen (opcional)" /></td>
     <td><input class="amount" placeholder="Importe" disabled /></td>
     <td><button class="del">✕</button></td>
@@ -385,10 +387,9 @@ function renderPagosTemp(){
   });
 }
 $('#btnAddPago')?.addEventListener('click', ()=>{
-  const input = $('#inpPagoParcial'); if(!input) return;
-  const amt=parseNum(input.value||0); if(!(amt>0)) return;
+  const amt=parseNum($('#inpPagoParcial')?.value||0); if(!(amt>0)) return;
   pagosTemp.unshift({date: todayISO(), amount: amt});
-  input.value='';
+  $('#inpPagoParcial').value='';
   renderPagosTemp(); recalc();
 });
 
@@ -404,59 +405,50 @@ function recalc(){
   const iva = ivaAplicado ? base * 0.04 : 0;
   const total = base + iva;
 
+  // pagado = pagosTemp + input manual
   const manual = parseNum($('#pagado')?.value||0);
   const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
-  const pagadoTotal = manual + parcial;
+  const pagadoTotal = Math.max(0, manual + parcial);
   const pendiente = Math.max(0, total - pagadoTotal);
 
   $('#subtotal') && ($('#subtotal').textContent = money(subtotal));
-  $('#transp')   && ($('#transp').textContent = money(transporte));
-  $('#iva')      && ($('#iva').textContent = money(iva));
-  $('#total')    && ($('#total').textContent = money(total));
-  $('#pendiente')&& ($('#pendiente').textContent = money(pendiente));
+  $('#transp') && ($('#transp').textContent = money(transporte));
+  $('#iva') && ($('#iva').textContent = money(iva));
+  $('#total') && ($('#total').textContent = money(total));
+  $('#pendiente') && ($('#pendiente').textContent = money(pendiente));
 
-  if($('#estado')){
-    if(total<=0){ $('#estado').value='pendiente'; }
-    else if(pagadoTotal<=0){ $('#estado').value='pendiente'; }
-    else if(pagadoTotal<total){ $('#estado').value='parcial'; }
-    else { $('#estado').value='pagado'; }
+  // estado sugerido
+  if(total<=0){ $('#estado') && ($('#estado').value='pendiente'); }
+  else if(pagadoTotal<=0){ $('#estado') && ($('#estado').value='pendiente'); }
+  else if(pagadoTotal<total){ $('#estado') && ($('#estado').value='parcial'); }
+  else { $('#estado') && ($('#estado').value='pagado'); }
+
+  // Pie PDF: si aplica IVA → no mensaje "incluido"; si no, depende del check "IVA incluido"
+  const foot=$('#pdf-foot-note');
+  if(foot){
+    foot.textContent = ivaAplicado ? '' : (ivaIncluidoMsg ? 'IVA incluido en los precios.' : '');
   }
 
-  const foot=$('#pdf-foot-note');
-  if(foot){ foot.textContent = ivaAplicado ? '' : (ivaIncluidoMsg ? 'IVA incluido en los precios.' : ''); }
-
   fillPrint(ls,{subtotal,transporte,iva,total},{pagado:pagadoTotal,pendiente},{flags:{ivaAplicado,ivaIncluidoMsg}});
-  drawResumen();
+  drawResumen(); // KPIs rápidos
 }
 ;['chkTransporte','chkIvaAplicado','chkIvaIncluido','estado','pagado'].forEach(id=>$('#'+id)?.addEventListener('input', recalc));
 
 function fillPrint(lines, totals, temp=null, extra=null){
-  const now = extra?.fecha ? new Date(extra.fecha) : new Date();
-  const pFecha = $('#p-fecha'); if(pFecha) pFecha.textContent = now.toLocaleString();
-
-  const pNum = $('#p-num'); if(pNum) pNum.textContent = extra?.numero || '(Sin guardar)';
-
-  const provNombre = extra?.proveedor?.nombre || $('#provNombre')?.value || '';
-  const provNif    = extra?.proveedor?.nif    || $('#provNif')?.value || '';
-  const provDir    = extra?.proveedor?.dir    || $('#provDir')?.value || '';
-  const provTel    = extra?.proveedor?.tel    || $('#provTel')?.value || '';
-  const provEmail  = extra?.proveedor?.email  || $('#provEmail')?.value || '';
-
-  const cliNombre = extra?.cliente?.nombre || $('#cliNombre')?.value || '';
-  const cliNif    = extra?.cliente?.nif    || $('#cliNif')?.value || '';
-  const cliDir    = extra?.cliente?.dir    || $('#cliDir')?.value || '';
-  const cliTel    = extra?.cliente?.tel    || $('#cliTel')?.value || '';
-  const cliEmail  = extra?.cliente?.email  || $('#cliEmail')?.value || '';
+  $('#p-num') && ($('#p-num').textContent = extra?.numero || '(Sin guardar)');
+  $('#p-fecha') && ($('#p-fecha').textContent = (extra?new Date(extra.fecha):new Date()).toLocaleString());
 
   $('#p-prov') && ($('#p-prov').innerHTML = `
-    <div><strong>${escapeHTML(provNombre)}</strong></div>
-    <div>${escapeHTML(provNif)} · ${escapeHTML(provDir)}</div>
-    <div>${escapeHTML(provTel)} · ${escapeHTML(provEmail)}</div>
+    <div><strong>${escapeHTML(extra?.proveedor?.nombre || $('#provNombre')?.value || '')}</strong></div>
+    <div>${escapeHTML(extra?.proveedor?.nif || $('#provNif')?.value || '')}</div>
+    <div>${escapeHTML(extra?.proveedor?.dir || $('#provDir')?.value || '')}</div>
+    <div>${escapeHTML(extra?.proveedor?.tel || $('#provTel')?.value || '')} · ${escapeHTML(extra?.proveedor?.email || $('#provEmail')?.value || '')}</div>
   `);
   $('#p-cli') && ($('#p-cli').innerHTML = `
-    <div><strong>${escapeHTML(cliNombre)}</strong></div>
-    <div>${escapeHTML(cliNif)} · ${escapeHTML(cliDir)}</div>
-    <div>${escapeHTML(cliTel)} · ${escapeHTML(cliEmail)}</div>
+    <div><strong>${escapeHTML(extra?.cliente?.nombre || $('#cliNombre')?.value || '')}</strong></div>
+    <div>${escapeHTML(extra?.cliente?.nif || $('#cliNif')?.value || '')}</div>
+    <div>${escapeHTML(extra?.cliente?.dir || $('#cliDir')?.value || '')}</div>
+    <div>${escapeHTML(extra?.cliente?.tel || $('#cliTel')?.value || '')} · ${escapeHTML(extra?.cliente?.email || $('#cliEmail')?.value || '')}</div>
   `);
 
   const tbody = $('#p-tabla tbody'); if(tbody){ tbody.innerHTML='';
@@ -477,23 +469,24 @@ function fillPrint(lines, totals, temp=null, extra=null){
     });
   }
 
-  $('#p-sub')   && ($('#p-sub').textContent = money(totals?.subtotal||0));
-  $('#p-tra')   && ($('#p-tra').textContent = money(totals?.transporte||0));
-  $('#p-iva')   && ($('#p-iva').textContent = money(totals?.iva||0));
-  $('#p-tot')   && ($('#p-tot').textContent = money(totals?.total||0));
-  $('#p-estado')&& ($('#p-estado').textContent = extra?.estado || $('#estado')?.value || 'Impagada');
-  $('#p-metodo')&& ($('#p-metodo').textContent = extra?.metodo || $('#metodoPago')?.value || 'Efectivo');
-  $('#p-obs')   && ($('#p-obs').textContent = extra?.obs || ($('#observaciones')?.value||'—'));
+  $('#p-sub') && ($('#p-sub').textContent = money(totals?.subtotal||0));
+  $('#p-tra') && ($('#p-tra').textContent = money(totals?.transporte||0));
+  $('#p-iva') && ($('#p-iva').textContent = money(totals?.iva||0));
+  $('#p-tot') && ($('#p-tot').textContent = money(totals?.total||0));
+  $('#p-estado') && ($('#p-estado').textContent = extra?.estado || $('#estado')?.value || 'Impagada');
+  $('#p-metodo') && ($('#p-metodo').textContent = extra?.metodo || $('#metodoPago')?.value || 'Efectivo');
+  $('#p-obs') && ($('#p-obs').textContent = extra?.obs || ($('#observaciones')?.value||'—'));
 
-  // QR (si existe canvas y librería)
+  // QR con datos básicos
   try{
     const canvas = $('#p-qr');
-    if(canvas && window.QRCode){
-      const numero = extra?.numero || pNum?.textContent || '(Sin guardar)';
-      const payload = `ARSLAN|${numero}|${cliNombre}|${money(totals?.total||0)}|${$('#p-estado')?$('#p-estado').textContent:''}`;
+    if(canvas && window.QRCode && window.QRCode.toCanvas){
+      const numero = extra?.numero || '(Sin guardar)';
+      const cliente = extra?.cliente?.nombre || $('#cliNombre')?.value || '';
+      const payload = `ARSLAN|${numero}|${cliente}|${money(totals?.total||0)}|${$('#p-estado')?.textContent||''}`;
       window.QRCode.toCanvas(canvas, payload, {width:92, margin:0});
     }
-  }catch(e){}
+  }catch(e){ /* ignore */ }
 }
 
 /* ---------- GUARDAR / NUEVA / PDF ---------- */
@@ -511,25 +504,25 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
   const total=unMoney($('#total')?.textContent||'0');
 
   const manual = parseNum($('#pagado')?.value||0);
-  const pagos = [...pagosTemp];
+  const pagos = [...pagosTemp]; // copiar
   const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
-  const pagadoTotal = manual + pagadoParcial;
+  const pagadoTotal = Math.max(0, manual + pagadoParcial);
   const pendiente=Math.max(0,total-pagadoTotal);
 
   const estado = (pagadoTotal<=0) ? 'pendiente' : (pagadoTotal<total ? 'parcial' : 'pagado');
 
   const f={
     numero, fecha:now,
-    proveedor:{nombre:$('#provNombre')?.value,nif:$('#provNif')?.value,dir:$('#provDir')?.value,tel:$('#provTel')?.value,email:$('#provEmail')?.value},
-    cliente:{nombre:$('#cliNombre')?.value,nif:$('#cliNif')?.value,dir:$('#cliDir')?.value,tel:$('#cliTel')?.value,email:$('#cliEmail')?.value},
+    proveedor:{nombre:$('#provNombre')?.value||'',nif:$('#provNif')?.value||'',dir:$('#provDir')?.value||'',tel:$('#provTel')?.value||'',email:$('#provEmail')?.value||''},
+    cliente:{nombre:$('#cliNombre')?.value||'',nif:$('#cliNif')?.value||'',dir:$('#cliDir')?.value||'',tel:$('#cliTel')?.value||'',email:$('#cliEmail')?.value||''},
     lineas:ls,
-    flags:{transporte:$('#chkTransporte')?.checked, ivaAplicado:$('#chkIvaAplicado')?.checked, ivaIncluidoMsg:$('#chkIvaIncluido')?.checked},
-    estado, metodo:$('#metodoPago')?.value, obs:$('#observaciones')?.value,
+    flags:{transporte:$('#chkTransporte')?.checked||false, ivaAplicado:$('#chkIvaAplicado')?.checked||false, ivaIncluidoMsg:$('#chkIvaIncluido')?.checked||false},
+    estado, metodo:$('#metodoPago')?.value||'Efectivo', obs:$('#observaciones')?.value||'',
     totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
-    pagos
+    pagos // historial de pagos parciales
   };
   facturas.unshift(f); saveFacturas();
-  pagosTemp = []; renderPagosTemp?.();
+  pagosTemp = []; renderPagosTemp();
   alert(`Factura ${numero} guardada.`);
   renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
   fillPrint(ls,{subtotal,transporte,iva,total},null,f);
@@ -537,18 +530,19 @@ $('#btnGuardar')?.addEventListener('click', ()=>{
 
 $('#btnNueva')?.addEventListener('click', ()=>{
   const tb=$('#lineasBody'); if(tb){ tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); }
-  if($('#chkTransporte')) $('#chkTransporte').checked=false;
-  if($('#chkIvaAplicado')) $('#chkIvaAplicado').checked=false;
-  if($('#chkIvaIncluido')) $('#chkIvaIncluido').checked=true;
-  if($('#estado')) $('#estado').value='pendiente';
-  if($('#pagado')) $('#pagado').value='';
-  if($('#metodoPago')) $('#metodoPago').value='Efectivo';
-  if($('#observaciones')) $('#observaciones').value='';
-  pagosTemp=[]; renderPagosTemp?.();
+  $('#chkTransporte') && ($('#chkTransporte').checked=false);
+  $('#chkIvaAplicado') && ($('#chkIvaAplicado').checked=false);
+  $('#chkIvaIncluido') && ($('#chkIvaIncluido').checked=true);
+  $('#estado') && ($('#estado').value='pendiente');
+  $('#pagado') && ($('#pagado').value='');
+  $('#metodoPago') && ($('#metodoPago').value='Efectivo');
+  $('#observaciones') && ($('#observaciones').value='');
+  pagosTemp=[]; renderPagosTemp();
   recalc();
 });
 
 $('#btnImprimir')?.addEventListener('click', ()=>{
+  // Asegura que el área PDF está actualizada
   const ls=captureLineas();
   const subtotal=unMoney($('#subtotal')?.textContent||'0');
   const transporte=unMoney($('#transp')?.textContent||'0');
@@ -556,15 +550,10 @@ $('#btnImprimir')?.addEventListener('click', ()=>{
   const total=unMoney($('#total')?.textContent||'0');
   fillPrint(ls,{subtotal,transporte,iva,total},null,null);
 
-  const element = document.getElementById('printArea'); if(!element) return;
+  const element = document.getElementById('printArea');
+  if(!element || !window.html2pdf){ alert('No se puede generar PDF: librería no cargada.'); return; }
   const d=new Date(); const file=`Factura-${($('#cliNombre')?.value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
-  const opt = {
-    margin:[10,10,10,10],
-    filename:file,
-    image:{type:'jpeg',quality:1},
-    html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff'},
-    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
-  };
+  const opt = { margin:[10,10,10,10], filename:file, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
   window.html2pdf().set(opt).from(element).save();
 });
 
@@ -612,10 +601,11 @@ function renderFacturas(){
       }else if(b.dataset.e==='cobrar'){
         const tot=f.totals.total||0;
         f.totals.pagado=tot; f.totals.pendiente=0; f.estado='pagado';
-        (f.pagos??=[]).push({date:todayISO(), amount: tot});
+        (f.pagos??=[]).push({date:todayISO(), amount: Math.max(0,tot-(f.totals.pagado||0)) || tot});
         saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
       }else if(b.dataset.e==='parcial'){
         const max=(f.totals.total||0)-(f.totals.pagado||0);
+        if(max<=0){ alert('Nada pendiente.'); return; }
         const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
         if(val>0){
           f.pagos=f.pagos||[]; f.pagos.push({date:todayISO(), amount:val});
@@ -629,8 +619,8 @@ function renderFacturas(){
         const dt=new Date(f.fecha);
         const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
         const filename=`Factura-${nombreCliente}-${fmtDateDMY(dt)}.pdf`;
-        const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:1}, html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff'}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-        window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
+        const opt={ margin:[10,10,10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+        if(window.html2pdf) window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
       }
     });
   });
@@ -670,7 +660,7 @@ function renderPendientes(){
   tb.querySelectorAll('button').forEach(b=>{
     b.addEventListener('click', ()=>{
       const nombre=b.dataset.c;
-      const input = $('#buscaCliente'); if(input){ input.value=nombre; }
+      $('#buscaCliente') && ($('#buscaCliente').value=nombre);
       switchTab('facturas');
       renderFacturas();
     });
@@ -689,13 +679,15 @@ function sumBetween(d1,d2,filterClient=null){
 function startOfDay(d=new Date()){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
 function endOfDay(d=new Date()){ const x=new Date(d); x.setHours(23,59,59,999); return x; }
 function startOfWeek(d=new Date()){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); x.setHours(0,0,0,0); return x; }
+function endOfWeek(d=new Date()){ const x=new Date(startOfWeek(d)); x.setDate(x.getDate()+6); x.setHours(23,59,59,999); return x; }
 function startOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+function endOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth()+1, 0, 23,59,59,999); }
 
 function drawKPIs(){
   const now=new Date();
   const hoy = sumBetween(startOfDay(now), endOfDay(now));
-  const semana = sumBetween(startOfWeek(now), endOfDay(now));
-  const mes = sumBetween(startOfMonth(now), endOfDay(now));
+  const semana = sumBetween(startOfWeek(now), endOfWeek(now));
+  const mes = sumBetween(startOfMonth(now), endOfMonth(now));
   const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
   $('#vHoy') && ($('#vHoy').textContent=money(hoy));
   $('#vSemana') && ($('#vSemana').textContent=money(semana));
@@ -720,22 +712,26 @@ function groupMonthly(n=12){
   facturas.forEach(f=>{ const d=new Date(f.fecha); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
   return buckets;
 }
+
 function destroyIfChart(c){ if(c && typeof c.destroy==='function'){ c.destroy(); } }
 
 function drawCharts(){
   if(typeof Chart==='undefined') return;
   const daily=groupDaily(7); const monthly=groupMonthly(12);
   destroyIfChart(window.chart1); destroyIfChart(window.chart2);
-  const ctx1=$('#chartDiario')?.getContext?.('2d');
-  const ctx2=$('#chartMensual')?.getContext?.('2d');
-  if(ctx1) window.chart1=new Chart(ctx1, {type:'bar', data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
-  if(ctx2) window.chart2=new Chart(ctx2, {type:'line', data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
-
+  const ctx1=document.getElementById('chartDiario')?.getContext?.('2d');
+  const ctx2=document.getElementById('chartMensual')?.getContext?.('2d');
+  if(ctx1){
+    window.chart1=new Chart(ctx1, {type:'bar', data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
+  }
+  if(ctx2){
+    window.chart2=new Chart(ctx2, {type:'line', data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]}, options:{responsive:true, plugins:{legend:{display:false}}}});
+  }
   drawTop();
 }
 function drawTop(){
   if(typeof Chart==='undefined') return;
-  const ctx=$('#chartTop')?.getContext?.('2d'); if(!ctx) return;
+  const ctx=document.getElementById('chartTop')?.getContext?.('2d'); if(!ctx) return;
   const map=new Map(); // name -> total €
   facturas.forEach(f=>{
     (f.lineas||[]).forEach(l=>{
@@ -749,13 +745,25 @@ function drawTop(){
   window.chartTop=new Chart(ctx, {type:'bar', data:{labels, datasets:[{label:'Top productos (€)', data} ]}, options:{responsive:true, plugins:{legend:{display:false}}}});
 }
 
+/* --- Ventas por cliente (con filtro mes desde #ventasFiltroMes) --- */
 function renderVentasCliente(){
   const tb=$('#tblVentasCliente tbody'); if(!tb) return;
   tb.innerHTML='';
+
+  // Filtro de mes opcional (YYYY-MM)
+  const monthStr = $('#ventasFiltroMes')?.value || '';
+  let sMonth = startOfMonth(new Date()), eMonth = endOfMonth(new Date());
+  if(monthStr){
+    const [y,m] = monthStr.split('-').map(x=>+x);
+    if(y>1900 && m>=1 && m<=12){
+      sMonth = new Date(y, m-1, 1, 0,0,0,0);
+      eMonth = new Date(y, m, 0, 23,59,59,999);
+    }
+  }
+
   const now=new Date();
   const sDay=startOfDay(now), eDay=endOfDay(now);
-  const sWeek=startOfWeek(now), eWeek=endOfDay(now);
-  const sMonth=startOfMonth(now), eMonth=endOfDay(now);
+  const sWeek=startOfWeek(now), eWeek=endOfWeek(now);
 
   const byClient=new Map(); // cliente -> {hoy,semana,mes,total}
   facturas.forEach(f=>{
@@ -776,10 +784,11 @@ function renderVentasCliente(){
     tb.appendChild(tr);
   });
 }
+$('#ventasFiltroMes')?.addEventListener('input', ()=>{ renderVentasCliente(); });
 
 /* ---------- BACKUP/RESTORE + EXPORTS ---------- */
 $('#btnBackup')?.addEventListener('click', ()=>{
-  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.x'};
+  const payload={clientes, productos, facturas, priceHist, fecha: todayISO(), version:'ARSLAN PRO V10.4'};
   const filename=`backup-${fmtDateDMY(new Date())}.json`;
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
@@ -803,11 +812,12 @@ $('#btnRestore')?.addEventListener('click', ()=>{
   };
   inp.click();
 });
-$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan.json'));
-$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ arr=arr.map(c=>({id:c.id||uid('CLI'), ...c})); clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); schedulePush(); } }));
-$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan.json'));
+$('#btnExportClientes')?.addEventListener('click', ()=>downloadJSON(clientes,'clientes-arslan-v104.json'));
+$('#btnImportClientes')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ // asignar id a los que no tengan
+  arr=arr.map(c=>({id:c.id||uid('CLI'), ...c})); clientes=uniqueByName(arr); save(K_CLIENTES,clientes); renderClientesSelect(); renderClientesLista(); schedulePush(); } }));
+$('#btnExportProductos')?.addEventListener('click', ()=>downloadJSON(productos,'productos-arslan-v104.json'));
 $('#btnImportProductos')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ productos=arr.map(p=>({id:p.id||uid('PROD'),...p})); save(K_PRODUCTOS,productos); populateProductDatalist(); renderProductos(); schedulePush(); } }));
-$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan.json'));
+$('#btnExportFacturas')?.addEventListener('click', ()=>downloadJSON(facturas,'facturas-arslan-v104.json'));
 $('#btnImportFacturas')?.addEventListener('click', ()=>uploadJSON(arr=>{ if(Array.isArray(arr)){ facturas=arr; save(K_FACTURAS,facturas); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen(); schedulePush(); } }));
 $('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
 
@@ -832,8 +842,45 @@ function exportVentasCSV(){
 
 /* ---------- EVENTOS GENERALES ---------- */
 $('#btnAddLinea')?.addEventListener('click', addLinea);
-$('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); }});
+$('#btnVaciarLineas')?.addEventListener('click', ()=>{ if(confirm('¿Vaciar líneas?')){ const tb=$('#lineasBody'); if(tb){ tb.innerHTML=''; for(let i=0;i<5;i++) addLinea(); recalc(); } }});
 $('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
+
+/* ---------- BOTONES EXTRA: Reset de deudas ---------- */
+$('#btnResetCliente')?.addEventListener('click', ()=>{
+  const nombreCliente = $('#cliNombre')?.value?.trim();
+  if(!nombreCliente){ alert('Selecciona o escribe un cliente en la factura.'); return; }
+  let count=0, sum=0;
+  facturas.forEach(f=>{
+    if((f.cliente?.nombre||'')===nombreCliente){
+      const pend=f.totals?.pendiente||0;
+      if(pend>0){
+        count++; sum+=pend;
+        f.pagos=f.pagos||[]; f.pagos.push({date:todayISO(), amount:pend});
+        f.totals.pagado=(f.totals.pagado||0)+pend;
+        f.totals.pendiente=0; f.estado='pagado';
+      }
+    }
+  });
+  if(count===0){ alert('No hay facturas pendientes para ese cliente.'); return; }
+  saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+  alert(`Deudas saldadas: ${count} factura(s) · ${money(sum)}.`);
+});
+$('#btnResetGlobal')?.addEventListener('click', ()=>{
+  if(!confirm('Esto marcará TODAS las facturas pendientes como pagadas. ¿Continuar?')) return;
+  let count=0, sum=0;
+  facturas.forEach(f=>{
+    const pend=f.totals?.pendiente||0;
+    if(pend>0){
+      count++; sum+=pend;
+      f.pagos=f.pagos||[]; f.pagos.push({date:todayISO(), amount:pend});
+      f.totals.pagado=(f.totals.pagado||0)+pend;
+      f.totals.pendiente=0; f.estado='pagado';
+    }
+  });
+  if(count===0){ alert('No había pendientes.'); return; }
+  saveFacturas(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+  alert(`Deuda global saldada: ${count} factura(s) · ${money(sum)}.`);
+});
 
 /* ---------- RESUMEN / RENDER ---------- */
 function renderAll(){
@@ -845,17 +892,25 @@ function drawResumen(){ drawKPIs(); }
 
 /* ---------- BOOT ---------- */
 (function boot(){
-  seedClientesIfEmpty();
-  seedProductsIfEmpty();
-  setProviderDefaultsIfEmpty();
+  try{
+    seedClientesIfEmpty();
+    seedProductsIfEmpty();
 
-  const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
+    // proveedor por defecto (tus datos)
+    setProviderDefaultsIfEmpty();
 
-  renderPagosTemp();
-  renderAll(); recalc();
+    // 5 líneas iniciales
+    const tb=$('#lineasBody'); if(tb && tb.children.length===0){ for(let i=0;i<5;i++) addLinea(); }
 
-  window.addEventListener('load', ()=>setTimeout(()=>{ try{
-    populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
-  }catch(e){ console.error('Init error',e); } }, 400));
+    renderPagosTemp();
+    renderAll(); recalc();
+
+    // Verificación inicial tardía (mejora de estabilidad en cargas lentas)
+    window.addEventListener('load', ()=>setTimeout(()=>{ try{
+      populateProductDatalist(); renderProductos(); renderClientesSelect(); renderClientesLista(); renderFacturas(); renderPendientes(); drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); recalc();
+    }catch(e){ console.error('Init error',e); } }, 300));
+  }catch(e){
+    console.error('Boot error', e);
+  }
 })();
 })();
