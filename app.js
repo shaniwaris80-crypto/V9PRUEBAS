@@ -791,21 +791,36 @@ const db = firebase.database();
     facturas.forEach(f=>{ const d=new Date(f.fecha); const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; const b=buckets.find(x=>x.k===k); if(b) b.sum+=(f.totals?.total||0); });
     return buckets;
   }
-  function drawCharts(){
-    if(typeof Chart==='undefined') return;
-    const daily=groupDaily(7); const monthly=groupMonthly(12);
-    if(chart1) chart1.destroy(); if(chart2) chart2.destroy();
-    chart1=new Chart(document.getElementById('chartDiario').getContext('2d'), {
-      type:'bar',
-      data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]},
-      options:{responsive:true, plugins:{legend:{display:false}}}
-    });
-    chart2=new Chart(document.getElementById('chartMensual').getContext('2d'), {
-      type:'line',
-      data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]},
-      options:{responsive:true, plugins:{legend:{display:false}}}
-    });
-  }
+function drawCharts() {
+  if (typeof Chart === 'undefined') return;
+
+  // Destruir instancias previas si existen
+  if (window.chart1) window.chart1.destroy();
+  if (window.chart2) window.chart2.destroy();
+  if (window.chartTop) window.chartTop.destroy();
+
+  const daily = groupDaily(7);
+  const monthly = groupMonthly(12);
+
+  window.chart1 = new Chart(document.getElementById('chartDiario').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: daily.map(d => d.label),
+      datasets: [{ label: 'Ventas diarias', data: daily.map(d => d.sum) }]
+    },
+    options: { responsive: true, plugins: { legend: { display: false } } }
+  });
+
+  window.chart2 = new Chart(document.getElementById('chartMensual').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: monthly.map(d => d.label),
+      datasets: [{ label: 'Ventas mensuales', data: monthly.map(d => d.sum) }]
+    },
+    options: { responsive: true, plugins: { legend: { display: false } } }
+  });
+}
+
 
   function drawTop(){
     if(typeof Chart==='undefined') return;
