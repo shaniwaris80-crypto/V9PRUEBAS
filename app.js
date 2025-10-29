@@ -60,8 +60,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const firebaseConfig = {
     databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app"
   };
+// Evita duplicar inicialización
 const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
+
 
   const syncRef = db.ref('arslan_pro_v104');
 
