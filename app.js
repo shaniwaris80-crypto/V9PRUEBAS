@@ -24,6 +24,23 @@ const firebaseConfig = {
 };
 const appFB = initializeApp(firebaseConfig);
 const db = getDatabase(appFB);
+// ✅ Mostrar estado visual de Firebase
+const statusBox = document.getElementById("firebaseStatus");
+function setStatus(ok){
+  statusBox.textContent = ok ? "🟢 Firebase: conectado" : "🔴 Firebase: desconectado";
+  statusBox.style.background = ok ? "#16a34a" : "#dc2626";
+}
+try {
+  import("https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js")
+  .then(() => {
+    setStatus(true);
+    console.log("✅ Firebase conectado correctamente");
+  })
+  .catch(() => setStatus(false));
+} catch (e) {
+  setStatus(false);
+}
+
 
 // Utilidad de red
 const isOnline = () => navigator.onLine;
