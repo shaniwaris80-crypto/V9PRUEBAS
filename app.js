@@ -1,16 +1,39 @@
-/* =======================================================
-   ARSLAN PRO V10.4 — KIWI Edition (FULL • Firebase TOTAL)
-   - Mantiene TODAS las funciones existentes
-   - Arregla selección de clientes (IDs únicos estables)
-   - Sin duplicados de clientes (merge por nombre + ID)
-   - Sincroniza TODO con Firebase (clientes, productos, facturas, priceHist, meta)
-   - Resúmenes/pendientes/totales se recalculan y suben a /meta
-   - PDF/QR/Charts, pagos parciales, backups… todo igual
-======================================================= */
+/* ===========================================================
+   ARSLAN PRO V10.4 — KIWI Edition (Firebase Secure Sync)
+   - Firebase Auth anónima activada
+   - Seguridad: solo usuarios autenticados (auth != null)
+   - Resto del código sin cambios
+=========================================================== */
 
-/* =======================
-   PARTE 1/3 — CORE + FIREBASE
-   ======================= */
+// --- 🔥 FIREBASE CORE (antes de todo el sistema) ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import { getDatabase, ref, set, get, update } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-analytics.js";
+
+// --- Configuración de tu proyecto ---
+const firebaseConfig = {
+  apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
+  authDomain: "arslan-pro-kiwi.firebaseapp.com",
+  databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "arslan-pro-kiwi",
+  storageBucket: "arslan-pro-kiwi.firebasestorage.app",
+  messagingSenderId: "768704045481",
+  appId: "1:768704045481:web:668acb151a2181368864b8",
+  measurementId: "G-RNWLRLS47Z"
+};
+
+// --- Inicializar Firebase ---
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const analytics = getAnalytics(app);
+
+// --- 🧭 Autenticación anónima automática (segura) ---
+const auth = getAuth();
+signInAnonymously(auth)
+  .then(() => console.log("🔒 Conectado a Firebase (anónimo seguro)"))
+  .catch(err => console.error("❌ Error de login Firebase", err));
+
 (function(){
 "use strict";
 
