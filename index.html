@@ -4,30 +4,43 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARSLAN PRO V10.4 — KIWI Edition</title>
+
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 
-  <!-- Librerías de terceros (gráficas, PDF y QR) -->
+  <!-- Librerías externas (carga única) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
 
-  <!-- Firebase (Compat, sin módulos) para evitar errores de import -->
-<!-- Firebase v9 compat (100% compatible con HTML clásico) -->
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <!-- Firebase compat (sin módulos) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
 
+  <script>
+    // Configuración Firebase (una sola vez)
+    const firebaseConfig = {
+      apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
+      authDomain: "arslan-pro-kiwi.firebaseapp.com",
+      databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "arslan-pro-kiwi",
+      storageBucket: "arslan-pro-kiwi.firebasestorage.app",
+      messagingSenderId: "768704045481",
+      appId: "1:768704045481:web:c20d2e35f41c8a6fd0f1b9"
+    };
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    window.db = firebase.database();
+  </script>
 </head>
 <body>
 
 <header class="topbar">
   <div class="brand">
-    <!-- Logo kiwi incrustado (SVG embebido en data URL, sin archivos externos) -->
+    <!-- Kiwi incrustado (SVG) -->
     <img id="logoApp" alt="KIWI"
-      src="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><defs><radialGradient id='g' cx='50%' cy='50%' r='50%'><stop offset='0%' stop-color='%23d9f99d'/><stop offset='70%' stop-color='%2316a34a'/><stop offset='100%' stop-color='%230a7f39'/></radialGradient></defs><circle cx='48' cy='48' r='44' fill='url(%23g)' stroke='%230a7f39' stroke-width='4'/><circle cx='48' cy='48' r='18' fill='%23fefce8' stroke='%2365a30d' stroke-width='3'/><g fill='%2316a34a'><circle cx='48' cy='32' r='2'/><circle cx='58' cy='36' r='2'/><circle cx='38' cy='36' r='2'/><circle cx='62' cy='46' r='2'/><circle cx='34' cy='46' r='2'/><circle cx='58' cy='58' r='2'/><circle cx='38' cy='58' r='2'/><circle cx='48' cy='64' r='2'/></g><circle cx='48' cy='48' r='3.2' fill='%23111'/></svg>" />
+      src="data:image/svg+xml;utf8,<?xml version='1.0'?><svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><defs><radialGradient id='g' cx='50%' cy='50%' r='50%'><stop offset='0%' stop-color='%23d9f99d'/><stop offset='70%' stop-color='%2316a34a'/><stop offset='100%' stop-color='%230a7f39'/></radialGradient></defs><circle cx='48' cy='48' r='44' fill='url(%23g)' stroke='%230a7f39' stroke-width='4'/><circle cx='48' cy='48' r='18' fill='%23fefce8' stroke='%2365a30d' stroke-width='3'/><g fill='%2316a34a'><circle cx='48' cy='32' r='2'/><circle cx='58' cy='36' r='2'/><circle cx='38' cy='36' r='2'/><circle cx='62' cy='46' r='2'/><circle cx='34' cy='46' r='2'/><circle cx='58' cy='58' r='2'/><circle cx='38' cy='58' r='2'/><circle cx='48' cy='64' r='2'/></g><circle cx='48' cy='48' r='3.2' fill='%23111'/></svg>" />
     <span>ARSLAN PRO <small>V10.4</small></span>
   </div>
-
   <nav class="tabs">
     <button class="tab active" data-tab="factura">Factura</button>
     <button class="tab" data-tab="clientes">Clientes</button>
@@ -37,8 +50,6 @@
     <button class="tab" data-tab="ventas">Ventas</button>
     <button class="tab" data-tab="resumen">Resumen</button>
   </nav>
-
-  <!-- Indicador de sincronización Firebase (se controla desde app.js) -->
   <div class="sync-indicator" id="syncIndicator" title="Sincronización Firebase">
     <span class="dot" id="syncDot"></span><span id="syncText">Sync</span>
   </div>
@@ -80,7 +91,7 @@
         </div>
       </div>
 
-      <!-- Autocompletado de productos -->
+      <!-- Autocompletado -->
       <datalist id="productNamesList"></datalist>
 
       <div class="table-wrap">
@@ -108,23 +119,13 @@
       <div class="card">
         <h3>💶 Totales factura</h3>
 
-        <!-- Transporte 10% (opcional) -->
-        <label class="check">
-          <input type="checkbox" id="chkTransporte" />
-          Añadir transporte 10%
-        </label>
+        <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10%</label>
 
-        <!-- IVA 4% (si se marca, se calcula y NO se muestra el mensaje de “IVA incluido”) -->
-        <label class="check">
-          <input type="checkbox" id="chkIvaAplicado" />
-          Aplicar IVA 4% (no mostrar mensaje “IVA incluido”)
-        </label>
+        <!-- IVA 4% opcional (si se aplica, no se muestra “IVA incluido”) -->
+        <label class="check"><input type="checkbox" id="chkIvaAplicado" /> Aplicar IVA 4% (no mostrar “IVA incluido”)</label>
 
-        <!-- Mensaje alternativo de IVA incluido (solo informativo si NO se aplica IVA 4%) -->
-        <label class="check">
-          <input type="checkbox" id="chkIvaIncluido" checked />
-          IVA 4% incluido (informativo)
-        </label>
+        <!-- Mensaje informativo solo si NO se aplica IVA -->
+        <label class="check"><input type="checkbox" id="chkIvaIncluido" checked /> IVA 4% incluido (informativo)</label>
 
         <div class="totals-grid">
           <div>Subtotal</div><div id="subtotal">0,00 €</div>
@@ -171,13 +172,12 @@
       <button id="btnNueva" class="ghost">🧾 Nueva</button>
     </div>
 
-    <!-- Área PDF (encabezado solo mostrará “FACTURA” y el logo kiwi pequeño) -->
+    <!-- Área PDF -->
     <div id="printArea" class="print">
       <div class="pdf-header">
         <div class="pdf-brand">
-          <!-- Mismo logo incrustado -->
           <img alt="Kiwi"
-            src="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><defs><radialGradient id='g' cx='50%' cy='50%' r='50%'><stop offset='0%' stop-color='%23d9f99d'/><stop offset='70%' stop-color='%2316a34a'/><stop offset='100%' stop-color='%230a7f39'/></radialGradient></defs><circle cx='48' cy='48' r='44' fill='url(%23g)' stroke='%230a7f39' stroke-width='4'/><circle cx='48' cy='48' r='18' fill='%23fefce8' stroke='%2365a30d' stroke-width='3'/><g fill='%2316a34a'><circle cx='48' cy='32' r='2'/><circle cx='58' cy='36' r='2'/><circle cx='38' cy='36' r='2'/><circle cx='62' cy='46' r='2'/><circle cx='34' cy='46' r='2'/><circle cx='58' cy='58' r='2'/><circle cx='38' cy='58' r='2'/><circle cx='48' cy='64' r='2'/></g><circle cx='48' cy='48' r='3.2' fill='%23111'/></svg>" />
+            src="data:image/svg+xml;utf8,<?xml version='1.0'?><svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><defs><radialGradient id='g' cx='50%' cy='50%' r='50%'><stop offset='0%' stop-color='%23d9f99d'/><stop offset='70%' stop-color='%2316a34a'/><stop offset='100%' stop-color='%230a7f39'/></radialGradient></defs><circle cx='48' cy='48' r='44' fill='url(%23g)' stroke='%230a7f39' stroke-width='4'/><circle cx='48' cy='48' r='18' fill='%23fefce8' stroke='%2365a30d' stroke-width='3'/><g fill='%2316a34a'><circle cx='48' cy='32' r='2'/><circle cx='58' cy='36' r='2'/><circle cx='38' cy='36' r='2'/><circle cx='62' cy='46' r='2'/><circle cx='34' cy='46' r='2'/><circle cx='58' cy='58' r='2'/><circle cx='38' cy='58' r='2'/><circle cx='48' cy='64' r='2'/></g><circle cx='48' cy='48' r='3.2' fill='%23111'/></svg>" />
           <div>
             <h2>FACTURA</h2>
             <div id="p-prov"></div>
@@ -214,9 +214,6 @@
         </div>
       </div>
 
-      <!-- Este pie de página se actualizará desde app.js:
-           - Si “Aplicar IVA 4%” está activo → NO se muestra el mensaje de “IVA incluido”.
-           - Si NO está activo y está marcado “IVA incluido (informativo)” → se muestra el mensaje. -->
       <div class="pdf-foot" id="pdf-foot-note">IVA incluido en los precios.</div>
     </div>
 
@@ -364,31 +361,8 @@
   </section>
 
 </main>
-<!-- Firebase compat SDKs (v9) -->
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
 
-<script>
-  const firebaseConfig = {
-    apiKey: "AIzaSyC5w6I_hK3f-Nz0Mp09Or3VESmaD_c5dm0",
-    authDomain: "arslan-pro-kiwi.firebaseapp.com",
-    databaseURL: "https://arslan-pro-kiwi-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "arslan-pro-kiwi",
-    storageBucket: "arslan-pro-kiwi.firebasestorage.app",
-    messagingSenderId: "768704045481",
-    appId: "1:768704045481:web:c20d2e35f41c8a6fd0f1b9"
-  };
-
-  // Evita inicialización duplicada
-  if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
-  }
-</script>
-
-
-<!-- Tu app principal -->
-<script src="app.js"></script>
-
+<!-- Script principal (carga única) -->
 <script src="app.js"></script>
 </body>
 </html>
