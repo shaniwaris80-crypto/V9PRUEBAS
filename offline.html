@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ARSLAN PRO — Sin conexión</title>
+  <style>
+    body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+         margin:0; padding:2rem; display:grid; place-items:center; min-height:100vh; background:#f6f8fb; color:#0f172a}
+    .card{max-width:560px; background:#fff; padding:1.5rem 1.25rem; border-radius:16px; box-shadow:0 10px 24px rgba(2,6,23,.08)}
+    h1{margin:0 0 .25rem;font-size:1.4rem}
+    p{margin:.25rem 0 .75rem; color:#334155}
+    .hint{font-size:.9rem; color:#475569}
+    button{padding:.6rem 1rem; border:1px solid #e2e8f0; border-radius:12px; background:#16a34a; color:#fff; cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Estás sin conexión</h1>
+    <p>ARSLAN PRO puede funcionar offline si has abierto la app antes. Revisa tu conexión y vuelve a intentarlo.</p>
+    <p class="hint">Los datos locales (clientes, productos, facturas) se guardan en tu navegador. Al recuperar la conexión, se sincronizarán si activas la opción de sincronización.</p>
+    <button onclick="location.reload()">Reintentar</button>
+  </div>
+</body>
+</html>
