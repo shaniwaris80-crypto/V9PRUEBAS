@@ -1,0 +1,21 @@
+{
+  "name": "ARSLAN PRO KIWI Edition",
+  "short_name": "ARSLAN PRO",
+  "description": "Gestión y facturación de frutas y verduras - ARSLAN PRO V10.4 KIWI Edition",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "icons": [
+    {
+      "src": "logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
