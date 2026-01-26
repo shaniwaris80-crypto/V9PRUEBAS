@@ -1,405 +1,209 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#16a34a" />
-  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1, viewport-fit=cover" />
+  <title>ARSLAN • FACTURAS RÁPIDAS (AUTO VOCAB)</title>
 
-  <!-- 📦 PWA -->
-  <link rel="manifest" href="manifest.json">
-  <link rel="icon" type="image/png" sizes="512x512" href="logo.png">
-  <link rel="apple-touch-icon" href="logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
 
-  <!-- 🖋️ Fuentes y estilos -->
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
-<button id="btnSyncSupabase">🔄 Sync Supabase</button>
+  <!-- PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
-  <!-- 📊 Librerías -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <!-- XLSX (export/import opcional) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-  <!-- ⚙️ Registro del Service Worker -->
-  <script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', async () => {
-      try {
-        const reg = await navigator.serviceWorker.register('/fruit/sw.js');
-        console.log('✅ Service Worker registrado en:', reg.scope);
-      } catch (err) {
-        console.warn('⚠️ Error registrando Service Worker:', err);
-      }
-    });
-  }
-  </script>
+  <link rel="stylesheet" href="./style.css" />
 </head>
 
 <body>
-<header class="topbar">
-  <div class="brand">
-    <span>ARSLAN PRO <small>V10.4</small></span>
-  </div>
-  <nav class="tabs">
-    <button class="tab active" data-tab="factura">Factura</button>
-    <button class="tab" data-tab="clientes">Clientes</button>
-    <button class="tab" data-tab="facturas">Facturas</button>
-    <button class="tab" data-tab="productos">Productos</button>
-    <button class="tab" data-tab="pendientes">Pendientes</button>
-    <button class="tab" data-tab="ventas">Ventas</button>
-    <button class="tab" data-tab="resumen">Resumen</button>
-  </nav>
-</header>
+  <div class="app">
 
-<main class="container">
-
-  <!-- ========== FACTURA ========== -->
-  <section class="panel active" data-tab-panel="factura">
-    <div class="grid2">
-      <div class="card">
-        <h3>Proveedor</h3>
-        <input id="provNombre" placeholder="Nombre proveedor" />
-        <input id="provNif" placeholder="NIF/CIF" />
-        <input id="provDir" placeholder="Dirección" />
-        <input id="provTel" placeholder="Teléfono" />
-        <input id="provEmail" placeholder="Email" />
-      </div>
-      <div class="card">
-        <h3>Cliente</h3>
-        <select id="selCliente"></select>
-        <input id="cliNombre" placeholder="Nombre cliente" />
-        <input id="cliNif" placeholder="NIF/CIF" />
-        <input id="cliDir" placeholder="Dirección" />
-        <input id="cliTel" placeholder="Teléfono" />
-        <input id="cliEmail" placeholder="Email" />
-        <div class="row">
-          <button id="btnNuevoCliente" class="ghost">Abrir listado</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="title-row">
-        <h3>Cuadro de cálculo</h3>
-        <div class="row">
-          <button id="btnAddLinea">+ Añadir línea</button>
-          <button id="btnVaciarLineas" class="ghost">Vaciar</button>
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="kiwi"></div>
+        <div class="brandText">
+          <div class="title">ARSLAN • FACTURAS RÁPIDAS</div>
+          <div class="sub">Autocompletar real desde tu vocabulario ARSLAN LISTAS ✅</div>
         </div>
       </div>
 
-      <datalist id="productNamesList"></datalist>
-
-      <div class="table-wrap">
-        <table class="calc-table">
-          <thead>
-            <tr>
-              <th>Producto</th>
-              <th>Modo</th>
-              <th>Cant.</th>
-              <th>Bruto (kg)</th>
-              <th>Tara (kg)</th>
-              <th>Neto (kg)</th>
-              <th>Precio</th>
-              <th>Origen</th>
-              <th>Importe</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="lineasBody"></tbody>
-        </table>
+      <div class="topActions">
+        <button class="btn ghost" id="btnTheme" title="Modo claro/oscuro">🌗</button>
+        <button class="btn ghost" id="btnHelp" title="Atajos y ayuda">❔</button>
       </div>
-    </div>
+    </header>
 
-    <div class="grid3">
-      <div class="card">
-        <h3>💶 Totales factura</h3>
-        <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10%</label>
-        <label class="check"><input type="checkbox" id="chkIvaIncluido" checked /> IVA 4% incluido</label>
+    <!-- MAIN GRID -->
+    <main class="grid">
 
-        <div class="totals-grid">
-          <div>Subtotal</div><div id="subtotal">0,00 €</div>
-          <div>Transporte</div><div id="transp">0,00 €</div>
-          <div>IVA (4%)</div><div id="iva">0,00 €</div>
-          <div class="big">TOTAL</div><div class="big" id="total">0,00 €</div>
-        </div>
-        <button id="btnSumarIVA" class="ghost" style="margin-top:8px;">➕ Añadir 4 % IVA al total</button>
-      </div>
+      <!-- PANEL IZQUIERDO -->
+      <section class="card">
+        <div class="cardTitle">Datos de factura</div>
 
-      <div class="card">
-        <h3>Pagos</h3>
-        <div class="row">
-          <input id="inpPagoParcial" type="number" step="0.01" placeholder="Importe parcial" />
-          <button id="btnAddPago" class="ghost">+ Añadir pago</button>
-        </div>
-        <div id="listaPagos" class="list small"></div>
-        <label class="mt8">Pagado manual
-          <input id="pagado" type="number" step="0.01" />
-        </label>
-        <label>Estado
-          <select id="estado">
-            <option value="pendiente">Impagada</option>
-            <option value="parcial">Parcial</option>
-            <option value="pagado">Pagada</option>
-          </select>
-        </label>
-        <label>Método
-          <select id="metodoPago">
-            <option>Efectivo</option>
-            <option>Tarjeta</option>
-            <option>Transferencia</option>
-          </select>
-        </label>
-        <div class="pendiente">Pendiente: <strong id="pendiente">0,00 €</strong></div>
-      </div>
+        <div class="formGrid">
+          <div class="field">
+            <label>Nº Factura</label>
+            <input id="invNumber" class="input" type="text" placeholder="FA-202601261530" />
+            <div class="hint">Auto si lo dejas vacío</div>
+          </div>
 
-      <div class="card">
-        <h3>Observaciones</h3>
-        <textarea id="observaciones" rows="6" placeholder="Notas, condiciones, etc."></textarea>
-      </div>
-    </div>
+          <div class="field">
+            <label>Fecha</label>
+            <input id="invDate" class="input" type="date" />
+          </div>
 
-    <div class="row actions">
-      <button id="btnGuardar">💾 Guardar</button>
-      <button id="btnImprimir">🖨️ Generar PDF</button>
-      <button id="btnNueva" class="ghost">🧾 Nueva</button>
-    </div>
+          <div class="field">
+            <label>Cliente</label>
+            <input id="invClient" class="input" type="text" placeholder="RIVIERA / GOLDEN / etc..." />
+          </div>
 
-    <div id="printArea" class="print">
-      <div class="pdf-header">
-        <div class="pdf-brand">
-          <svg id="pdf-kiwi" width="42" height="42" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="45" fill="#9acd32" stroke="#5a7f1a" stroke-width="6"></circle>
-            <circle cx="50" cy="50" r="24" fill="#fff" stroke="#7fbf3f" stroke-width="5"></circle>
-            <g fill="#2b2b2b">
-              <circle cx="50" cy="28" r="3"></circle>
-              <circle cx="64" cy="32" r="3"></circle>
-              <circle cx="72" cy="45" r="3"></circle>
-              <circle cx="36" cy="32" r="3"></circle>
-              <circle cx="28" cy="45" r="3"></circle>
-              <circle cx="50" cy="72" r="3"></circle>
-              <circle cx="36" cy="68" r="3"></circle>
-              <circle cx="64" cy="68" r="3"></circle>
-            </g>
-          </svg>
-          <div>
-            <h2 id="pdf-title">FACTURA</h2>
-            <div id="p-prov"></div>
+          <div class="field">
+            <label>Notas</label>
+            <textarea id="invNotes" class="input area" placeholder="Observaciones..."></textarea>
           </div>
         </div>
-        <div class="pdf-meta">
-          <div><span>Nº:</span> <strong id="p-num"></strong></div>
-          <div><span>Fecha:</span> <strong id="p-fecha"></strong></div>
-          <div><span>Cliente:</span><div id="p-cli"></div></div>
-          <canvas id="p-qr" width="92" height="92"></canvas>
-        </div>
-      </div>
 
-      <table id="p-tabla">
-        <thead>
-          <tr><th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-
-      <div class="pdf-totales">
-        <div>
-          <div>Subtotal: <strong id="p-sub">0,00 €</strong></div>
-          <div>Transporte: <strong id="p-tra">0,00 €</strong></div>
-          <div>IVA (4%): <strong id="p-iva">0,00 €</strong></div>
-          <div class="big">Total: <strong id="p-tot">0,00 €</strong></div>
-        </div>
-        <div>
-          <div>Estado: <strong id="p-estado">Impagada</strong></div>
-          <div>Método: <strong id="p-metodo">Efectivo</strong></div>
-          <div>Obs.: <span id="p-obs">—</span></div>
-        </div>
-      </div>
-      <div class="pdf-foot" id="pdf-foot-note">IVA incluido en los precios.</div>
-    </div>
-  </section>
-  <!-- ========== CLIENTES ========== -->
-  <section class="panel" data-tab-panel="clientes">
-    <div class="card">
-      <div class="title-row">
-        <h3>Clientes</h3>
         <div class="row">
-          <input id="buscarCliente" class="search" placeholder="Buscar cliente…" />
-          <button id="btnAddCliente">+ Añadir</button>
-          <button id="btnExportClientes" class="ghost">⤓ Exportar</button>
-          <button id="btnImportClientes" class="ghost">⤒ Importar</button>
+          <button class="btn" id="btnNew">➕ Nueva</button>
+          <button class="btn soft" id="btnSave">💾 Guardar</button>
+          <button class="btn ghost" id="btnClear">🧹 Limpiar</button>
         </div>
-      </div>
-      <div id="listaClientes" class="list"></div>
-    </div>
-  </section>
 
-  <!-- ========== FACTURAS ========== -->
-  <section class="panel" data-tab-panel="facturas">
-    <div class="card">
-      <div class="title-row">
-        <h3>Facturas</h3>
+        <div class="divider"></div>
+
+        <div class="cardTitle">Pegar lista rápida</div>
+        <div class="hint">
+          Pega líneas tipo:
+          <span class="chip">3 TOMATE PERA</span>
+          <span class="chip">2 LIMÓN</span>
+          <span class="chip">1,5 KILO JENGIBRE</span>
+          <br/>
+          También vale: <span class="chip">TOMATE PERA</span> (cantidad 1)
+        </div>
+
+        <textarea id="bulkBox" class="input area bulk" placeholder="Pega aquí tu lista..."></textarea>
         <div class="row">
-          <select id="filtroEstado">
-            <option value="todas">Todas</option>
-            <option value="pendiente">Impagadas</option>
-            <option value="parcial">Parciales</option>
-            <option value="pagado">Pagadas</option>
-          </select>
-          <input id="buscaCliente" class="search" placeholder="Buscar por cliente…" />
-          <button id="btnExportFacturas" class="ghost">⤓ Exportar</button>
-          <button id="btnImportFacturas" class="ghost">⤒ Importar</button>
+          <button class="btn" id="btnBulk">⚡ Insertar filas</button>
+          <button class="btn ghost" id="btnBulkClear">🗑️ Vaciar</button>
         </div>
-      </div>
-      <div id="listaFacturas" class="list"></div>
-    </div>
-  </section>
 
-  <!-- ========== PRODUCTOS ========== -->
-  <section class="panel" data-tab-panel="productos">
-    <div class="card">
-      <div class="title-row">
-        <h3>Productos</h3>
+        <div class="divider"></div>
+
+        <div class="cardTitle">Totales</div>
+        <div class="totals">
+          <div class="totRow">
+            <span>Subtotal</span>
+            <b id="tSubtotal">0,00 €</b>
+          </div>
+          <div class="totRow">
+            <span>IVA (%)</span>
+            <div class="inline">
+              <input id="invVat" class="input mini" type="number" inputmode="decimal" step="0.01" value="4" />
+              <span class="muted">%</span>
+            </div>
+          </div>
+          <div class="totRow">
+            <span>IVA €</span>
+            <b id="tVat">0,00 €</b>
+          </div>
+          <div class="totRow grand">
+            <span>TOTAL</span>
+            <b id="tTotal">0,00 €</b>
+          </div>
+        </div>
+
         <div class="row">
-          <input id="buscarProducto" class="search" placeholder="Buscar producto…" />
-          <button id="btnAddProducto">+ Añadir</button>
-          <button id="btnExportProductos" class="ghost">⤓ Exportar</button>
-          <button id="btnImportProductos" class="ghost">⤒ Importar</button>
+          <button class="btn" id="btnPDF">📄 PDF</button>
+          <button class="btn soft" id="btnWA">📲 WhatsApp</button>
         </div>
-      </div>
-      <div id="listaProductos" class="listaProductos"></div>
-    </div>
-  </section>
 
-  <!-- ========== PENDIENTES ========== -->
-  <section class="panel" data-tab-panel="pendientes">
-    <div class="card">
-      <div class="title-row">
-        <h3>Deudas por cliente</h3>
+        <div class="divider"></div>
+
+        <div class="cardTitle">Historial</div>
+        <div class="hint">Guarda y luego podrás cargar / exportar / borrar.</div>
+
         <div class="row">
-          <button id="btnResetCliente" class="ghost">Reset deudas del cliente actual</button>
-          <button id="btnResetGlobal" class="ghost">Reset deudas global</button>
+          <button class="btn ghost" id="btnExport">⬇️ Export JSON</button>
+          <label class="btn ghost fileBtn">
+            ⬆️ Import JSON
+            <input id="importFile" type="file" accept="application/json" />
+          </label>
+        </div>
+
+        <div id="history" class="history"></div>
+      </section>
+
+      <!-- PANEL DERECHO -->
+      <section class="card wide">
+        <div class="cardTitle">Líneas de factura</div>
+
+        <div class="hint">
+          ✅ <b>Enter</b> = siguiente campo • ✅ Enter en precio al final = <b>nueva fila</b> •
+          ✅ <b>Ctrl + Enter</b> = nueva fila • ✅ <b>Alt + Supr</b> = borrar fila
+        </div>
+
+        <div class="tableWrap">
+          <table class="table" id="linesTable">
+            <thead>
+              <tr>
+                <th class="colDel"></th>
+                <th class="colName">Producto</th>
+                <th class="colQty">Cant.</th>
+                <th class="colPrice">Precio</th>
+                <th class="colUnit">Unidad</th>
+                <th class="colTotal">Total</th>
+              </tr>
+            </thead>
+            <tbody id="linesBody"></tbody>
+          </table>
+        </div>
+
+        <div class="row end">
+          <button class="btn" id="btnAddLine">➕ Añadir fila</button>
+          <button class="btn ghost" id="btnResetLines">↩️ Reset filas</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="cardTitle">Vista rápida (resumen)</div>
+        <pre class="preview" id="preview"></pre>
+
+      </section>
+    </main>
+
+  </div>
+
+  <!-- MODAL AYUDA -->
+  <div class="modal" id="modalHelp">
+    <div class="modalCard">
+      <div class="modalHead">
+        <b>Atajos</b>
+        <button class="btn ghost" id="btnCloseHelp">✖</button>
+      </div>
+
+      <div class="modalBody">
+        <ul class="list">
+          <li><b>Enter</b> → pasa al siguiente campo</li>
+          <li><b>Enter</b> en precio (última fila) → crea nueva fila</li>
+          <li><b>Ctrl + Enter</b> → nueva fila en cualquier sitio</li>
+          <li><b>Alt + Supr</b> → borra fila actual</li>
+          <li><b>Flechas ↑ ↓</b> en producto → navega sugerencias</li>
+          <li><b>Enter</b> con sugerencia → selecciona producto</li>
+        </ul>
+
+        <div class="hint">
+          El autocompletar carga automáticamente el vocabulario si tu app de LISTAS y esta de FACTURAS están en el mismo dominio:
+          <span class="chip">shaniwaris80-crypto.github.io</span>
         </div>
       </div>
-      <table class="calc-table" id="tblPendientes">
-        <thead>
-          <tr>
-            <th>Cliente</th>
-            <th>Nº facturas pendientes</th>
-            <th>Total pendiente</th>
-            <th>Última factura</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <div class="pendiente total">Total pendiente global: <strong id="resGlobal">0,00 €</strong></div>
     </div>
-  </section>
+  </div>
 
-  <!-- ========== VENTAS ========== -->
-  <section class="panel" data-tab-panel="ventas">
-    <div class="grid2">
-      <div class="card">
-        <h3>Totales globales</h3>
-        <div class="kpis">
-          <div class="kpi"><span>Hoy</span><strong id="vHoy">0,00 €</strong></div>
-          <div class="kpi"><span>Semana</span><strong id="vSemana">0,00 €</strong></div>
-          <div class="kpi"><span>Mes</span><strong id="vMes">0,00 €</strong></div>
-          <div class="kpi"><span>Total</span><strong id="vTotal">0,00 €</strong></div>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Top 10 productos (total €)</h3>
-        <canvas id="chartTop" height="160"></canvas>
-      </div>
-    </div>
-
-    <div class="grid2">
-      <div class="card">
-        <h3>Ventas diarias (7 días)</h3>
-        <canvas id="chartDiario" height="140"></canvas>
-      </div>
-      <div class="card">
-        <h3>Ventas mensuales (12 meses)</h3>
-        <canvas id="chartMensual" height="140"></canvas>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="title-row">
-        <h3>Detalle por cliente</h3>
-        <div class="row">
-          <input id="ventasFiltroMes" type="month" />
-          <button id="btnExportVentas" class="ghost">📤 Exportar CSV</button>
-        </div>
-      </div>
-      <table class="calc-table" id="tblVentasCliente">
-        <thead>
-          <tr><th>Cliente</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ========== RESUMEN ========== -->
-  <section class="panel" data-tab-panel="resumen">
-    <div class="card">
-      <h3>Resumen rápido</h3>
-      <div class="kpis">
-        <div class="kpi"><span>Hoy</span><strong id="rHoy">0,00 €</strong></div>
-        <div class="kpi"><span>Semana</span><strong id="rSemana">0,00 €</strong></div>
-        <div class="kpi"><span>Mes</span><strong id="rMes">0,00 €</strong></div>
-        <div class="kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
-      </div>
-      <div class="row actions mt8">
-        <button id="btnBackup">Backup</button>
-        <button id="btnRestore" class="ghost">Restaurar</button>
-      </div>
-    </div>
-  </section>
-
-</main>
-
-<!-- 📲 BOTÓN INSTALAR APP -->
-<button id="installBtn" style="
-  position:fixed;
-  bottom:15px;
-  right:15px;
-  background:#16a34a;
-  color:white;
-  padding:10px 18px;
-  border:none;
-  border-radius:12px;
-  font-weight:600;
-  box-shadow:0 3px 8px rgba(0,0,0,0.25);
-  display:none;
-  z-index:9999;">
-  📲 Instalar App
-</button>
-
-<!-- 📲 Script instalación PWA -->
-<script>
-let deferredPrompt;
-window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault();
-  deferredPrompt = e;
-  document.getElementById('installBtn').style.display = 'block';
-});
-document.getElementById('installBtn').addEventListener('click', async () => {
-  if (deferredPrompt) {
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`📲 Instalación: ${outcome}`);
-    deferredPrompt = null;
-    document.getElementById('installBtn').style.display = 'none';
-  }
-});
-</script>
-
-<!-- 🔌 SUPABASE + APP -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@1.35.6"></script>
-<script src="app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
