@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>ARSLAN • FACTURAS KIWI PRO (V3.1 Items + IVA4 + Cloud PDF)</title>
+  <title>ARSLAN • FACTURAS KIWI ULTRA PRO (V3.2)</title>
 
   <!-- Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 
   <!-- Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -32,7 +32,7 @@
         <div class="kiwi-dot"></div>
         <div class="brand-text">
           <div class="brand-title">ARSLAN</div>
-          <div class="brand-sub">FACTURAS • KIWI PRO</div>
+          <div class="brand-sub">KIWI • ULTRA PRO</div>
         </div>
       </div>
 
@@ -73,7 +73,7 @@
         </div>
 
         <div class="version">
-          <span>V3.1</span> · <span class="kiwi">Items + IVA4 + Cloud PDF</span>
+          <span>V3.2</span> · <span class="kiwi">Ultra PRO</span>
         </div>
       </div>
     </aside>
@@ -94,7 +94,7 @@
         <div class="topbar-right">
           <div class="searchbox">
             <i data-lucide="search"></i>
-            <input id="globalSearch" type="text" placeholder="Buscar factura, cliente, número…" autocomplete="off" />
+            <input id="globalSearch" type="text" placeholder="Buscar factura, cliente, tag, importe…" autocomplete="off" />
           </div>
 
           <button class="btn primary" id="btnNewInvoice">
@@ -107,7 +107,6 @@
         </div>
       </header>
 
-      <!-- Content -->
       <section class="content">
 
         <!-- DASHBOARD -->
@@ -129,16 +128,16 @@
               <div class="kpi-sub" id="kpiMonthCount">0 facturas</div>
             </div>
             <div class="card kpi">
-              <div class="kpi-label">Pendiente</div>
-              <div class="kpi-value" id="kpiPending">0,00 €</div>
-              <div class="kpi-sub" id="kpiPendingCount">0 facturas</div>
+              <div class="kpi-label">Beneficio (Mes)</div>
+              <div class="kpi-value" id="kpiProfitMonth">0,00 €</div>
+              <div class="kpi-sub" id="kpiProfitHint">Ingresos - Gastos</div>
             </div>
           </div>
 
           <div class="grid-two">
             <div class="card">
               <div class="card-header">
-                <div class="card-title">Evolución (últimos 30 días)</div>
+                <div class="card-title">Evolución ingresos (últimos 30 días)</div>
                 <div class="card-actions">
                   <button class="btn tiny" id="btnRefreshChart"><i data-lucide="refresh-cw"></i></button>
                 </div>
@@ -154,6 +153,26 @@
               </div>
               <div class="card-body">
                 <div class="list" id="topClients"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-two">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Ingresos vs Gastos (12 meses)</div>
+              </div>
+              <div class="card-body">
+                <canvas id="chartPL"></canvas>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Top Tags (mes actual)</div>
+              </div>
+              <div class="card-body">
+                <div class="list" id="topTags"></div>
               </div>
             </div>
           </div>
@@ -188,10 +207,10 @@
                     <th>Fecha</th>
                     <th>Nº</th>
                     <th>Cliente</th>
-                    <th>Tag</th>
+                    <th>Tags</th>
                     <th>Total</th>
                     <th>Estado</th>
-                    <th style="width:270px">Acciones</th>
+                    <th style="width:340px">Acciones</th>
                   </tr>
                 </thead>
                 <tbody id="invoiceTable"></tbody>
@@ -234,19 +253,30 @@
           <div class="grid-two">
             <div class="card">
               <div class="card-header">
-                <div class="card-title">Ingresos por mes (últimos 12)</div>
+                <div class="card-title">Contabilidad avanzada (P&L)</div>
+                <div class="card-actions">
+                  <button class="btn tiny primary" id="btnNewExpense">
+                    <i data-lucide="plus"></i> Gasto
+                  </button>
+                </div>
               </div>
               <div class="card-body">
-                <canvas id="chartMonths"></canvas>
-              </div>
-            </div>
+                <div class="pl-grid">
+                  <div class="pl-box">
+                    <div class="pl-label">Ingresos (rango)</div>
+                    <div class="pl-value" id="plIncome">0,00 €</div>
+                  </div>
+                  <div class="pl-box">
+                    <div class="pl-label">Gastos (rango)</div>
+                    <div class="pl-value" id="plExpense">0,00 €</div>
+                  </div>
+                  <div class="pl-box big">
+                    <div class="pl-label">Beneficio (rango)</div>
+                    <div class="pl-value" id="plProfit">0,00 €</div>
+                  </div>
+                </div>
 
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Ranking por clientes (rango)</div>
-              </div>
-              <div class="card-body">
-                <div class="row two">
+                <div class="row two mt">
                   <div>
                     <label class="label">Desde</label>
                     <input type="date" id="repFrom" class="input" />
@@ -256,20 +286,50 @@
                     <input type="date" id="repTo" class="input" />
                   </div>
                 </div>
-                <button class="btn primary full" id="btnRunReport">
+
+                <button class="btn primary full mt" id="btnRunReport">
                   <i data-lucide="sparkles"></i> Generar reporte
                 </button>
-                <div class="list mt" id="rankClients"></div>
+
+                <div class="grid-two mt">
+                  <div>
+                    <div class="muted strong">Ranking Clientes</div>
+                    <div class="list mt" id="rankClients"></div>
+                  </div>
+                  <div>
+                    <div class="muted strong">Ranking Tags</div>
+                    <div class="list mt" id="rankTags"></div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="muted strong">Listado de Gastos (rango)</div>
+                <div class="table-wrap mt">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Fecha</th>
+                        <th>Proveedor</th>
+                        <th>Categoría</th>
+                        <th>Concepto</th>
+                        <th>Importe</th>
+                        <th style="width:160px">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody id="expenseTable"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">Totales por Tag (rango)</div>
-            </div>
-            <div class="card-body">
-              <div class="list" id="rankTags"></div>
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Ingresos por mes (últimos 12)</div>
+              </div>
+              <div class="card-body">
+                <canvas id="chartMonths"></canvas>
+              </div>
             </div>
           </div>
         </div>
@@ -289,7 +349,7 @@
                   </label>
                   <div>
                     <div class="strong">Activar Nube</div>
-                    <div class="muted">Guarda y sincroniza datos + PDFs</div>
+                    <div class="muted">Sincroniza clientes + facturas + PDFs PRO</div>
                   </div>
                 </div>
 
@@ -300,7 +360,18 @@
                   </label>
                   <div>
                     <div class="strong">Auto-subir PDF</div>
-                    <div class="muted">Al crear/editar factura, sube el PDF automáticamente</div>
+                    <div class="muted">Al guardar factura, sube el PDF automáticamente</div>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <label class="switch">
+                    <input type="checkbox" id="togglePdfCache" checked />
+                    <span class="slider"></span>
+                  </label>
+                  <div>
+                    <div class="strong">Cache PDF local</div>
+                    <div class="muted">Permite abrir facturas PDF aunque falle internet</div>
                   </div>
                 </div>
 
@@ -310,7 +381,7 @@
                 </div>
 
                 <div class="note">
-                  💡 Para usar nube: pega tu Firebase config en <b>app.js</b>.
+                  💡 Pega tu Firebase config en <b>app.js</b> (config + storage).
                 </div>
               </div>
             </div>
@@ -326,19 +397,6 @@
                 <div class="note">
                   ✅ Importar hace <b>merge inteligente</b> y evita duplicados.
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">Atajos</div>
-            </div>
-            <div class="card-body">
-              <div class="kbd-grid">
-                <div class="kbd-item"><span>Ctrl + N</span><small>Nueva factura</small></div>
-                <div class="kbd-item"><span>Ctrl + S</span><small>Guardar factura (en editor)</small></div>
-                <div class="kbd-item"><span>Esc</span><small>Cerrar modales</small></div>
               </div>
             </div>
           </div>
@@ -369,8 +427,8 @@
       </div>
       <div class="modal-body">
         <div class="note">
-          ✅ Nube guarda: clientes, facturas y PDFs. <br>
-          ✅ Al entrar sincroniza y podrás abrir PDFs históricos.
+          ✅ Nube guarda: clientes, facturas, gastos y PDFs. <br>
+          ✅ Podrás abrir PDFs históricos desde cualquier dispositivo.
         </div>
 
         <label class="label">Email</label>
@@ -379,7 +437,7 @@
         <label class="label">Password</label>
         <input class="input" id="cloudPass" type="password" placeholder="••••••••" />
 
-        <div class="row gap">
+        <div class="row gap mt">
           <button class="btn primary full" id="btnCloudSignIn">
             <i data-lucide="log-in"></i> Entrar
           </button>
@@ -416,10 +474,8 @@
 
         <div class="row two mt">
           <div>
-            <label class="label">Tag (opcional)</label>
-            <select class="select" id="invTag">
-              <option value="">— Sin tag —</option>
-            </select>
+            <label class="label">Tags (multi) — separados por coma</label>
+            <input class="input" id="invTags" placeholder="Centro, Severo, Tomillares" />
           </div>
           <div>
             <label class="label">Estado</label>
@@ -432,15 +488,16 @@
 
         <!-- ITEMS -->
         <div class="items-head">
-          <div class="items-title">📦 Productos (tabla factura)</div>
-          <button class="btn tiny primary" id="btnAddItem">
-            <i data-lucide="plus"></i> Añadir
-          </button>
+          <div class="items-title">📦 Productos inteligentes</div>
+          <div class="items-actions">
+            <button class="btn tiny" id="btnSmartFillBox"><i data-lucide="package"></i> Caja Fija</button>
+            <button class="btn tiny primary" id="btnAddItem">
+              <i data-lucide="plus"></i> Añadir
+            </button>
+          </div>
         </div>
 
-        <div class="items-grid" id="itemsGrid">
-          <!-- rows -->
-        </div>
+        <div class="items-grid" id="itemsGrid"></div>
 
         <div class="items-totals">
           <div class="tot-line">
@@ -454,20 +511,21 @@
           </div>
         </div>
 
-        <label class="label">Notas factura</label>
+        <label class="label">Notas</label>
         <input type="text" class="input" id="invNotes" placeholder="Observaciones (opcional)..." />
 
         <div class="row gap mt">
-          <button class="btn" id="btnInvPDFLocal"><i data-lucide="file-down"></i> PDF (Local)</button>
+          <button class="btn" id="btnInvPDFLocal"><i data-lucide="file-down"></i> PDF</button>
           <button class="btn" id="btnInvPDFCloud"><i data-lucide="cloud-upload"></i> PDF + Nube</button>
           <button class="btn ghost" id="btnInvViewPDF" disabled><i data-lucide="eye"></i> Ver PDF</button>
+          <button class="btn" id="btnInvWhatsApp"><i data-lucide="message-circle"></i> WhatsApp</button>
         </div>
 
         <div class="divider"></div>
 
         <div class="row gap">
           <button class="btn primary full" id="btnInvSave">
-            <i data-lucide="save"></i> Guardar factura
+            <i data-lucide="save"></i> Guardar
           </button>
           <button class="btn full" id="btnInvDuplicate">
             <i data-lucide="copy"></i> Duplicar
@@ -475,8 +533,7 @@
         </div>
 
         <div class="note">
-          ✅ Tabla completa (kg/caja/ud), tara, origen, IVA 4%. <br>
-          ✅ Guardar actualiza Gestión + Contabilidad + (PDF nube si AutoPDF ON).
+          ✅ Caja fija + tara + neto automático. ✅ Precio por kg o unidad. ✅ Tags múltiples. ✅ PDF nube + WhatsApp.
         </div>
       </div>
     </div>
@@ -505,12 +562,63 @@
         <label class="label">Teléfono (opcional)</label>
         <input class="input" id="cliPhone" type="text" placeholder="600000000" />
 
-        <label class="label">Tags (separados por coma)</label>
+        <label class="label">Tags cliente (coma)</label>
         <input class="input" id="cliTags" type="text" placeholder="Centro, Severo, Edificio" />
 
         <div class="row gap mt">
           <button class="btn primary full" id="btnCliSave"><i data-lucide="save"></i> Guardar</button>
           <button class="btn danger full" id="btnCliDelete"><i data-lucide="trash-2"></i> Eliminar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Expense Editor -->
+  <div class="modal hidden" id="modalExpense">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title" id="expModalTitle">🧾 Nuevo gasto</div>
+        <button class="icon-btn" data-close="modalExpense"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="row two">
+          <div>
+            <label class="label">Fecha</label>
+            <input type="date" class="input" id="expDate" />
+          </div>
+          <div>
+            <label class="label">Importe (€)</label>
+            <input type="number" step="0.01" class="input" id="expAmount" placeholder="0.00" />
+          </div>
+        </div>
+
+        <label class="label">Proveedor</label>
+        <input class="input" id="expVendor" placeholder="Montenegro / Esmo / Alquiler..." />
+
+        <div class="row two mt">
+          <div>
+            <label class="label">Categoría</label>
+            <select class="select" id="expCat">
+              <option value="COMPRA">COMPRA</option>
+              <option value="ALQUILER">ALQUILER</option>
+              <option value="GASOLINA">GASOLINA</option>
+              <option value="SUELDOS">SUELDOS</option>
+              <option value="GESTORIA">GESTORIA</option>
+              <option value="OTROS">OTROS</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Concepto</label>
+            <input class="input" id="expConcept" placeholder="Factura proveedor / gasto..." />
+          </div>
+        </div>
+
+        <label class="label">Notas</label>
+        <input class="input" id="expNotes" placeholder="Opcional..." />
+
+        <div class="row gap mt">
+          <button class="btn primary full" id="btnExpSave"><i data-lucide="save"></i> Guardar gasto</button>
+          <button class="btn danger full" id="btnExpDelete"><i data-lucide="trash-2"></i> Eliminar</button>
         </div>
       </div>
     </div>
