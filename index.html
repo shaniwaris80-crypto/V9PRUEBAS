@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#111111" />
+  <meta name="theme-color" content="#0b0f19" />
   <title>ARSLAN PRO V10.4 — MONO Edition</title>
 
   <!-- 📦 PWA -->
@@ -56,20 +56,10 @@
   <!-- ========== FACTURA ========== -->
   <section class="panel active" data-tab-panel="factura">
 
-    <div class="card">
-      <div class="title-row">
-        <h3>Datos de factura</h3>
-        <div class="row">
-          <label style="display:flex;align-items:center;gap:8px;">
-            <span style="font-weight:600;">Fecha</span>
-            <input id="inpFechaFactura" type="datetime-local" style="min-width:230px;" />
-          </label>
-          <span id="editBadge" class="muted" style="margin-left:auto;font-weight:700;"></span>
-        </div>
-      </div>
-      <div class="muted" style="font-size:13px">
-        IVA 4% se suma automáticamente al total (siempre).
-      </div>
+    <!-- ✅ Badge de edición -->
+    <div id="editBadge" class="edit-badge" hidden>
+      ✏️ EDITANDO: <strong id="editNum">—</strong>
+      <button id="btnSalirEdicion" class="ghost small">Salir</button>
     </div>
 
     <div class="grid2">
@@ -81,6 +71,7 @@
         <input id="provTel" placeholder="Teléfono" />
         <input id="provEmail" placeholder="Email" />
       </div>
+
       <div class="card">
         <h3>Cliente</h3>
         <select id="selCliente"></select>
@@ -92,6 +83,19 @@
         <div class="row">
           <button id="btnNuevoCliente" class="ghost">Abrir listado</button>
         </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title-row">
+        <h3>Datos factura</h3>
+        <div class="row">
+          <label class="mini">Fecha (editable)</label>
+          <input id="inpFechaFactura" type="datetime-local" />
+        </div>
+      </div>
+      <div class="muted-note">
+        ✅ Puedes cambiar la fecha cuando edites una factura.
       </div>
     </div>
 
@@ -138,6 +142,10 @@
           <div>IVA (4%)</div><div id="iva">0,00 €</div>
           <div class="big">TOTAL</div><div class="big" id="total">0,00 €</div>
         </div>
+
+        <div class="muted-note">
+          ✅ IVA 4% se suma SIEMPRE automáticamente (sin botón).
+        </div>
       </div>
 
       <div class="card">
@@ -147,9 +155,11 @@
           <button id="btnAddPago" class="ghost">+ Añadir pago</button>
         </div>
         <div id="listaPagos" class="list small"></div>
+
         <label class="mt8">Pagado manual
           <input id="pagado" type="number" step="0.01" />
         </label>
+
         <label>Estado
           <select id="estado">
             <option value="pendiente">Impagada</option>
@@ -157,6 +167,7 @@
             <option value="pagado">Pagada</option>
           </select>
         </label>
+
         <label>Método
           <select id="metodoPago">
             <option>Efectivo</option>
@@ -164,6 +175,7 @@
             <option>Transferencia</option>
           </select>
         </label>
+
         <div class="pendiente">Pendiente: <strong id="pendiente">0,00 €</strong></div>
       </div>
 
@@ -175,6 +187,8 @@
 
     <div class="row actions">
       <button id="btnGuardar">💾 Guardar</button>
+      <button id="btnGuardarCambios" class="ghost" hidden>✅ Guardar cambios</button>
+      <button id="btnDuplicarFactura" class="ghost" hidden>📄 Duplicar factura</button>
       <button id="btnImprimir">🖨️ Generar PDF</button>
       <button id="btnNueva" class="ghost">🧾 Nueva</button>
     </div>
@@ -183,9 +197,9 @@
       <div class="pdf-header">
         <div class="pdf-brand">
           <svg id="pdf-kiwi" width="42" height="42" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="45" fill="#d9d9d9" stroke="#111" stroke-width="6"></circle>
-            <circle cx="50" cy="50" r="24" fill="#fff" stroke="#111" stroke-width="5"></circle>
-            <g fill="#111">
+            <circle cx="50" cy="50" r="45" fill="#9acd32" stroke="#5a7f1a" stroke-width="6"></circle>
+            <circle cx="50" cy="50" r="24" fill="#fff" stroke="#7fbf3f" stroke-width="5"></circle>
+            <g fill="#2b2b2b">
               <circle cx="50" cy="28" r="3"></circle>
               <circle cx="64" cy="32" r="3"></circle>
               <circle cx="72" cy="45" r="3"></circle>
@@ -201,6 +215,7 @@
             <div id="p-prov"></div>
           </div>
         </div>
+
         <div class="pdf-meta">
           <div><span>Nº:</span> <strong id="p-num"></strong></div>
           <div><span>Fecha:</span> <strong id="p-fecha"></strong></div>
@@ -229,13 +244,10 @@
           <div>Obs.: <span id="p-obs">—</span></div>
         </div>
       </div>
-      <div class="pdf-foot" id="pdf-foot-note">IVA 4% incluido en el total.</div>
-    </div>
 
-    <!-- 🧠 Historial de precios flotante -->
-    <div id="pricePanel" hidden>
-      <div class="pp-title">Historial</div>
-      <div id="ppBody"></div>
+      <div class="pdf-foot" id="pdf-foot-note">
+        IVA (4%) añadido al total. Transporte opcional 10%.
+      </div>
     </div>
 
   </section>
@@ -298,10 +310,6 @@
     <div class="card">
       <div class="title-row">
         <h3>Deudas por cliente</h3>
-        <div class="row">
-          <button id="btnResetCliente" class="ghost">Reset deudas del cliente actual</button>
-          <button id="btnResetGlobal" class="ghost">Reset deudas global</button>
-        </div>
       </div>
       <table class="calc-table" id="tblPendientes">
         <thead>
@@ -375,8 +383,8 @@
         <div class="kpi"><span>Mes</span><strong id="rMes">0,00 €</strong></div>
         <div class="kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
       </div>
-      <div class="muted" style="margin-top:10px;font-size:13px;">
-        (Backup/Restore eliminado por configuración del sistema)
+      <div class="muted-note">
+        ✅ Esta versión no tiene Backup/Restore (solo export/import).
       </div>
     </div>
   </section>
@@ -388,7 +396,7 @@
   position:fixed;
   bottom:15px;
   right:15px;
-  background:#111;
+  background:#0b0f19;
   color:white;
   padding:10px 18px;
   border:none;
