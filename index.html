@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#0b0f19" />
-  <title>ARSLAN PRO V10.4 — MONO Edition</title>
+  <meta name="theme-color" content="#111111" />
+  <title>ARSLAN PRO V10.4 — KIWI Edition</title>
 
   <!-- 📦 PWA -->
   <link rel="manifest" href="manifest.json">
@@ -22,24 +22,30 @@
 
   <!-- ⚙️ Registro del Service Worker -->
   <script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', async () => {
-      try {
-        const reg = await navigator.serviceWorker.register('/fruit/sw.js');
-        console.log('✅ Service Worker registrado en:', reg.scope);
-      } catch (err) {
-        console.warn('⚠️ Error registrando Service Worker:', err);
-      }
-    });
-  }
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('/fruit/sw.js');
+          console.log('✅ Service Worker registrado en:', reg.scope);
+        } catch (err) {
+          console.warn('⚠️ Error registrando Service Worker:', err);
+        }
+      });
+    }
   </script>
 </head>
 
 <body>
+
 <header class="topbar">
   <div class="brand">
     <span>ARSLAN PRO <small>V10.4</small></span>
   </div>
+
+  <div class="row" style="gap:8px;">
+    <button id="btnSyncSupabase" class="ghost">🔄 Sync Supabase</button>
+  </div>
+
   <nav class="tabs">
     <button class="tab active" data-tab="factura">Factura</button>
     <button class="tab" data-tab="clientes">Clientes</button>
@@ -56,10 +62,26 @@
   <!-- ========== FACTURA ========== -->
   <section class="panel active" data-tab-panel="factura">
 
-    <!-- ✅ Badge de edición -->
-    <div id="editBadge" class="edit-badge" hidden>
-      ✏️ EDITANDO: <strong id="editNum">—</strong>
-      <button id="btnSalirEdicion" class="ghost small">Salir</button>
+    <div class="card">
+      <div class="title-row">
+        <h3>Factura</h3>
+        <div class="row">
+          <div class="mini">
+            <label class="mini-label">Fecha</label>
+            <input id="inpFechaFactura" type="datetime-local" />
+          </div>
+
+          <div class="mini">
+            <label class="mini-label">Número</label>
+            <input id="inpNumeroFactura" placeholder="(Auto / Editar)" disabled />
+          </div>
+
+          <span id="modoEdicionBadge" class="badge" style="display:none;">EDITANDO</span>
+        </div>
+      </div>
+      <div class="muted">
+        ✅ IVA 4% siempre incluido · Transporte 10% opcional · Editar facturas disponible
+      </div>
     </div>
 
     <div class="grid2">
@@ -71,7 +93,6 @@
         <input id="provTel" placeholder="Teléfono" />
         <input id="provEmail" placeholder="Email" />
       </div>
-
       <div class="card">
         <h3>Cliente</h3>
         <select id="selCliente"></select>
@@ -83,19 +104,6 @@
         <div class="row">
           <button id="btnNuevoCliente" class="ghost">Abrir listado</button>
         </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="title-row">
-        <h3>Datos factura</h3>
-        <div class="row">
-          <label class="mini">Fecha (editable)</label>
-          <input id="inpFechaFactura" type="datetime-local" />
-        </div>
-      </div>
-      <div class="muted-note">
-        ✅ Puedes cambiar la fecha cuando edites una factura.
       </div>
     </div>
 
@@ -135,16 +143,11 @@
       <div class="card">
         <h3>💶 Totales factura</h3>
         <label class="check"><input type="checkbox" id="chkTransporte" /> Añadir transporte 10%</label>
-
         <div class="totals-grid">
           <div>Subtotal</div><div id="subtotal">0,00 €</div>
           <div>Transporte</div><div id="transp">0,00 €</div>
           <div>IVA (4%)</div><div id="iva">0,00 €</div>
           <div class="big">TOTAL</div><div class="big" id="total">0,00 €</div>
-        </div>
-
-        <div class="muted-note">
-          ✅ IVA 4% se suma SIEMPRE automáticamente (sin botón).
         </div>
       </div>
 
@@ -155,11 +158,9 @@
           <button id="btnAddPago" class="ghost">+ Añadir pago</button>
         </div>
         <div id="listaPagos" class="list small"></div>
-
         <label class="mt8">Pagado manual
           <input id="pagado" type="number" step="0.01" />
         </label>
-
         <label>Estado
           <select id="estado">
             <option value="pendiente">Impagada</option>
@@ -167,7 +168,6 @@
             <option value="pagado">Pagada</option>
           </select>
         </label>
-
         <label>Método
           <select id="metodoPago">
             <option>Efectivo</option>
@@ -175,7 +175,6 @@
             <option>Transferencia</option>
           </select>
         </label>
-
         <div class="pendiente">Pendiente: <strong id="pendiente">0,00 €</strong></div>
       </div>
 
@@ -187,10 +186,9 @@
 
     <div class="row actions">
       <button id="btnGuardar">💾 Guardar</button>
-      <button id="btnGuardarCambios" class="ghost" hidden>✅ Guardar cambios</button>
-      <button id="btnDuplicarFactura" class="ghost" hidden>📄 Duplicar factura</button>
       <button id="btnImprimir">🖨️ Generar PDF</button>
       <button id="btnNueva" class="ghost">🧾 Nueva</button>
+      <button id="btnCancelarEdicion" class="ghost" style="display:none;">✖ Cancelar edición</button>
     </div>
 
     <div id="printArea" class="print">
@@ -215,7 +213,6 @@
             <div id="p-prov"></div>
           </div>
         </div>
-
         <div class="pdf-meta">
           <div><span>Nº:</span> <strong id="p-num"></strong></div>
           <div><span>Fecha:</span> <strong id="p-fecha"></strong></div>
@@ -244,10 +241,7 @@
           <div>Obs.: <span id="p-obs">—</span></div>
         </div>
       </div>
-
-      <div class="pdf-foot" id="pdf-foot-note">
-        IVA (4%) añadido al total. Transporte opcional 10%.
-      </div>
+      <div class="pdf-foot" id="pdf-foot-note">IVA incluido en los precios.</div>
     </div>
 
   </section>
@@ -310,6 +304,10 @@
     <div class="card">
       <div class="title-row">
         <h3>Deudas por cliente</h3>
+        <div class="row">
+          <button id="btnResetCliente" class="ghost">Reset deudas del cliente actual</button>
+          <button id="btnResetGlobal" class="ghost">Reset deudas global</button>
+        </div>
       </div>
       <table class="calc-table" id="tblPendientes">
         <thead>
@@ -383,20 +381,27 @@
         <div class="kpi"><span>Mes</span><strong id="rMes">0,00 €</strong></div>
         <div class="kpi"><span>Total</span><strong id="rTotal">0,00 €</strong></div>
       </div>
-      <div class="muted-note">
-        ✅ Esta versión no tiene Backup/Restore (solo export/import).
+      <div class="row actions mt8">
+        <button id="btnBackup">Backup</button>
+        <button id="btnRestore" class="ghost">Restaurar</button>
       </div>
     </div>
   </section>
 
 </main>
 
+<!-- ✅ Panel historial precios (usado por JS) -->
+<div id="pricePanel" hidden>
+  <div class="pp-title">Historial</div>
+  <div id="ppBody"></div>
+</div>
+
 <!-- 📲 BOTÓN INSTALAR APP -->
 <button id="installBtn" style="
   position:fixed;
   bottom:15px;
   right:15px;
-  background:#0b0f19;
+  background:#111;
   color:white;
   padding:10px 18px;
   border:none;
@@ -427,7 +432,9 @@ document.getElementById('installBtn').addEventListener('click', async () => {
 });
 </script>
 
-<!-- ✅ APP -->
+<!-- 🔌 SUPABASE + APP -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@1.35.6"></script>
 <script src="app.js"></script>
+
 </body>
 </html>
