@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>ARSLAN • FACTURAS KIWI PRO (V3.0 Cloud PDF)</title>
+  <title>ARSLAN • FACTURAS KIWI PRO (V3.1 Items + IVA4 + Cloud PDF)</title>
 
   <!-- Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -73,7 +73,7 @@
         </div>
 
         <div class="version">
-          <span>V3.0</span> · <span class="kiwi">Cloud PDF</span>
+          <span>V3.1</span> · <span class="kiwi">Items + IVA4 + Cloud PDF</span>
         </div>
       </div>
     </aside>
@@ -189,9 +189,9 @@
                     <th>Nº</th>
                     <th>Cliente</th>
                     <th>Tag</th>
-                    <th>Importe</th>
+                    <th>Total</th>
                     <th>Estado</th>
-                    <th style="width:240px">Acciones</th>
+                    <th style="width:270px">Acciones</th>
                   </tr>
                 </thead>
                 <tbody id="invoiceTable"></tbody>
@@ -217,6 +217,7 @@
                   <tr>
                     <th>Cliente</th>
                     <th>NIF</th>
+                    <th>Dirección</th>
                     <th>Tags</th>
                     <th>Total acumulado</th>
                     <th style="width:220px">Acciones</th>
@@ -386,10 +387,6 @@
             <i data-lucide="user-plus"></i> Crear cuenta
           </button>
         </div>
-
-        <div class="muted small">
-          Si ya tienes tu sistema con usuarios internos por PIN, aquí solo es login para nube.
-        </div>
       </div>
     </div>
   </div>
@@ -417,27 +414,48 @@
         <label class="label">Cliente</label>
         <select class="select" id="invClient"></select>
 
-        <label class="label">Tag (opcional)</label>
-        <select class="select" id="invTag">
-          <option value="">— Sin tag —</option>
-        </select>
-
-        <label class="label">Estado</label>
-        <select class="select" id="invStatus">
-          <option value="PENDIENTE">PENDIENTE</option>
-          <option value="PAGADO">PAGADO</option>
-        </select>
-
         <div class="row two mt">
           <div>
-            <label class="label">Importe (€)</label>
-            <input type="number" step="0.01" class="input" id="invAmount" placeholder="0.00" />
+            <label class="label">Tag (opcional)</label>
+            <select class="select" id="invTag">
+              <option value="">— Sin tag —</option>
+            </select>
           </div>
           <div>
-            <label class="label">Notas</label>
-            <input type="text" class="input" id="invNotes" placeholder="Observaciones..." />
+            <label class="label">Estado</label>
+            <select class="select" id="invStatus">
+              <option value="PENDIENTE">PENDIENTE</option>
+              <option value="PAGADO">PAGADO</option>
+            </select>
           </div>
         </div>
+
+        <!-- ITEMS -->
+        <div class="items-head">
+          <div class="items-title">📦 Productos (tabla factura)</div>
+          <button class="btn tiny primary" id="btnAddItem">
+            <i data-lucide="plus"></i> Añadir
+          </button>
+        </div>
+
+        <div class="items-grid" id="itemsGrid">
+          <!-- rows -->
+        </div>
+
+        <div class="items-totals">
+          <div class="tot-line">
+            <span>Subtotal</span><b id="tSubtotal">0,00 €</b>
+          </div>
+          <div class="tot-line">
+            <span>IVA 4%</span><b id="tIVA">0,00 €</b>
+          </div>
+          <div class="tot-line big">
+            <span>Total</span><b id="tTotal">0,00 €</b>
+          </div>
+        </div>
+
+        <label class="label">Notas factura</label>
+        <input type="text" class="input" id="invNotes" placeholder="Observaciones (opcional)..." />
 
         <div class="row gap mt">
           <button class="btn" id="btnInvPDFLocal"><i data-lucide="file-down"></i> PDF (Local)</button>
@@ -457,7 +475,8 @@
         </div>
 
         <div class="note">
-          ✅ Guardar actualiza Gestión + Contabilidad. Si nube ON + AutoPDF ON → se sube PDF automáticamente.
+          ✅ Tabla completa (kg/caja/ud), tara, origen, IVA 4%. <br>
+          ✅ Guardar actualiza Gestión + Contabilidad + (PDF nube si AutoPDF ON).
         </div>
       </div>
     </div>
@@ -476,6 +495,15 @@
 
         <label class="label">NIF</label>
         <input class="input" id="cliNIF" type="text" placeholder="B12345678" />
+
+        <label class="label">Dirección</label>
+        <input class="input" id="cliAddress" type="text" placeholder="Calle..., Ciudad..." />
+
+        <label class="label">Email (opcional)</label>
+        <input class="input" id="cliEmail" type="email" placeholder="cliente@email.com" />
+
+        <label class="label">Teléfono (opcional)</label>
+        <input class="input" id="cliPhone" type="text" placeholder="600000000" />
 
         <label class="label">Tags (separados por coma)</label>
         <input class="input" id="cliTags" type="text" placeholder="Centro, Severo, Edificio" />
