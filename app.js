@@ -1,1301 +1,1495 @@
-/* =========================================================
-   ARSLAN • FACTURAS RÁPIDAS (AUTO VOCAB)
-   - Filas rápidas producto/cant/precio
-   - Autocompletar REAL desde vocabulario ARSLAN LISTAS (localStorage)
-   - Enter navega y crea filas
-   - Bulk paste: pegar lista en bloque y genera filas
-   - PDF + WhatsApp TXT
-   - Guardado historial + export/import JSON
-========================================================= */
+/* ===========================================================
+   PARTE 1/3 — ARSLAN PRO V10.4 (MONO Edition) — app.js
+   ✅ SIN Supabase/Firebase
+   ✅ IVA 4% SIEMPRE sumado al total
+   ✅ Editar factura + Cambiar fecha (en listado Facturas)
+   ✅ Todo localStorage + Historial de precios + Pendientes + Ventas + PDF + QR
+=========================================================== */
 
-(() => {
-  "use strict";
+(function(){
+"use strict";
 
-  /* ===========================
-     DOM
-  =========================== */
-  const $ = (q, el=document) => el.querySelector(q);
+/* ---------- HELPERS ---------- */
+const $  = (s,root=document)=>root.querySelector(s);
+const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
+const money = n => (isNaN(n)?0:n).toFixed(2).replace('.', ',') + " €";
+const parseNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; };
+const escapeHTML = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+const todayISO = () => new Date().toISOString();
+const fmtDateDMY = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
+const unMoney = s => parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')) || 0;
+const uid = ()=>'id_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 
-  const invNumber = $("#invNumber");
-  const invDate   = $("#invDate");
-  const invClient = $("#invClient");
-  const invNotes  = $("#invNotes");
-  const invVat    = $("#invVat");
+function load(k, fallback){
+  try{
+    const v = JSON.parse(localStorage.getItem(k) || '');
+    return v ?? fallback;
+  }catch{
+    return fallback;
+  }
+}
+function save(k, v){
+  localStorage.setItem(k, JSON.stringify(v));
+}
 
-  const linesBody = $("#linesBody");
-  const preview   = $("#preview");
+/* ---------- KEYS ---------- */
+const K_CLIENTES  = 'arslan_v104_clientes';
+const K_PRODUCTOS = 'arslan_v104_productos';
+const K_FACTURAS  = 'arslan_v104_facturas';
+const K_PRICEHIST = 'arslan_v104_pricehist';
 
-  const tSubtotal = $("#tSubtotal");
-  const tVat      = $("#tVat");
-  const tTotal    = $("#tTotal");
+/* ---------- ESTADO ---------- */
+let clientes  = load(K_CLIENTES, []);
+let productos = load(K_PRODUCTOS, []);
+let facturas  = load(K_FACTURAS, []);
+let priceHist = load(K_PRICEHIST, {});
 
-  const bulkBox   = $("#bulkBox");
-  const historyEl = $("#history");
+let pagosTemp = [];                 // pagos UI temporales
+let editingIndex = null;            // null = nueva / number = editando factura
+let editingId = null;               // id interno de factura editada
 
-  const btnNew       = $("#btnNew");
-  const btnSave      = $("#btnSave");
-  const btnClear     = $("#btnClear");
-  const btnPDF       = $("#btnPDF");
-  const btnWA        = $("#btnWA");
-  const btnAddLine   = $("#btnAddLine");
-  const btnResetLines= $("#btnResetLines");
-  const btnBulk      = $("#btnBulk");
-  const btnBulkClear = $("#btnBulkClear");
-  const btnExport    = $("#btnExport");
-  const importFile   = $("#importFile");
+/* ---------- TABS ---------- */
+function switchTab(id){
+  $$('button.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===id));
+  $$('section.panel').forEach(p=>p.classList.toggle('active', p.dataset.tabPanel===id));
 
-  const btnTheme     = $("#btnTheme");
-  const btnHelp      = $("#btnHelp");
-  const modalHelp    = $("#modalHelp");
-  const btnCloseHelp = $("#btnCloseHelp");
+  if(id==='ventas'){ drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); }
+  if(id==='pendientes'){ renderPendientes(); }
+  if(id==='resumen'){ drawResumen(); }
+  if(id==='facturas'){ renderFacturas(); }
+}
+$$('button.tab').forEach(b=>b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
 
-  /* ===========================
-     STORAGE KEYS
-  =========================== */
-  const LS_THEME   = "ARSLAN_FACTURAS_THEME";
-  const LS_DRAFT   = "ARSLAN_FACTURAS_DRAFT";
-  const LS_HISTORY = "ARSLAN_FACTURAS_HISTORY"; // array
-  const APP_VER    = "ARSLAN_FACTURAS_V1.0_AUTO_VOCAB";
+/* ---------- SEED CLIENTES ---------- */
+function uniqueByName(arr){
+  const map=new Map();
+  arr.forEach(c=>{
+    const k=(c.nombre||'').trim().toLowerCase();
+    if(k && !map.has(k)) map.set(k,c);
+  });
+  return [...map.values()];
+}
+function ensureClienteIds(){
+  clientes.forEach(c=>{ if(!c.id) c.id=uid(); });
+}
+function seedClientesIfEmpty(){
+  if(clientes.length) return ensureClienteIds();
+  clientes = uniqueByName([
+    {id:uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos', pago:'Efectivo'},
+    {id:uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
+    {id:uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
+    {id:uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda, 17 Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
+    {id:uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
+    {id:uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
+    {id:uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
+    {id:uid(), nombre:'Restauración Hermanos Marijuán S.L.U. (Restaurante Los Braseros)', nif:'B09425059', dir:'Carretera Logroño Km 102, 09193 Castrillo del Val, Burgos', email:'info@restaurantelosbraseros.com'},
+    {id:uid(), nombre:'Alameda Peralta Carlos y otros C.B.', nif:'E09578345', dir:'C/ La Puebla, 6, 09004 Burgos (España)', email:'info@hotelcordon.com'}
+  ]);
+  save(K_CLIENTES, clientes);
+}
 
-  /* ===========================
-     STATE
-  =========================== */
-  let LINES = [];
-  let CURRENT_ID = null;
+/* ---------- SEED PRODUCTOS (solo si vacío) ---------- */
+const PRODUCT_NAMES = [
+  "GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA",
+  "AGUACATE GRANEL","MARACUYÁ","MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA","MANDARINA HOJA","NARANJA TOMASIN","LIMON SEGUNDA","JENGIBRE","BATATA","AJO PRIMERA",
+  "CEBOLLA NORMAL","PATATA LAVADA","TOMATE CHERRY RAMA","TOMATE DANIELA","TOMATE ROSA PRIMERA","TOMATE RAMA","PIMIENTO PADRON","ZANAHORIA","PEPINO",
+  "CEBOLLETA","BROCOLI","JUDIA VERDE","BERENJENA","PIMIENTO ITALIANO VERDE","UVA BLANCA","ALCACHOFA","COLIFLOR","BATAVIA","ICEBERG","NARANJA ZUMO",
+  "CEREZA","FRESAS","ARANDANOS","PEREJIL","CILANTRO","PIMIENTO VERDE","PIMIENTO ROJO","MACHO VERDE","MACHO MADURO","YUCA","CEBOLLA ROJA",
+  "RABANITOS","PAPAYA","NISPERO","TOMATE PERA","TOMATE BOLA","TOMATE PINK","VALVENOSTA GOLDEN","PIÑA","NARANJA HOJA","CEBOLLA DULCE",
+  "ESPARRAGOS TRIGUEROS","TOMATE RAFF","REPOLLO","KIWI ZESPRI","MELON","MANZANA CRIPS","ALOE VERA PIEZAS","LIMA","GUINEO VERDE","BANANA","BONIATO",
+  "YAUTIA","YAME","OKRA","SANDIA RAYADA","HIERBABUENA","REMOLACHA","LECHUGA ROMANA","PITAHAYA ROJA","CLEMENTINA","GRANADA","CHIRIMOYA",
+  "PIMIENTO CALIFORNIA VERDE","PIMIENTO CALIFORNIA ROJO","NABO","CHAYOTE"
+];
 
-  /* =========================================================
-     ✅ AUTOCOMPLETE REAL (VOCABULARIO ARSLAN LISTAS)
-========================================================= */
+function seedProductsIfEmpty(){
+  if(productos.length) return;
+  productos = PRODUCT_NAMES.map(n=>({name:n}));
+  save(K_PRODUCTOS, productos);
+}
 
-  let ARSLAN_VOCAB = [];
-  let ARSLAN_VOCAB_READY = false;
+/* ---------- PROVIDER DEFAULTS ---------- */
+function setProviderDefaultsIfEmpty(){
+  if(!$('#provNombre')?.value) $('#provNombre').value = 'Mohammad Arslan Waris';
+  if(!$('#provNif')?.value)    $('#provNif').value    = 'X6389988J';
+  if(!$('#provDir')?.value)    $('#provDir').value    = 'Calle San Pablo 17, 09003 Burgos';
+  if(!$('#provTel')?.value)    $('#provTel').value    = '631 667 893';
+  if(!$('#provEmail')?.value)  $('#provEmail').value  = 'shaniwaris80@gmail.com';
+}
 
-  function normSearch(s){
-    return String(s || "")
-      .toUpperCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^\w\s/-]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+/* ---------- FECHA FACTURA (UI) ---------- */
+function setFechaFacturaDefault(){
+  const el = $('#inpFechaFactura');
+  if(!el) return;
+  if(el.value) return;
+
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,'0');
+  const local = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  el.value = local;
+}
+function getFechaISOFromInput(){
+  const el=$('#inpFechaFactura');
+  if(!el || !el.value) return todayISO();
+  const d = new Date(el.value);
+  return isNaN(d.getTime()) ? todayISO() : d.toISOString();
+}
+function setFechaInputFromISO(iso){
+  const el=$('#inpFechaFactura');
+  if(!el) return;
+  const d=new Date(iso);
+  if(isNaN(d.getTime())) return setFechaFacturaDefault();
+  const pad=n=>String(n).padStart(2,'0');
+  el.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/* ---------- HISTORIAL DE PRECIOS ---------- */
+function lastPrice(name){
+  const arr = priceHist[name];
+  return arr?.length ? arr[0].price : null;
+}
+function pushPriceHistory(name, price){
+  if(!name || !(price>0)) return;
+  const arr = priceHist[name] || [];
+  arr.unshift({price, date: todayISO()});
+  priceHist[name] = arr.slice(0,10);
+  save(K_PRICEHIST, priceHist);
+}
+function hidePanelSoon(){
+  clearTimeout(hidePanelSoon.t);
+  hidePanelSoon.t=setTimeout(()=>$('#pricePanel')?.setAttribute('hidden',''), 4800);
+}
+function renderPriceHistory(name){
+  const panel=$('#pricePanel'), body=$('#ppBody');
+  if(!panel||!body) return;
+  panel.removeAttribute('hidden');
+
+  const hist=priceHist[name]||[];
+  if(hist.length===0){
+    body.innerHTML=`<div class="pp-row"><span>${escapeHTML(name)}</span><strong>Sin datos</strong></div>`;
+    hidePanelSoon();
+    return;
+  }
+  body.innerHTML =
+    `<div class="pp-row" style="justify-content:center"><strong>${escapeHTML(name)}</strong></div>` +
+    hist.map(h=>`<div class="pp-row"><span>${fmtDateDMY(new Date(h.date))}</span><strong>${money(h.price)}</strong></div>`).join('');
+
+  hidePanelSoon();
+}
+
+/* ---------- CLIENTES UI ---------- */
+function saveClientes(){ save(K_CLIENTES, clientes); }
+
+function renderClientesSelect(){
+  const sel = $('#selCliente'); if(!sel) return;
+  sel.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
+  const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+  arr.forEach((c)=>{
+    const opt=document.createElement('option');
+    opt.value=c.id;
+    opt.textContent=c.nombre||'(Sin nombre)';
+    sel.appendChild(opt);
+  });
+}
+
+function fillClientFields(c){
+  $('#cliNombre').value=c.nombre||'';
+  $('#cliNif').value=c.nif||'';
+  $('#cliDir').value=c.dir||'';
+  $('#cliTel').value=c.tel||'';
+  $('#cliEmail').value=c.email||'';
+}
+
+function renderClientesLista(){
+  const cont = $('#listaClientes'); if(!cont) return;
+  cont.innerHTML='';
+  const q = ($('#buscarCliente')?.value||'').toLowerCase();
+
+  const arr = [...clientes].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+  const view = q
+    ? arr.filter(c =>
+        (c.nombre||'').toLowerCase().includes(q) ||
+        (c.nif||'').toLowerCase().includes(q) ||
+        (c.dir||'').toLowerCase().includes(q)
+      )
+    : arr;
+
+  if(view.length===0){
+    cont.innerHTML='<div class="item">Sin clientes.</div>';
+    return;
   }
 
-  function uniq(arr){
-    const set = new Set();
-    const out = [];
-    for(const x of arr){
-      const k = normSearch(x);
-      if(!k) continue;
-      if(set.has(k)) continue;
-      set.add(k);
-      out.push(String(x).trim());
-    }
-    return out;
-  }
+  view.forEach((c)=>{
+    const row=document.createElement('div');
+    row.className='item';
+    row.innerHTML=`
+      <div>
+        <strong>${escapeHTML(c.nombre||'(Sin nombre)')}</strong>
+        <div class="muted">${escapeHTML(c.nif||'')} · ${escapeHTML(c.dir||'')}</div>
+      </div>
+      <div class="row">
+        <button class="ghost" data-e="use" data-id="${c.id}">Usar</button>
+        <button class="ghost" data-e="edit" data-id="${c.id}">Editar</button>
+        <button class="ghost" data-e="del" data-id="${c.id}">Borrar</button>
+      </div>
+    `;
+    cont.appendChild(row);
+  });
 
-  function tryParseAnyVocab(raw){
-    const out = [];
-    const txt = String(raw || "").trim();
-    if(!txt) return out;
+  cont.querySelectorAll('button').forEach(b=>{
+    const id=b.dataset.id;
+    b.addEventListener('click', ()=>{
+      const i=clientes.findIndex(x=>x.id===id);
+      if(i<0) return;
 
-    if(txt.includes("\n") && txt.length < 200000 && !txt.startsWith("{") && !txt.startsWith("[")){
-      const lines = txt.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-      for(const l of lines) out.push(l);
-      return out;
-    }
-
-    try{
-      const j = JSON.parse(txt);
-
-      if(Array.isArray(j)){
-        for(const x of j){
-          if(typeof x === "string") out.push(x);
-          else if(x && typeof x === "object"){
-            if(x.name) out.push(String(x.name));
-            else if(x.product) out.push(String(x.product));
-            else if(x.label) out.push(String(x.label));
-          }
+      if(b.dataset.e==='use'){
+        fillClientFields(clientes[i]);
+        switchTab('factura');
+      }else if(b.dataset.e==='edit'){
+        const c=clientes[i];
+        const nombre=prompt('Nombre',c.nombre||'') ?? c.nombre;
+        const nif=prompt('NIF',c.nif||'') ?? c.nif;
+        const dir=prompt('Dirección',c.dir||'') ?? c.dir;
+        const tel=prompt('Tel',c.tel||'') ?? c.tel;
+        const email=prompt('Email',c.email||'') ?? c.email;
+        clientes[i]={...c,nombre,nif,dir,tel,email};
+        saveClientes();
+        renderClientesSelect();
+        renderClientesLista();
+      }else{
+        if(confirm('¿Eliminar cliente?')){
+          clientes.splice(i,1);
+          saveClientes();
+          renderClientesSelect();
+          renderClientesLista();
         }
-        return out;
       }
-
-      if(j && typeof j === "object"){
-        const possibleArrays = [j.words, j.vocab, j.vocabulary, j.products, j.items, j.list].filter(Boolean);
-        for(const arr of possibleArrays){
-          if(Array.isArray(arr)){
-            for(const x of arr){
-              if(typeof x === "string") out.push(x);
-              else if(x?.name) out.push(String(x.name));
-            }
-          }
-        }
-
-        const keys = Object.keys(j);
-        if(keys.length && keys.length < 50000){
-          // heurística: si parece diccionario de productos
-          const sample = keys.slice(0, 20).join(" ");
-          if(sample && sample.toUpperCase() === sample){
-            out.push(...keys);
-          }
-        }
-        return out;
-      }
-    }catch(e){
-      // no JSON -> ignore
-    }
-
-    return out;
-  }
-
-  function loadArslanVocabFromLocalStorage(){
-    const candidates = [
-      "ARS_VOCAB",
-      "ARSLAN_VOCAB",
-      "arslan_vocab",
-      "vocabulario",
-      "VOCABULARIO",
-      "arslan_listas_vocab",
-      "arslan_words",
-      "words",
-      "PRODUCTOS_STD",
-      "PRODUCTOS",
-      "ARS_PRODUCTS"
-    ];
-
-    const found = [];
-
-    for(const key of candidates){
-      const raw = localStorage.getItem(key);
-      if(!raw) continue;
-      const parsed = tryParseAnyVocab(raw);
-      if(parsed.length) found.push(...parsed);
-    }
-
-    // buscar dinámico
-    for(let i=0; i<localStorage.length; i++){
-      const k = localStorage.key(i);
-      if(!k) continue;
-      const kk = k.toLowerCase();
-      if(!(kk.includes("vocab") || kk.includes("producto") || kk.includes("word") || kk.includes("std"))) continue;
-      const raw = localStorage.getItem(k);
-      if(!raw) continue;
-      const parsed = tryParseAnyVocab(raw);
-      if(parsed.length) found.push(...parsed);
-    }
-
-    return uniq(found);
-  }
-
-  function initArslanVocab(){
-    try{
-      ARSLAN_VOCAB = loadArslanVocabFromLocalStorage();
-      ARSLAN_VOCAB_READY = ARSLAN_VOCAB.length > 0;
-      // console.log("VOCAB OK:", ARSLAN_VOCAB.length);
-    }catch(e){
-      ARSLAN_VOCAB = [];
-      ARSLAN_VOCAB_READY = false;
-    }
-  }
-
-  function getVocabSuggestions(query, limit=10){
-    const q = normSearch(query);
-    if(!q || !ARSLAN_VOCAB_READY) return [];
-
-    const starts = [];
-    const contains = [];
-
-    for(const name of ARSLAN_VOCAB){
-      const n = normSearch(name);
-      if(!n) continue;
-
-      if(n.startsWith(q)) starts.push(name);
-      else if(n.includes(q)) contains.push(name);
-
-      if(starts.length >= limit) break;
-    }
-
-    return starts.concat(contains).slice(0, limit);
-  }
-
-  function attachAutocomplete(inputEl, onPick){
-    let panel = document.createElement("div");
-    panel.style.position = "absolute";
-    panel.style.zIndex = "99999";
-    panel.style.display = "none";
-    panel.style.maxHeight = "240px";
-    panel.style.overflow = "auto";
-    panel.style.border = "1px solid color-mix(in srgb, var(--text) 10%, transparent)";
-    panel.style.background = "var(--card, #fff)";
-    panel.style.borderRadius = "14px";
-    panel.style.boxShadow = "0 10px 30px rgba(0,0,0,.12)";
-    panel.style.padding = "6px";
-    panel.style.minWidth = "240px";
-
-    document.body.appendChild(panel);
-
-    let activeIndex = -1;
-    let lastList = [];
-
-    function positionPanel(){
-      const r = inputEl.getBoundingClientRect();
-      panel.style.left = (r.left + window.scrollX) + "px";
-      panel.style.top  = (r.bottom + window.scrollY + 6) + "px";
-      panel.style.width = Math.max(r.width, 260) + "px";
-    }
-
-    function hide(){
-      panel.style.display = "none";
-      panel.innerHTML = "";
-      activeIndex = -1;
-      lastList = [];
-    }
-
-    function show(list){
-      positionPanel();
-      panel.innerHTML = "";
-      lastList = list.slice();
-
-      list.forEach((name, idx)=>{
-        const item = document.createElement("div");
-        item.style.padding = "10px 12px";
-        item.style.borderRadius = "12px";
-        item.style.cursor = "pointer";
-        item.style.fontSize = "14px";
-        item.style.userSelect = "none";
-        item.textContent = name;
-
-        item.onmouseenter = ()=>{
-          activeIndex = idx;
-          paintActive();
-        };
-
-        item.onclick = ()=>{
-          onPick(name);
-          hide();
-        };
-
-        panel.appendChild(item);
-      });
-
-      paintActive();
-      panel.style.display = list.length ? "block" : "none";
-    }
-
-    function paintActive(){
-      const children = Array.from(panel.children);
-      children.forEach((c, i)=>{
-        c.style.background = (i === activeIndex)
-          ? "color-mix(in srgb, var(--text) 8%, transparent)"
-          : "transparent";
-      });
-    }
-
-    function refresh(){
-      const val = inputEl.value || "";
-      const list = getVocabSuggestions(val, 10);
-      if(!list.length){
-        hide();
-        return;
-      }
-      activeIndex = 0;
-      show(list);
-    }
-
-    inputEl.addEventListener("focus", ()=>{
-      if(!ARSLAN_VOCAB_READY) return;
-      refresh();
     });
+  });
+}
 
-    inputEl.addEventListener("input", ()=>{
-      if(!ARSLAN_VOCAB_READY) return;
-      refresh();
-    });
+/* ---------- PRODUCTOS UI (continúa en PARTE 2/3...) ---------- */
 
-    inputEl.addEventListener("blur", ()=>{
-      setTimeout(()=>hide(), 150);
-    });
+// ✅ IMPORTANTE:
+// Te entrego la PARTE 2/3 con:
+// - Productos UI completo + Fixes
+// - Líneas de factura + Recalc IVA siempre
+// - Guardar nueva / Guardar cambios (editar)
+// - Render Facturas con Editar y Cambiar fecha
+// - PDF, Pendientes, Ventas, Charts
 
-    inputEl.addEventListener("keydown", (e)=>{
-      if(panel.style.display !== "block") return;
+/* ---------- BOOT BASICO ---------- */
+function renderAllBasic(){
+  renderClientesSelect();
+  renderClientesLista();
+}
 
-      if(e.key === "ArrowDown"){
-        e.preventDefault();
-        activeIndex = Math.min(activeIndex + 1, lastList.length - 1);
-        paintActive();
-        return;
-      }
-      if(e.key === "ArrowUp"){
-        e.preventDefault();
-        activeIndex = Math.max(activeIndex - 1, 0);
-        paintActive();
-        return;
-      }
-      if(e.key === "Enter"){
-        if(activeIndex >= 0 && lastList[activeIndex]){
-          e.preventDefault();
-          onPick(lastList[activeIndex]);
-          hide();
+(function boot(){
+  seedClientesIfEmpty();
+  ensureClienteIds();
+  seedProductsIfEmpty();
+  setProviderDefaultsIfEmpty();
+  setFechaFacturaDefault();
+  renderAllBasic();
+/* ===========================================================
+   PARTE 2/3 — ARSLAN PRO V10.4 (MONO Edition) — app.js
+   ✅ Productos UI completo
+   ✅ Líneas factura + IVA 4% SIEMPRE
+   ✅ Guardar + Editar factura + Cambiar fecha
+   ✅ PDF + Pendientes + Ventas + Charts
+=========================================================== */
+
+/* ---------- PRODUCTOS UI ---------- */
+function saveProductos(){ save(K_PRODUCTOS, productos); }
+
+function populateProductDatalist(){
+  const dl=$('#productNamesList'); if(!dl) return;
+  dl.innerHTML='';
+  productos.forEach(p=>{
+    const o=document.createElement('option');
+    o.value=p.name;
+    dl.appendChild(o);
+  });
+}
+
+function renderProductos(){
+  const cont = $('#listaProductos'); if(!cont) return;
+  const q = ($('#buscarProducto')?.value||'').toLowerCase();
+  const view = q ? productos.filter(p=>(p.name||'').toLowerCase().includes(q)) : productos;
+
+  cont.innerHTML='';
+  if(view.length===0){
+    cont.innerHTML='<div class="item">Sin resultados.</div>';
+    return;
+  }
+
+  view.forEach((p)=>{
+    const row=document.createElement('div');
+    row.className='product-row';
+    row.dataset.id = p.id || (p.id = uid());
+
+    row.innerHTML=`
+      <input value="${escapeHTML(p.name||'')}" data-f="name" />
+      <select data-f="mode">
+        <option value="">—</option>
+        <option value="kg"${p.mode==='kg'?' selected':''}>kg</option>
+        <option value="unidad"${p.mode==='unidad'?' selected':''}>unidad</option>
+        <option value="caja"${p.mode==='caja'?' selected':''}>caja</option>
+      </select>
+      <input type="number" step="0.01" data-f="boxkg" placeholder="Kg/caja" value="${p.boxkg??''}" />
+      <input type="number" step="0.01" data-f="price" placeholder="€ base" value="${p.price??''}" />
+      <input data-f="origin" placeholder="Origen" value="${escapeHTML(p.origin||'')}" />
+      <button data-e="save">💾</button>
+      <button class="ghost" data-e="del">✖</button>
+    `;
+    cont.appendChild(row);
+  });
+
+  cont.querySelectorAll('button').forEach(b=>{
+    const row=b.closest('.product-row');
+    const id=row?.dataset.id;
+    b.addEventListener('click', ()=>{
+      const i=productos.findIndex(x=>(x.id||'')===id);
+      if(i<0) return;
+
+      if(b.dataset.e==='del'){
+        if(confirm('¿Eliminar producto?')){
+          productos.splice(i,1);
+          saveProductos();
+          populateProductDatalist();
+          renderProductos();
         }
         return;
       }
-      if(e.key === "Escape"){
-        hide();
-        return;
-      }
+
+      // guardar
+      const get = f => row.querySelector(`[data-f="${f}"]`)?.value ?? '';
+      const name = String(get('name')).trim();
+      const mode = String(get('mode')).trim() || null;
+
+      const boxkgStr = String(get('boxkg')).trim();
+      const boxkg = boxkgStr==='' ? null : parseNum(boxkgStr);
+
+      const priceStr = String(get('price')).trim();
+      const price = priceStr==='' ? null : parseNum(priceStr);
+
+      const origin = String(get('origin')).trim() || null;
+
+      productos[i] = { ...productos[i], id, name, mode, boxkg, price, origin };
+      saveProductos();
+      populateProductDatalist();
+      renderProductos();
     });
+  });
+}
 
-    window.addEventListener("resize", ()=>{
-      if(panel.style.display === "block") positionPanel();
-    });
+$('#buscarProducto')?.addEventListener('input', renderProductos);
 
-    window.addEventListener("scroll", ()=>{
-      if(panel.style.display === "block") positionPanel();
-    }, { passive:true });
-  }
+$('#btnAddProducto')?.addEventListener('click', ()=>{
+  const name = (prompt('Nombre del producto:')||'').trim();
+  if(!name) return;
+  const mode = (prompt('Modo (kg/unidad/caja) [opcional]:')||'').trim().toLowerCase();
+  const boxkg = parseNum(prompt('Kg/caja (solo si es caja) [opcional]:')||'');
+  const price = parseNum(prompt('Precio base € [opcional]:')||'');
+  const origin = (prompt('Origen [opcional]:')||'').trim();
 
-  /* ===========================
-     HELPERS
-  =========================== */
-  function pad(n){ return String(n).padStart(2,"0"); }
+  productos.unshift({
+    id: uid(),
+    name,
+    mode: (mode==='kg'||mode==='unidad'||mode==='caja') ? mode : null,
+    boxkg: boxkg>0 ? boxkg : null,
+    price: price>0 ? price : null,
+    origin: origin || null
+  });
 
-  function nowInvoiceNumber(){
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = pad(d.getMonth()+1);
-    const day = pad(d.getDate());
-    const hh = pad(d.getHours());
-    const mm = pad(d.getMinutes());
-    return `FA-${y}${m}${day}${hh}${mm}`;
-  }
+  saveProductos();
+  populateProductDatalist();
+  renderProductos();
+});
 
-  function safeText(s){
-    return String(s ?? "").replace(/\s+/g," ").trim();
-  }
+/* ---------- FACTURA: LÍNEAS ---------- */
+function findProducto(name){
+  return productos.find(p=>(p.name||'').toLowerCase()===String(name||'').toLowerCase());
+}
 
-  function toNum(x){
-    if(x === null || x === undefined) return 0;
-    const s = String(x).replace(",",".").replace(/[^\d.-]/g,"");
-    const n = Number(s);
-    return isFinite(n) ? n : 0;
-  }
+function addLinea(){
+  const tb = $('#lineasBody'); if(!tb) return;
+  const tr=document.createElement('tr');
+  tr.innerHTML=`
+    <td><input class="name" list="productNamesList" placeholder="Producto (↓ para ver lista)" /></td>
+    <td>
+      <select class="mode">
+        <option value="">—</option>
+        <option value="kg">kg</option>
+        <option value="unidad">unidad</option>
+        <option value="caja">caja</option>
+      </select>
+    </td>
+    <td><input class="qty" type="number" step="1" min="0" placeholder="Cant." /></td>
+    <td><input class="gross" type="number" step="0.01" min="0" placeholder="Bruto" /></td>
+    <td><input class="tare"  type="number" step="0.01" min="0" placeholder="Tara" /></td>
+    <td><input class="net"   type="number" step="0.01" placeholder="Neto" disabled /></td>
+    <td><input class="price" type="number" step="0.01" min="0" placeholder="Precio" /></td>
+    <td><input class="origin" placeholder="Origen (opcional)" /></td>
+    <td><input class="amount" placeholder="Importe" disabled /></td>
+    <td><button class="del">✕</button></td>
+  `;
+  tb.appendChild(tr);
 
-  function money(n){
-    const v = isFinite(n) ? n : 0;
-    return v.toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 }) + " €";
-  }
+  const name=tr.querySelector('.name');
+  const mode=tr.querySelector('.mode');
+  const qty=tr.querySelector('.qty');
+  const gross=tr.querySelector('.gross');
+  const tare=tr.querySelector('.tare');
+  const net=tr.querySelector('.net');
+  const price=tr.querySelector('.price');
+  const origin=tr.querySelector('.origin');
+  const amount=tr.querySelector('.amount');
 
-  function clone(obj){
-    return JSON.parse(JSON.stringify(obj));
-  }
+  const showHist=()=>{
+    const n=name.value.trim();
+    if(n) renderPriceHistory(n);
+  };
+  name.addEventListener('focus', showHist);
+  price.addEventListener('focus', showHist);
 
-  function uid(){
-    return "inv_" + Math.random().toString(16).slice(2) + "_" + Date.now();
-  }
+  name.addEventListener('change', ()=>{
+    const p=findProducto(name.value.trim());
+    if(p){
+      if(p.mode) mode.value=p.mode;
+      if(p.price!=null) price.value=p.price;
+      if(p.origin) origin.value=p.origin;
 
-  function setTheme(theme){
-    if(theme === "light"){
-      document.documentElement.setAttribute("data-theme","light");
+      const lp=lastPrice(p.name);
+      if(lp!=null && !(parseNum(price.value)>0)) price.value = lp;
+
+      renderPriceHistory(p.name);
+    }
+    recalcLine();
+  });
+
+  [mode, qty, gross, tare, price].forEach(i=>i.addEventListener('input', recalcLine));
+  tr.querySelector('.del').addEventListener('click', ()=>{ tr.remove(); recalc(); });
+
+  function recalcLine(){
+    const m=(mode.value||'').toLowerCase();
+    const q=Math.max(0, Math.floor(parseNum(qty.value||0)));
+    const g=Math.max(0, parseNum(gross.value||0));
+    const t=Math.max(0, parseNum(tare.value||0));
+    const pr=Math.max(0, parseNum(price.value||0));
+
+    let n=0;
+
+    // Neto por bruto-tara
+    if(g>0 || t>0){
+      n=Math.max(0,g-t);
     }else{
-      document.documentElement.removeAttribute("data-theme");
+      // Si es caja, usa kg/caja si está definido en producto
+      if(m==='caja'){
+        const p=findProducto(name.value);
+        const kg=(p?.boxkg||0);
+        n = q * kg;
+      }else if(m==='kg'){
+        n = q;
+      }else if(m==='unidad'){
+        n = q;
+      }
     }
-    localStorage.setItem(LS_THEME, theme);
-  }
 
-  function getTheme(){
-    return localStorage.getItem(LS_THEME) || "dark";
-  }
+    net.value = n ? n.toFixed(2) : '';
 
-  /* ===========================
-     LINES
-  =========================== */
-  function newLine(){
-    return {
-      id: "ln_" + Math.random().toString(16).slice(2),
-      name: "",
-      qty: 1,
-      price: 0,
-      unit: "kg"
-    };
-  }
-
-  function ensureMinLines(n=12){
-    while(LINES.length < n) LINES.push(newLine());
-  }
-
-  function lineTotal(line){
-    return toNum(line.qty) * toNum(line.price);
-  }
-
-  /* ===========================
-     RENDER
-  =========================== */
-  function render(){
-    // render lines
-    linesBody.innerHTML = "";
-    LINES.forEach((it, idx) => {
-      linesBody.appendChild(renderRow(it, idx));
-    });
+    // Importes: unidad => qty*price, resto => net*price
+    const amt = (m==='unidad') ? q*pr : n*pr;
+    amount.value = amt>0 ? amt.toFixed(2) : '';
 
     recalc();
-    renderPreview();
-    saveDraft();
   }
+}
 
-  function renderRow(it, idx){
-    const tr = document.createElement("tr");
+function captureLineas(){
+  return $$('#lineasBody tr').map(r=>{
+    const name=(r.querySelector('.name')?.value||'').trim();
+    const mode=(r.querySelector('.mode')?.value||'').trim().toLowerCase();
+    const qty=Math.max(0, Math.floor(parseNum(r.querySelector('.qty')?.value||0)));
+    const gross=Math.max(0, parseNum(r.querySelector('.gross')?.value||0));
+    const tare=Math.max(0, parseNum(r.querySelector('.tare')?.value||0));
+    const net=Math.max(0, parseNum(r.querySelector('.net')?.value||0));
+    const price=Math.max(0, parseNum(r.querySelector('.price')?.value||0));
+    const origin=(r.querySelector('.origin')?.value||'').trim();
+    return {name,mode,qty,gross,tare,net,price,origin};
+  }).filter(l=> l.name && (l.qty>0 || l.net>0 || l.gross>0));
+}
 
-    // delete
-    const tdDel = document.createElement("td");
-    const del = document.createElement("button");
-    del.className = "delBtn";
-    del.textContent = "🗑";
-    del.title = "Borrar fila (Alt+Supr)";
-    del.onclick = () => {
-      LINES.splice(idx, 1);
-      if(LINES.length === 0) LINES.push(newLine());
-      ensureMinLines(12);
-      render();
-    };
-    tdDel.appendChild(del);
+function lineImporte(l){
+  return (l.mode==='unidad') ? (l.qty*l.price) : (l.net*l.price);
+}
 
-    // name
-    const tdName = document.createElement("td");
-    const inName = document.createElement("input");
-    inName.className = "input";
-    inName.type = "text";
-    inName.placeholder = "Producto (autocompletar)";
-    inName.value = it.name || "";
-    tdName.appendChild(inName);
-
-    // qty
-    const tdQty = document.createElement("td");
-    const inQty = document.createElement("input");
-    inQty.className = "input";
-    inQty.type = "number";
-    inQty.inputMode = "decimal";
-    inQty.step = "0.01";
-    inQty.placeholder = "1";
-    inQty.value = (it.qty ?? 1);
-    tdQty.appendChild(inQty);
-
-    // price
-    const tdPrice = document.createElement("td");
-    const inPrice = document.createElement("input");
-    inPrice.className = "input";
-    inPrice.type = "number";
-    inPrice.inputMode = "decimal";
-    inPrice.step = "0.01";
-    inPrice.placeholder = "0.00";
-    inPrice.value = (it.price ?? 0);
-    tdPrice.appendChild(inPrice);
-
-    // unit
-    const tdUnit = document.createElement("td");
-    const inUnit = document.createElement("select");
-    inUnit.className = "input";
-    const units = ["kg","caja","ud","manojo","bolsa","pieza"];
-    units.forEach(u=>{
-      const op = document.createElement("option");
-      op.value = u;
-      op.textContent = u;
-      inUnit.appendChild(op);
-    });
-    inUnit.value = it.unit || "kg";
-    tdUnit.appendChild(inUnit);
-
-    // total
-    const tdTotal = document.createElement("td");
-    tdTotal.className = "tdRight";
-    const totalEl = document.createElement("b");
-    totalEl.textContent = money(lineTotal(it));
-    tdTotal.appendChild(totalEl);
-
-    // EVENTS
-    function updateLine(){
-      it.name  = safeText(inName.value);
-      it.qty   = toNum(inQty.value);
-      it.price = toNum(inPrice.value);
-      it.unit  = inUnit.value || "kg";
-      totalEl.textContent = money(lineTotal(it));
+/* ---------- PAGOS PARCIALES EN UI ---------- */
+function renderPagosTemp(){
+  const list=$('#listaPagos'); if(!list) return;
+  list.innerHTML='';
+  if(pagosTemp.length===0){
+    list.innerHTML='<div class="item">Sin pagos parciales.</div>';
+    return;
+  }
+  pagosTemp.forEach((p,i)=>{
+    const div=document.createElement('div');
+    div.className='item';
+    div.innerHTML=`
+      <div>${fmtDateDMY(new Date(p.date))} · <strong>${money(p.amount)}</strong></div>
+      <button class="ghost" data-i="${i}">✖</button>
+    `;
+    list.appendChild(div);
+  });
+  list.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      pagosTemp.splice(+b.dataset.i,1);
+      renderPagosTemp();
       recalc();
-      renderPreview();
-      saveDraft();
-    }
-
-    inName.addEventListener("input", updateLine);
-    inQty.addEventListener("input", updateLine);
-    inPrice.addEventListener("input", updateLine);
-    inUnit.addEventListener("change", updateLine);
-
-    // ✅ AUTOCOMPLETE REAL
-    attachAutocomplete(inName, (picked)=>{
-      inName.value = picked;
-      it.name = safeText(picked);
-      updateLine();
-
-      // saltar al precio
-      setTimeout(() => inPrice.focus(), 10);
     });
+  });
+}
 
-    // KEYBOARD FLOW
-    const focusables = [inName, inQty, inPrice, inUnit];
+$('#btnAddPago')?.addEventListener('click', ()=>{
+  const amt=parseNum($('#inpPagoParcial')?.value||0);
+  if(!(amt>0)) return;
+  pagosTemp.unshift({date: todayISO(), amount: amt});
+  $('#inpPagoParcial').value='';
+  renderPagosTemp();
+  recalc();
+});
 
-    function focusNext(currentIndex){
-      const next = focusables[currentIndex+1];
-      if(next){
-        next.focus();
-      }else{
-        // si estamos al final -> siguiente fila producto
-        const nextRow = linesBody.children[idx+1];
-        if(nextRow){
-          const nextInput = nextRow.querySelector("input");
-          if(nextInput) nextInput.focus();
-        }else{
-          // si no hay siguiente -> crear nueva fila y focus
-          addLineAndFocus();
-        }
-      }
-    }
+/* ---------- IVA SIEMPRE + RECÁLCULO ---------- */
+function recalc(){
+  const ls=captureLineas();
+  let subtotal=0;
+  ls.forEach(l=> subtotal += lineImporte(l));
 
-    function addLineAndFocus(){
-      LINES.push(newLine());
-      ensureMinLines(12);
-      render();
-      setTimeout(()=>{
-        const lastRow = linesBody.lastElementChild;
-        const inp = lastRow?.querySelector("input");
-        if(inp) inp.focus();
-      }, 30);
-    }
+  const transporte = $('#chkTransporte')?.checked ? subtotal*0.10 : 0;
 
-    // Enter navegación rápida
-    [inName, inQty, inPrice].forEach((el, pos)=>{
-      el.addEventListener("keydown", (e)=>{
-        // ctrl+enter -> nueva fila
-        if(e.key === "Enter" && e.ctrlKey){
-          e.preventDefault();
-          addLineAndFocus();
-          return;
-        }
+  // ✅ IVA 4% SIEMPRE (sobre subtotal + transporte)
+  const base = subtotal + transporte;
+  const iva = base * 0.04;
 
-        // alt+delete -> borrar fila
-        if((e.key === "Delete" || e.key === "Backspace") && e.altKey){
-          e.preventDefault();
-          del.click();
-          return;
-        }
+  // ✅ Total SIEMPRE incluye IVA
+  const total = base + iva;
 
-        // enter normal -> next
-        if(e.key === "Enter"){
-          e.preventDefault();
+  const manual = parseNum($('#pagado')?.value||0);
+  const parcial = pagosTemp.reduce((a,b)=>a+(b.amount||0),0);
+  const pagadoTotal = manual + parcial;
+  const pendiente = Math.max(0, total - pagadoTotal);
 
-          // si estamos en precio y es la ultima fila -> nueva fila
-          if(el === inPrice && idx === LINES.length - 1){
-            addLineAndFocus();
-            return;
-          }
+  $('#subtotal').textContent = money(subtotal);
+  $('#transp').textContent = money(transporte);
+  $('#iva').textContent = money(iva);
+  $('#total').textContent = money(total);
+  $('#pendiente').textContent = money(pendiente);
 
-          // si estamos en precio y la siguiente fila existe -> producto de siguiente fila
-          if(el === inPrice){
-            const nextRow = linesBody.children[idx+1];
-            if(nextRow){
-              const nextName = nextRow.querySelector("td:nth-child(2) input");
-              if(nextName) nextName.focus();
-              return;
-            }
-          }
+  // Estado automático
+  if(total<=0) $('#estado').value='pendiente';
+  else if(pagadoTotal<=0) $('#estado').value='pendiente';
+  else if(pagadoTotal<total) $('#estado').value='parcial';
+  else $('#estado').value='pagado';
 
-          focusNext(pos);
-        }
-      });
-    });
+  const foot=$('#pdf-foot-note');
+  if(foot) foot.textContent = 'IVA 4% incluido en el total. Transporte 10% opcional.';
 
-    // si cambias unidad y pulsas enter -> siguiente fila
-    inUnit.addEventListener("keydown", (e)=>{
-      if(e.key === "Enter"){
-        e.preventDefault();
-        const nextRow = linesBody.children[idx+1];
-        if(nextRow){
-          const nextName = nextRow.querySelector("td:nth-child(2) input");
-          if(nextName) nextName.focus();
-        }else{
-          LINES.push(newLine());
-          ensureMinLines(12);
-          render();
-          setTimeout(()=>{
-            const lastRow = linesBody.lastElementChild;
-            const inp = lastRow?.querySelector("input");
-            if(inp) inp.focus();
-          }, 30);
-        }
-      }
-    });
+  fillPrint(ls,{subtotal,transporte,iva,total},null,null);
+  drawResumen();
+}
 
-    tr.appendChild(tdDel);
-    tr.appendChild(tdName);
-    tr.appendChild(tdQty);
-    tr.appendChild(tdPrice);
-    tr.appendChild(tdUnit);
-    tr.appendChild(tdTotal);
+;['chkTransporte','estado','pagado','inpFechaFactura'].forEach(id=>{
+  $('#'+id)?.addEventListener('input', recalc);
+});
 
-    return tr;
+/* ---------- PDF FILL ---------- */
+function fillPrint(lines, totals, _temp=null, f=null){
+  $('#p-num').textContent = f?.numero || '(Sin guardar)';
+  $('#p-fecha').textContent = (f?new Date(f.fecha):new Date(getFechaISOFromInput())).toLocaleString();
+
+  $('#p-prov').innerHTML = `
+    <div><strong>${escapeHTML(f?.proveedor?.nombre || $('#provNombre').value || '')}</strong></div>
+    <div>${escapeHTML(f?.proveedor?.nif || $('#provNif').value || '')}</div>
+    <div>${escapeHTML(f?.proveedor?.dir || $('#provDir').value || '')}</div>
+    <div>${escapeHTML(f?.proveedor?.tel || $('#provTel').value || '')} · ${escapeHTML(f?.proveedor?.email || $('#provEmail').value || '')}</div>
+  `;
+  $('#p-cli').innerHTML = `
+    <div><strong>${escapeHTML(f?.cliente?.nombre || $('#cliNombre').value || '')}</strong></div>
+    <div>${escapeHTML(f?.cliente?.nif || $('#cliNif').value || '')}</div>
+    <div>${escapeHTML(f?.cliente?.dir || $('#cliDir').value || '')}</div>
+    <div>${escapeHTML(f?.cliente?.tel || $('#cliTel').value || '')} · ${escapeHTML(f?.cliente?.email || $('#cliEmail').value || '')}</div>
+  `;
+
+  const tbody = $('#p-tabla tbody'); tbody.innerHTML='';
+  (lines||[]).forEach(l=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHTML(l.name)}</td>
+      <td>${escapeHTML(l.mode||'')}</td>
+      <td>${l.qty||''}</td>
+      <td>${l.gross?l.gross.toFixed(2):''}</td>
+      <td>${l.tare?l.tare.toFixed(2):''}</td>
+      <td>${l.net?l.net.toFixed(2):''}</td>
+      <td>${money(l.price)}</td>
+      <td>${escapeHTML(l.origin||'')}</td>
+      <td>${money((l.mode==='unidad') ? l.qty*l.price : l.net*l.price)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  $('#p-sub').textContent = money(totals?.subtotal||0);
+  $('#p-tra').textContent = money(totals?.transporte||0);
+  $('#p-iva').textContent = money(totals?.iva||0);
+  $('#p-tot').textContent = money(totals?.total||0);
+
+  $('#p-estado').textContent = f?.estado || $('#estado')?.value || 'Impagada';
+  $('#p-metodo').textContent = f?.metodo || $('#metodoPago')?.value || 'Efectivo';
+  $('#p-obs').textContent = f?.obs || ($('#observaciones')?.value||'—');
+
+  // QR con datos básicos
+  try{
+    const canvas = $('#p-qr');
+    const numero = f?.numero || '(Sin guardar)';
+    const cliente = f?.cliente?.nombre || $('#cliNombre').value || '';
+    const payload = `ARSLAN-Factura|${numero}|${cliente}|${money(totals?.total||0)}|${$('#p-estado').textContent}`;
+    window.QRCode.toCanvas(canvas, payload, {width:92, margin:0});
+  }catch(e){}
+}
+
+/* ---------- NUEVA / GUARDAR / EDITAR ---------- */
+function genNumFactura(){
+  const d=new Date(), pad=n=>String(n).padStart(2,'0');
+  return `FA-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+function saveFacturas(){ save(K_FACTURAS, facturas); }
+
+function setEditBadge(){
+  const b = $('#editBadge');
+  if(!b) return;
+  if(editingIndex===null) b.textContent = '';
+  else b.textContent = '✏️ Editando factura';
+}
+
+function clearFacturaUI(){
+  const tb=$('#lineasBody');
+  if(tb) tb.innerHTML='';
+
+  for(let i=0;i<5;i++) addLinea();
+
+  $('#chkTransporte').checked=false;
+  $('#estado').value='pendiente';
+  $('#pagado').value='';
+  $('#metodoPago').value='Efectivo';
+  $('#observaciones').value='';
+
+  pagosTemp=[];
+  renderPagosTemp();
+
+  setFechaFacturaDefault();
+
+  editingIndex=null;
+  editingId=null;
+  setEditBadge();
+
+  recalc();
+}
+
+$('#btnNueva')?.addEventListener('click', ()=>{
+  clearFacturaUI();
+});
+
+$('#btnGuardar')?.addEventListener('click', ()=>{
+  const ls=captureLineas();
+  if(ls.length===0){
+    alert('Añade al menos una línea.');
+    return;
   }
 
-  /* ===========================
-     TOTALS + PREVIEW
-  =========================== */
-  function recalc(){
-    const sub = LINES
-      .filter(l => safeText(l.name) !== "" && (toNum(l.qty) !== 0))
-      .reduce((a, l) => a + lineTotal(l), 0);
+  // historial precios
+  ls.forEach(l=> pushPriceHistory(l.name, l.price));
 
-    const vatP = toNum(invVat.value);
-    const vatE = sub * (vatP / 100);
-    const total = sub + vatE;
+  const subtotal=unMoney($('#subtotal').textContent);
+  const transporte=unMoney($('#transp').textContent);
+  const iva=unMoney($('#iva').textContent);
+  const total=unMoney($('#total').textContent);
 
-    tSubtotal.textContent = money(sub);
-    tVat.textContent = money(vatE);
-    tTotal.textContent = money(total);
+  const manual = parseNum($('#pagado').value||0);
+  const pagos = [...pagosTemp];
+  const pagadoParcial = pagos.reduce((a,b)=>a+(b.amount||0),0);
+  const pagadoTotal = manual + pagadoParcial;
+  const pendiente=Math.max(0,total-pagadoTotal);
+  const estado = (pagadoTotal<=0) ? 'pendiente' : (pagadoTotal<total ? 'parcial' : 'pagado');
+
+  const fecha = getFechaISOFromInput();
+
+  const facturaObj = {
+    id: editingId || uid(),
+    numero: (editingIndex===null) ? genNumFactura() : (facturas[editingIndex]?.numero || genNumFactura()),
+    fecha,
+    proveedor:{
+      nombre:$('#provNombre').value,
+      nif:$('#provNif').value,
+      dir:$('#provDir').value,
+      tel:$('#provTel').value,
+      email:$('#provEmail').value
+    },
+    cliente:{
+      nombre:$('#cliNombre').value,
+      nif:$('#cliNif').value,
+      dir:$('#cliDir').value,
+      tel:$('#cliTel').value,
+      email:$('#cliEmail').value
+    },
+    lineas:ls,
+    transporte:$('#chkTransporte').checked,
+    estado,
+    metodo:$('#metodoPago').value,
+    obs:$('#observaciones').value,
+    totals:{subtotal,transporte,iva,total,pagado:pagadoTotal,pendiente},
+    pagos
+  };
+
+  if(editingIndex===null){
+    // ✅ NUEVA
+    facturas.unshift(facturaObj);
+    alert(`Factura ${facturaObj.numero} guardada.`);
+  }else{
+    // ✅ GUARDAR CAMBIOS
+    facturas[editingIndex] = facturaObj;
+    alert(`Factura ${facturaObj.numero} actualizada ✔️`);
   }
 
-  function renderPreview(){
-    const header = [
-      `📌 ${safeText(invClient.value) || "CLIENTE"}`,
-      `🧾 ${safeText(invNumber.value) || "(sin número)"}`,
-      `📅 ${invDate.value || ""}`,
-      ""
-    ].join("\n");
+  saveFacturas();
 
-    const lines = LINES
-      .filter(l => safeText(l.name) !== "" && toNum(l.qty) !== 0)
-      .map(l => {
-        const q = toNum(l.qty);
-        const p = toNum(l.price);
-        const u = safeText(l.unit || "");
-        const t = q * p;
-        return `- ${q} ${u}  ${safeText(l.name)}  @ ${p.toFixed(2)}€  =  ${t.toFixed(2)}€`;
-      })
-      .join("\n");
+  // reset pagos UI temporales tras guardar
+  pagosTemp=[];
+  renderPagosTemp();
 
-    const sub = tSubtotal.textContent;
-    const iva = tVat.textContent;
-    const tot = tTotal.textContent;
+  renderFacturas();
+  renderPendientes();
+  drawKPIs();
+  drawCharts();
+  drawTop();
+  renderVentasCliente();
+  drawResumen();
 
-    const footer = [
-      "",
-      `Subtotal: ${sub}`,
-      `IVA: ${iva}`,
-      `TOTAL: ${tot}`
-    ].join("\n");
+  fillPrint(ls,{subtotal,transporte,iva,total},null,facturaObj);
 
-    preview.textContent = header + lines + footer;
+  // salir de modo edición tras guardar
+  editingIndex=null;
+  editingId=null;
+  setEditBadge();
+});
+
+$('#btnImprimir')?.addEventListener('click', ()=>{
+  recalc();
+  const element = document.getElementById('printArea');
+  const d=new Date();
+  const file=`Factura-${($('#cliNombre').value||'Cliente').replace(/\s+/g,'')}-${fmtDateDMY(d)}.pdf`;
+  const opt = {
+    margin:[10,10,10,10],
+    filename:file,
+    image:{type:'jpeg',quality:0.98},
+    html2canvas:{scale:2,useCORS:true},
+    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+  };
+  window.html2pdf().set(opt).from(element).save();
+});
+
+/* ---------- LISTA DE FACTURAS (Ver / Cobrar / Parcial / PDF / Editar / Cambiar fecha) ---------- */
+function badgeEstado(f){
+  const tot=f.totals?.total||0, pag=f.totals?.pagado||0;
+  if(pag>=tot) return `<span class="state-badge state-green">Pagada</span>`;
+  if(pag>0 && pag<tot) return `<span class="state-badge state-amber">Parcial (${money(pag)} / ${money(tot)})</span>`;
+  return `<span class="state-badge state-red">Impagada</span>`;
+}
+
+function renderFacturas(){
+  const cont=$('#listaFacturas'); if(!cont) return;
+  cont.innerHTML='';
+
+  const q=($('#buscaCliente')?.value||'').toLowerCase();
+  const fe=$('#filtroEstado')?.value||'todas';
+  let arr=facturas.slice();
+
+  if(fe!=='todas') arr=arr.filter(f=>f.estado===fe);
+  if(q) arr=arr.filter(f=>(f.cliente?.nombre||'').toLowerCase().includes(q));
+
+  if(arr.length===0){
+    cont.innerHTML='<div class="item">No hay facturas.</div>';
+    return;
   }
 
-  /* ===========================
-     DRAFT SAVE/LOAD
-  =========================== */
-  function saveDraft(){
-    const data = packInvoice(false);
-    localStorage.setItem(LS_DRAFT, JSON.stringify(data));
-  }
+  // importante: el índice real en facturas
+  const indexMap = arr.map(a => facturas.findIndex(x => (x.id && a.id) ? x.id===a.id : x.numero===a.numero));
 
-  function loadDraft(){
-    const raw = localStorage.getItem(LS_DRAFT);
-    if(!raw) return false;
-    try{
-      const data = JSON.parse(raw);
-      applyInvoice(data);
-      return true;
-    }catch(e){
-      return false;
-    }
-  }
+  arr.slice(0,450).forEach((f,idx)=>{
+    const realIndex = indexMap[idx];
+    const fecha=new Date(f.fecha).toLocaleString();
 
-  /* ===========================
-     PACK/APPLY
-  =========================== */
-  function packInvoice(includeId=true){
-    const number = safeText(invNumber.value) || nowInvoiceNumber();
-    const data = {
-      ver: APP_VER,
-      id: includeId ? (CURRENT_ID || uid()) : null,
-      number,
-      date: invDate.value,
-      client: safeText(invClient.value),
-      notes: safeText(invNotes.value),
-      vat: toNum(invVat.value),
-      lines: clone(LINES),
-      savedAt: Date.now()
-    };
-    return data;
-  }
+    const div=document.createElement('div');
+    div.className='item';
 
-  function applyInvoice(data){
-    CURRENT_ID = data?.id || null;
-    invNumber.value = data?.number || "";
-    invDate.value   = data?.date || "";
-    invClient.value = data?.client || "";
-    invNotes.value  = data?.notes || "";
-    invVat.value    = (data?.vat ?? 4);
+    div.innerHTML=`
+      <div>
+        <strong>${escapeHTML(f.numero)}</strong> ${badgeEstado(f)}
+        <div class="muted">${fecha} · ${escapeHTML(f.cliente?.nombre||'')}</div>
+      </div>
+      <div class="row">
+        <strong>${money(f.totals?.total||0)}</strong>
+        <button class="ghost" data-e="ver" data-i="${realIndex}">Ver</button>
+        <button data-e="cobrar" data-i="${realIndex}">💶 Cobrar</button>
+        <button class="ghost" data-e="parcial" data-i="${realIndex}">+ Parcial</button>
+        <button class="ghost" data-e="pdf" data-i="${realIndex}">PDF</button>
+        <button class="ghost" data-e="edit" data-i="${realIndex}">✏️ Editar</button>
+        <button class="ghost" data-e="date" data-i="${realIndex}">📅 Fecha</button>
+      </div>
+    `;
 
-    LINES = Array.isArray(data?.lines) ? data.lines.map(x=>({
-      id: x.id || ("ln_" + Math.random().toString(16).slice(2)),
-      name: safeText(x.name),
-      qty: toNum(x.qty || 0),
-      price: toNum(x.price || 0),
-      unit: safeText(x.unit || "kg") || "kg"
-    })) : [];
+    cont.appendChild(div);
+  });
 
-    if(LINES.length === 0) LINES.push(newLine());
-    ensureMinLines(12);
-    render();
-  }
+  cont.querySelectorAll('button').forEach(b=>{
+    const i=+b.dataset.i;
+    b.addEventListener('click', ()=>{
+      const f=facturas[i];
+      if(!f) return;
 
-  /* ===========================
-     HISTORY
-  =========================== */
-  function getHistory(){
-    try{
-      return JSON.parse(localStorage.getItem(LS_HISTORY) || "[]");
-    }catch(e){
-      return [];
-    }
-  }
-
-  function setHistory(arr){
-    localStorage.setItem(LS_HISTORY, JSON.stringify(arr));
-  }
-
-  function upsertHistory(inv){
-    const list = getHistory();
-    const id = inv.id || uid();
-    inv.id = id;
-
-    const idx = list.findIndex(x => x.id === id);
-    if(idx >= 0) list[idx] = inv;
-    else list.unshift(inv);
-
-    // cap
-    if(list.length > 200) list.length = 200;
-
-    setHistory(list);
-    renderHistory();
-  }
-
-  function deleteFromHistory(id){
-    const list = getHistory().filter(x => x.id !== id);
-    setHistory(list);
-    renderHistory();
-  }
-
-  function renderHistory(){
-    const list = getHistory();
-    historyEl.innerHTML = "";
-
-    if(list.length === 0){
-      const empty = document.createElement("div");
-      empty.className = "hint";
-      empty.textContent = "No hay facturas guardadas todavía.";
-      historyEl.appendChild(empty);
-      return;
-    }
-
-    list.forEach(inv=>{
-      const div = document.createElement("div");
-      div.className = "hItem";
-
-      const left = document.createElement("div");
-      left.className = "hLeft";
-
-      const title = document.createElement("div");
-      title.className = "hTitle";
-      title.textContent = inv.number || "(sin número)";
-
-      const sub = document.createElement("div");
-      sub.className = "hSub";
-      const d = inv.date || "";
-      const c = inv.client || "Cliente";
-      sub.textContent = `${d} • ${c}`;
-
-      left.appendChild(title);
-      left.appendChild(sub);
-
-      const btns = document.createElement("div");
-      btns.className = "hBtns";
-
-      const bLoad = document.createElement("button");
-      bLoad.className = "btn ghost";
-      bLoad.textContent = "Cargar";
-      bLoad.onclick = () => applyInvoice(inv);
-
-      const bPdf = document.createElement("button");
-      bPdf.className = "btn ghost";
-      bPdf.textContent = "PDF";
-      bPdf.onclick = () => makePDF(inv);
-
-      const bDel = document.createElement("button");
-      bDel.className = "btn ghost";
-      bDel.textContent = "Borrar";
-      bDel.onclick = () => deleteFromHistory(inv.id);
-
-      btns.appendChild(bLoad);
-      btns.appendChild(bPdf);
-      btns.appendChild(bDel);
-
-      div.appendChild(left);
-      div.appendChild(btns);
-
-      historyEl.appendChild(div);
-    });
-  }
-
-  /* ===========================
-     BULK PARSE
-  =========================== */
-  function parseBulkLines(text){
-    const lines = String(text || "")
-      .split(/\r?\n/)
-      .map(x => x.trim())
-      .filter(Boolean);
-
-    const out = [];
-
-    for(const line of lines){
-      // try: "3 TOMATE PERA"
-      // try: "1,5 kg TOMATE"
-      // try: "TOMATE PERA"
-
-      let qty = 1;
-      let unit = "kg";
-      let name = line;
-
-      // tokens
-      const tokens = line.split(/\s+/);
-
-      // si primer token es número
-      const n0 = toNum(tokens[0]);
-      if(tokens.length >= 2 && n0 !== 0){
-        qty = n0;
-        name = tokens.slice(1).join(" ");
-      }else{
-        // si empieza por "1,5KG" pegado
-        const m = tokens[0].match(/^(\d+(?:[.,]\d+)?)(kg|ud|caja|manojo|bolsa|pieza)$/i);
-        if(m){
-          qty = toNum(m[1]);
-          unit = m[2].toLowerCase();
-          name = tokens.slice(1).join(" ");
-        }
+      if(b.dataset.e==='ver'){
+        fillPrint(f.lineas,f.totals,null,f);
+        switchTab('factura');
+        document.getElementById('printArea')?.scrollIntoView({behavior:'smooth'});
+        return;
       }
 
-      // unidad en el texto
-      const maybeUnit = name.match(/\b(kg|ud|uds|caja|manojo|bolsa|pieza|piezas)\b/i);
-      if(maybeUnit){
-        const u = maybeUnit[1].toLowerCase();
-        unit = (u === "uds") ? "ud" : (u === "piezas" ? "pieza" : u);
-        name = name.replace(new RegExp("\\b"+maybeUnit[1]+"\\b","i"), "").trim();
+      if(b.dataset.e==='cobrar'){
+        const tot=f.totals?.total||0;
+        f.totals.pagado=tot;
+        f.totals.pendiente=0;
+        f.estado='pagado';
+        (f.pagos??=[]).push({date:todayISO(), amount: tot});
+        saveFacturas();
+        renderFacturas();
+        renderPendientes();
+        drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+        return;
       }
 
-      out.push({
-        name: safeText(name),
-        qty: qty,
-        unit: unit,
-        price: 0
-      });
-    }
-
-    return out.filter(x => x.name);
-  }
-
-  function insertBulk(){
-    const list = parseBulkLines(bulkBox.value);
-    if(list.length === 0) return;
-
-    // Insert rows in first empty spots
-    let idx = 0;
-    for(let i=0; i<LINES.length && idx<list.length; i++){
-      if(!safeText(LINES[i].name)){
-        LINES[i].name = list[idx].name;
-        LINES[i].qty  = list[idx].qty;
-        LINES[i].unit = list[idx].unit;
-        // price stays 0
-        idx++;
+      if(b.dataset.e==='parcial'){
+        const max=(f.totals?.total||0)-(f.totals?.pagado||0);
+        const val=parseNum(prompt(`Importe abonado (pendiente ${money(max)}):`)||0);
+        if(val>0){
+          f.pagos=f.pagos||[];
+          f.pagos.push({date:todayISO(), amount:val});
+          f.totals.pagado=(f.totals.pagado||0)+val;
+          f.totals.pendiente=Math.max(0,(f.totals.total||0)-f.totals.pagado);
+          f.estado = f.totals.pendiente>0 ? (f.totals.pagado>0?'parcial':'pendiente') : 'pagado';
+          saveFacturas();
+          renderFacturas();
+          renderPendientes();
+          drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+        }
+        return;
       }
-    }
 
-    // if still remaining add new lines
-    while(idx < list.length){
-      LINES.push({
-        id: "ln_" + Math.random().toString(16).slice(2),
-        name: list[idx].name,
-        qty: list[idx].qty,
-        price: 0,
-        unit: list[idx].unit
-      });
-      idx++;
-    }
+      if(b.dataset.e==='pdf'){
+        fillPrint(f.lineas,f.totals,null,f);
+        const dt=new Date(f.fecha);
+        const nombreCliente=(f.cliente?.nombre||'Cliente').replace(/\s+/g,'');
+        const filename=`Factura-${nombreCliente}-${fmtDateDMY(dt)}.pdf`;
+        const opt={
+          margin:[10,10,10,10],
+          filename,
+          image:{type:'jpeg',quality:0.98},
+          html2canvas:{scale:2,useCORS:true},
+          jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+        };
+        window.html2pdf().set(opt).from(document.getElementById('printArea')).save();
+        return;
+      }
 
-    ensureMinLines(12);
-    render();
+      if(b.dataset.e==='edit'){
+        // ✅ ENTRAR EN MODO EDICIÓN
+        editingIndex = i;
+        editingId = f.id || uid();
+        setEditBadge();
 
-    // focus first row price to go fast
-    setTimeout(()=>{
-      const firstRow = linesBody.querySelector("tr");
-      const price = firstRow?.querySelector("td:nth-child(4) input");
-      if(price) price.focus();
-    }, 60);
-  }
+        // cargar datos
+        $('#provNombre').value = f.proveedor?.nombre || '';
+        $('#provNif').value    = f.proveedor?.nif || '';
+        $('#provDir').value    = f.proveedor?.dir || '';
+        $('#provTel').value    = f.proveedor?.tel || '';
+        $('#provEmail').value  = f.proveedor?.email || '';
 
-  /* ===========================
-     PDF
-  =========================== */
-  function makePDF(dataMaybe){
-    const data = dataMaybe ? clone(dataMaybe) : packInvoice(true);
-    if(!data.number) data.number = nowInvoiceNumber();
+        $('#cliNombre').value  = f.cliente?.nombre || '';
+        $('#cliNif').value     = f.cliente?.nif || '';
+        $('#cliDir').value     = f.cliente?.dir || '';
+        $('#cliTel').value     = f.cliente?.tel || '';
+        $('#cliEmail').value   = f.cliente?.email || '';
 
-    const lines = (data.lines || [])
-      .filter(l => safeText(l.name) && toNum(l.qty) !== 0)
-      .map(l => ({
-        name: safeText(l.name),
-        qty: toNum(l.qty),
-        unit: safeText(l.unit || "kg"),
-        price: toNum(l.price),
-        total: toNum(l.qty) * toNum(l.price)
-      }));
+        setFechaInputFromISO(f.fecha);
 
-    const sub = lines.reduce((a,x)=>a+x.total,0);
-    const vatP = toNum(data.vat);
-    const vatE = sub * (vatP/100);
-    const tot  = sub + vatE;
+        $('#chkTransporte').checked = !!f.transporte;
+        $('#estado').value = f.estado || 'pendiente';
+        $('#metodoPago').value = f.metodo || 'Efectivo';
+        $('#observaciones').value = f.obs || '';
 
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit:"pt", format:"a4" });
+        // pagos
+        pagosTemp = (Array.isArray(f.pagos) ? [...f.pagos] : []);
+        renderPagosTemp();
 
-    const margin = 40;
-
-    doc.setFont("helvetica","bold");
-    doc.setFontSize(14);
-    doc.text("ARSLAN • FACTURA", margin, 54);
-
-    doc.setFont("helvetica","normal");
-    doc.setFontSize(10);
-    doc.text(`Nº: ${data.number}`, margin, 74);
-    doc.text(`Fecha: ${data.date || ""}`, margin, 90);
-    doc.text(`Cliente: ${data.client || ""}`, margin, 106);
-
-    if(data.notes){
-      doc.text(`Notas: ${data.notes}`, margin, 122);
-    }
-
-    const tableY = data.notes ? 144 : 130;
-
-    doc.autoTable({
-      startY: tableY,
-      styles: { fontSize: 9, cellPadding: 6 },
-      headStyles: { fillColor: [22,163,74] },
-      head: [["Producto","Cant.","Unidad","Precio","Total"]],
-      body: lines.map(x => [
-        x.name,
-        String(x.qty).replace(".",","),
-        x.unit,
-        x.price.toFixed(2) + " €",
-        x.total.toFixed(2) + " €"
-      ])
-    });
-
-    const y = doc.lastAutoTable.finalY + 18;
-    doc.setFont("helvetica","bold");
-    doc.setFontSize(10);
-    doc.text(`Subtotal: ${sub.toFixed(2)} €`, 360, y);
-    doc.text(`IVA (${vatP.toFixed(2)}%): ${vatE.toFixed(2)} €`, 360, y + 16);
-    doc.setFontSize(12);
-    doc.text(`TOTAL: ${tot.toFixed(2)} €`, 360, y + 36);
-
-    // footer
-    doc.setFont("helvetica","normal");
-    doc.setFontSize(9);
-    doc.text("IVA incluido / según condiciones acordadas.", margin, 810);
-
-    doc.save(`${data.number}.pdf`);
-  }
-
-  /* ===========================
-     WHATSAPP
-  =========================== */
-  function toWhatsAppText(){
-    const number = safeText(invNumber.value) || "(sin número)";
-    const date = invDate.value || "";
-    const client = safeText(invClient.value) || "CLIENTE";
-
-    const lines = LINES
-      .filter(l => safeText(l.name) && toNum(l.qty) !== 0)
-      .map(l => {
-        const q = toNum(l.qty);
-        const u = safeText(l.unit||"");
-        const p = toNum(l.price);
-        const t = q*p;
-        return `• ${q} ${u} ${safeText(l.name)} — ${p.toFixed(2)}€ = ${t.toFixed(2)}€`;
-      })
-      .join("\n");
-
-    const sub = tSubtotal.textContent;
-    const iva = tVat.textContent;
-    const tot = tTotal.textContent;
-
-    const text =
-`🧾 FACTURA ARSLAN
-Cliente: ${client}
-Nº: ${number}
-Fecha: ${date}
-
-${lines}
-
-Subtotal: ${sub}
-IVA: ${iva}
-TOTAL: ${tot}`;
-
-    return text;
-  }
-
-  function sendWhatsApp(){
-    const text = toWhatsAppText();
-    const url = "https://wa.me/?text=" + encodeURIComponent(text);
-    window.open(url, "_blank");
-  }
-
-  /* ===========================
-     ACTIONS
-  =========================== */
-  function newInvoice(){
-    CURRENT_ID = null;
-    invNumber.value = "";
-    invClient.value = "";
-    invNotes.value  = "";
-    invVat.value    = 4;
-
-    const d = new Date();
-    invDate.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-
-    LINES = [];
-    ensureMinLines(12);
-    render();
-
-    // focus first product input
-    setTimeout(()=>{
-      const first = linesBody.querySelector("tr td:nth-child(2) input");
-      if(first) first.focus();
-    }, 80);
-  }
-
-  function clearAll(){
-    if(!confirm("¿Limpiar todo el contenido actual?")) return;
-    newInvoice();
-    bulkBox.value = "";
-    saveDraft();
-  }
-
-  function saveInvoice(){
-    const data = packInvoice(true);
-    if(!data.number) data.number = nowInvoiceNumber();
-    invNumber.value = data.number;
-
-    // update CURRENT_ID
-    CURRENT_ID = data.id;
-
-    upsertHistory(data);
-    saveDraft();
-
-    toast("✅ Factura guardada");
-  }
-
-  function addLine(){
-    LINES.push(newLine());
-    ensureMinLines(12);
-    render();
-    setTimeout(()=>{
-      const lastRow = linesBody.lastElementChild;
-      const inp = lastRow?.querySelector("td:nth-child(2) input");
-      if(inp) inp.focus();
-    }, 40);
-  }
-
-  function resetLines(){
-    if(!confirm("¿Resetear filas? (deja 12 filas vacías)")) return;
-    LINES = [];
-    ensureMinLines(12);
-    render();
-  }
-
-  /* ===========================
-     EXPORT/IMPORT
-  =========================== */
-  function exportJSON(){
-    const list = getHistory();
-    const payload = {
-      ver: APP_VER,
-      exportedAt: new Date().toISOString(),
-      invoices: list
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "arslan_facturas_export.json";
-    a.click();
-    setTimeout(()=> URL.revokeObjectURL(a.href), 4000);
-  }
-
-  function importJSONFile(file){
-    const reader = new FileReader();
-    reader.onload = () => {
-      try{
-        const payload = JSON.parse(reader.result);
-        const invs = Array.isArray(payload?.invoices) ? payload.invoices : [];
-        if(invs.length === 0) throw new Error("JSON sin invoices");
-
-        const current = getHistory();
-        const map = new Map(current.map(x => [x.id, x]));
-        invs.forEach(x => {
-          const id = x.id || uid();
-          x.id = id;
-          map.set(id, x);
+        // cargar líneas
+        const tb=$('#lineasBody');
+        tb.innerHTML='';
+        (f.lineas||[]).forEach(l=>{
+          addLinea();
+          const r=tb.lastElementChild;
+          r.querySelector('.name').value = l.name || '';
+          r.querySelector('.mode').value = l.mode || '';
+          r.querySelector('.qty').value = l.qty || '';
+          r.querySelector('.gross').value = l.gross || '';
+          r.querySelector('.tare').value = l.tare || '';
+          r.querySelector('.net').value = l.net || '';
+          r.querySelector('.price').value = l.price || '';
+          r.querySelector('.origin').value = l.origin || '';
         });
 
-        const merged = Array.from(map.values())
-          .sort((a,b)=> (b.savedAt||0) - (a.savedAt||0));
+        // asegurar mínimo 5
+        while(tb.children.length<5) addLinea();
 
-        setHistory(merged.slice(0, 300));
-        renderHistory();
-        toast("✅ Importado correctamente");
-      }catch(e){
-        alert("❌ Error importando JSON");
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  /* ===========================
-     TOAST SIMPLE
-  =========================== */
-  let toastTimer = null;
-  function toast(msg){
-    let el = document.getElementById("toastArslan");
-    if(!el){
-      el = document.createElement("div");
-      el.id = "toastArslan";
-      el.style.position = "fixed";
-      el.style.left = "50%";
-      el.style.bottom = "22px";
-      el.style.transform = "translateX(-50%)";
-      el.style.background = "rgba(0,0,0,.80)";
-      el.style.color = "#fff";
-      el.style.padding = "10px 14px";
-      el.style.borderRadius = "14px";
-      el.style.fontWeight = "700";
-      el.style.fontSize = "13px";
-      el.style.zIndex = "999999";
-      el.style.border = "1px solid rgba(255,255,255,.15)";
-      document.body.appendChild(el);
-    }
-    el.textContent = msg;
-    el.style.opacity = "1";
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(()=>{ el.style.opacity = "0"; }, 1500);
-  }
-
-  /* ===========================
-     EVENTS
-  =========================== */
-  function bindEvents(){
-    btnNew.onclick = () => newInvoice();
-    btnSave.onclick = () => saveInvoice();
-    btnClear.onclick = () => clearAll();
-
-    btnPDF.onclick = () => makePDF();
-    btnWA.onclick  = () => sendWhatsApp();
-
-    btnAddLine.onclick = () => addLine();
-    btnResetLines.onclick = () => resetLines();
-
-    btnBulk.onclick = () => insertBulk();
-    btnBulkClear.onclick = () => bulkBox.value = "";
-
-    btnExport.onclick = () => exportJSON();
-
-    importFile.addEventListener("change", (e)=>{
-      const f = e.target.files?.[0];
-      if(!f) return;
-      importJSONFile(f);
-      importFile.value = "";
-    });
-
-    // auto recalc on header changes
-    [invNumber, invDate, invClient, invNotes, invVat].forEach(el=>{
-      el.addEventListener("input", ()=>{
         recalc();
-        renderPreview();
-        saveDraft();
-      });
-    });
-
-    btnTheme.onclick = () => {
-      const cur = getTheme();
-      setTheme(cur === "light" ? "dark" : "light");
-    };
-
-    btnHelp.onclick = () => {
-      modalHelp.style.display = "flex";
-    };
-    btnCloseHelp.onclick = () => {
-      modalHelp.style.display = "none";
-    };
-    modalHelp.addEventListener("click", (e)=>{
-      if(e.target === modalHelp) modalHelp.style.display = "none";
-    });
-
-    // Global shortcuts
-    document.addEventListener("keydown", (e)=>{
-      // Ctrl+S guardar
-      if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){
-        e.preventDefault();
-        saveInvoice();
+        switchTab('factura');
+        document.getElementById('lineasBody')?.scrollIntoView({behavior:'smooth'});
+        return;
       }
-      // Ctrl+P PDF
-      if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p"){
-        e.preventDefault();
-        makePDF();
-      }
-      // Ctrl+Enter nueva fila
-      if(e.ctrlKey && e.key === "Enter"){
-        e.preventDefault();
-        addLine();
+
+      if(b.dataset.e==='date'){
+        const current = new Date(f.fecha);
+        const newVal = prompt(
+          'Nueva fecha ISO (ej: 2026-01-26T10:30:00.000Z)\n\nO escribe una fecha local tipo: 2026-01-26 10:30',
+          current.toISOString()
+        );
+
+        if(!newVal) return;
+
+        // aceptar formato libre
+        let newDate = new Date(newVal);
+        if(isNaN(newDate.getTime())){
+          // probar con formato "YYYY-MM-DD HH:mm"
+          const fixed = String(newVal).trim().replace(' ', 'T');
+          newDate = new Date(fixed);
+        }
+        if(isNaN(newDate.getTime())){
+          alert('Fecha inválida.');
+          return;
+        }
+
+        f.fecha = newDate.toISOString();
+        saveFacturas();
+        renderFacturas();
+        renderPendientes();
+        drawKPIs(); drawCharts(); drawTop(); renderVentasCliente(); drawResumen();
+        return;
       }
     });
-  }
+  });
+}
 
-  /* ===========================
-     INIT
-  =========================== */
-  function init(){
-    setTheme(getTheme());
-    initArslanVocab();
-    bindEvents();
-    renderHistory();
+$('#filtroEstado')?.addEventListener('input', renderFacturas);
+$('#buscaCliente')?.addEventListener('input', renderFacturas);
 
-    const d = new Date();
-    invDate.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+/* ---------- PENDIENTES ---------- */
+function renderPendientes(){
+  const tb=$('#tblPendientes tbody'); if(!tb) return;
+  tb.innerHTML='';
 
-    // init lines
-    ensureMinLines(12);
+  const map=new Map(); // cliente -> {count, total, lastDate}
+  facturas.forEach(f=>{
+    const pend=f.totals?.pendiente||0;
+    if(pend<=0) return;
+    const nom=f.cliente?.nombre||'(s/cliente)';
+    const cur=map.get(nom)||{count:0,total:0,lastDate:null};
+    cur.count++;
+    cur.total+=pend;
+    cur.lastDate = !cur.lastDate || new Date(f.fecha)>new Date(cur.lastDate) ? f.fecha : cur.lastDate;
+    map.set(nom,cur);
+  });
 
-    // load draft if exists
-    const loaded = loadDraft();
-    if(!loaded){
-      render();
-    }else{
-      renderHistory();
+  let global=0;
+  const rows=[...map.entries()].sort((a,b)=>b[1].total-a[1].total);
+
+  rows.forEach(([nom,info])=>{
+    global+=info.total;
+    const tr=document.createElement('tr');
+
+    // semáforo simple
+    const color = info.total>500 ? 'state-red' : info.total>=100 ? 'state-amber' : 'state-green';
+
+    tr.innerHTML=`
+      <td>${escapeHTML(nom)}</td>
+      <td>${info.count}</td>
+      <td><span class="state-badge ${color}">${money(info.total)}</span></td>
+      <td>${new Date(info.lastDate).toLocaleString()}</td>
+      <td><button class="ghost" data-c="${escapeHTML(nom)}">Ver facturas</button></td>
+    `;
+    tb.appendChild(tr);
+  });
+
+  $('#resGlobal').textContent = money(global);
+
+  tb.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const nombre=b.dataset.c;
+      $('#buscaCliente').value=nombre;
+      switchTab('facturas');
+      renderFacturas();
+    });
+  });
+}
+
+/* ---------- VENTAS (KPIs, gráficos, top, por cliente) ---------- */
+function sumBetween(d1,d2,filterClient=null){
+  let sum=0;
+  facturas.forEach(f=>{
+    const d=new Date(f.fecha);
+    if(d>=d1 && d<d2 && (!filterClient || (f.cliente?.nombre||'')===filterClient)){
+      sum += (f.totals?.total||0);
     }
+  });
+  return sum;
+}
+function startOfDay(d=new Date()){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
+function endOfDay(d=new Date()){ const x=new Date(d); x.setHours(23,59,59,999); return x; }
+function startOfWeek(d=new Date()){
+  const x=new Date(d);
+  const day=(x.getDay()+6)%7; // lunes=0
+  x.setDate(x.getDate()-day);
+  x.setHours(0,0,0,0);
+  return x;
+}
+function startOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth(), 1); }
 
-    toast(ARSLAN_VOCAB_READY ? `✅ Vocab cargado (${ARSLAN_VOCAB.length})` : "⚠️ Vocab no encontrado");
+function drawKPIs(){
+  const now=new Date();
+  const hoy = sumBetween(startOfDay(now), endOfDay(now));
+  const semana = sumBetween(startOfWeek(now), endOfDay(now));
+  const mes = sumBetween(startOfMonth(now), endOfDay(now));
+  const total = facturas.reduce((a,f)=>a+(f.totals?.total||0),0);
+
+  $('#vHoy').textContent=money(hoy);
+  $('#vSemana').textContent=money(semana);
+  $('#vMes').textContent=money(mes);
+  $('#vTotal').textContent=money(total);
+
+  $('#rHoy').textContent=money(hoy);
+  $('#rSemana').textContent=money(semana);
+  $('#rMes').textContent=money(mes);
+  $('#rTotal').textContent=money(total);
+}
+
+let chart1, chart2, chartTop;
+function groupDaily(n=7){
+  const now=new Date();
+  const buckets=[];
+  for(let i=n-1;i>=0;i--){
+    const d=new Date(now);
+    d.setDate(d.getDate()-i);
+    const k=d.toISOString().slice(0,10);
+    buckets.push({k,label:k.slice(5),sum:0});
+  }
+  facturas.forEach(f=>{
+    const k=String(f.fecha||'').slice(0,10);
+    const b=buckets.find(x=>x.k===k);
+    if(b) b.sum += (f.totals?.total||0);
+  });
+  return buckets;
+}
+function groupMonthly(n=12){
+  const now=new Date();
+  const buckets=[];
+  for(let i=n-1;i>=0;i--){
+    const d=new Date(now);
+    d.setMonth(d.getMonth()-i);
+    const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    buckets.push({k,label:k,sum:0});
+  }
+  facturas.forEach(f=>{
+    const d=new Date(f.fecha);
+    const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const b=buckets.find(x=>x.k===k);
+    if(b) b.sum += (f.totals?.total||0);
+  });
+  return buckets;
+}
+
+function drawCharts(){
+  if(typeof Chart==='undefined') return;
+  const daily=groupDaily(7);
+  const monthly=groupMonthly(12);
+
+  if(chart1) chart1.destroy();
+  if(chart2) chart2.destroy();
+
+  chart1=new Chart(document.getElementById('chartDiario').getContext('2d'), {
+    type:'bar',
+    data:{labels:daily.map(d=>d.label), datasets:[{label:'Ventas diarias', data:daily.map(d=>d.sum)}]},
+    options:{responsive:true, plugins:{legend:{display:false}}}
+  });
+
+  chart2=new Chart(document.getElementById('chartMensual').getContext('2d'), {
+    type:'line',
+    data:{labels:monthly.map(d=>d.label), datasets:[{label:'Ventas mensuales', data:monthly.map(d=>d.sum)}]},
+    options:{responsive:true, plugins:{legend:{display:false}}}
+  });
+}
+
+function drawTop(){
+  if(typeof Chart==='undefined') return;
+  const map=new Map(); // name -> total €
+  facturas.forEach(f=>{
+    (f.lineas||[]).forEach(l=>{
+      const amt = (l.mode==='unidad') ? (l.qty*l.price) : (l.net*l.price);
+      map.set(l.name,(map.get(l.name)||0)+amt);
+    });
+  });
+  const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const labels=pairs.map(p=>p[0]);
+  const data=pairs.map(p=>p[1]);
+
+  if(chartTop) chartTop.destroy();
+  chartTop=new Chart(document.getElementById('chartTop').getContext('2d'), {
+    type:'bar',
+    data:{labels, datasets:[{label:'Top productos (€)', data}]},
+    options:{responsive:true, plugins:{legend:{display:false}}}
+  });
+}
+
+function renderVentasCliente(){
+  const tb=$('#tblVentasCliente tbody'); if(!tb) return;
+  tb.innerHTML='';
+
+  const now=new Date();
+  const sDay=startOfDay(now), eDay=endOfDay(now);
+  const sWeek=startOfWeek(now), eWeek=endOfDay(now);
+  const sMonth=startOfMonth(now), eMonth=endOfDay(now);
+
+  const byClient=new Map(); // cliente -> {hoy,semana,mes,total}
+  facturas.forEach(f=>{
+    const nom=f.cliente?.nombre||'(s/cliente)';
+    const d=new Date(f.fecha);
+    const tot=f.totals?.total||0;
+    const cur=byClient.get(nom)||{hoy:0,semana:0,mes:0,total:0};
+
+    if(d>=sDay && d<=eDay) cur.hoy+=tot;
+    if(d>=sWeek&& d<=eWeek) cur.semana+=tot;
+    if(d>=sMonth&&d<=eMonth) cur.mes+=tot;
+    cur.total+=tot;
+
+    byClient.set(nom,cur);
+  });
+
+  [...byClient.entries()].sort((a,b)=>b[1].total-a[1].total).forEach(([nom,v])=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td>${escapeHTML(nom)}</td>
+      <td>${money(v.hoy)}</td>
+      <td>${money(v.semana)}</td>
+      <td>${money(v.mes)}</td>
+      <td><strong>${money(v.total)}</strong></td>
+    `;
+    tb.appendChild(tr);
+  });
+}
+
+/* ---------- EVENTOS GENERALES ---------- */
+$('#btnAddLinea')?.addEventListener('click', addLinea);
+
+$('#btnVaciarLineas')?.addEventListener('click', ()=>{
+  if(confirm('¿Vaciar líneas?')){
+    const tb=$('#lineasBody');
+    tb.innerHTML='';
+    for(let i=0;i<5;i++) addLinea();
+    recalc();
+  }
+});
+
+$('#btnNuevoCliente')?.addEventListener('click', ()=>switchTab('clientes'));
+
+$('#selCliente')?.addEventListener('change', ()=>{
+  const id=$('#selCliente')?.value;
+  if(!id) return;
+  const c=clientes.find(x=>x.id===id);
+  if(!c) return;
+  fillClientFields(c);
+  recalc();
+});
+
+$('#btnAddCliente')?.addEventListener('click', ()=>{
+  const nombre=(prompt('Nombre del cliente:')||'').trim();
+  if(!nombre) return;
+
+  const nif = (prompt('NIF/CIF:')||'').trim();
+  const dir = (prompt('Dirección:')||'').trim();
+  const tel = (prompt('Teléfono:')||'').trim();
+  const email = (prompt('Email:')||'').trim();
+
+  clientes.push({ id: uid(), nombre, nif, dir, tel, email });
+  saveClientes();
+  renderClientesSelect();
+  renderClientesLista();
+});
+
+/* ---------- RESUMEN ---------- */
+function drawResumen(){
+  drawKPIs();
+}
+
+/* ===========================================================
+   PARTE 3/3:
+   - Import/Export JSON (clientes/productos/facturas) (manteniendo botones)
+   - Export CSV ventas
+   - Reset deudas cliente/global (botones pendientes)
+   - RenderAll() completo + Boot final correcto
+   - Fix final de order y auto-load
+=========================================================== */
+/* ===========================================================
+   PARTE 3/3 — ARSLAN PRO V10.4 (MONO Edition) — app.js
+   ✅ Helpers de fecha + Edición completa estable
+   ✅ Export CSV ventas (sin backup/restore)
+   ✅ RenderAll + Boot final (cierre correcto)
+   ✅ Atajos teclado PRO (Enter / Ctrl+Enter / Alt+S / Alt+N)
+=========================================================== */
+
+/* ---------- FECHA FACTURA (input seguro) ---------- */
+function ensureFechaFacturaInput(){
+  const el = $('#inpFechaFactura');
+  if(!el) return;
+
+  // si no tiene value, lo ponemos
+  if(!el.value){
+    const d=new Date();
+    // input type datetime-local: YYYY-MM-DDTHH:mm
+    const pad=n=>String(n).padStart(2,'0');
+    el.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+}
+
+function setFechaFacturaDefault(){
+  const el = $('#inpFechaFactura');
+  if(!el) return;
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,'0');
+  el.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setFechaInputFromISO(iso){
+  const el = $('#inpFechaFactura');
+  if(!el) return;
+  try{
+    const d=new Date(iso);
+    if(isNaN(d.getTime())) return;
+    const pad=n=>String(n).padStart(2,'0');
+    el.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }catch(e){}
+}
+
+function getFechaISOFromInput(){
+  const el = $('#inpFechaFactura');
+  if(!el || !el.value) return todayISO();
+  // datetime-local devuelve "YYYY-MM-DDTHH:mm"
+  const d = new Date(el.value);
+  if(isNaN(d.getTime())) return todayISO();
+  return d.toISOString();
+}
+
+/* ---------- EDIT MODE FLAGS (seguro global interno) ---------- */
+if(typeof window.editingIndex === 'undefined') window.editingIndex = null;
+if(typeof window.editingId === 'undefined') window.editingId = null;
+let editingIndex = window.editingIndex;
+let editingId = window.editingId;
+
+function syncEditGlobals(){
+  window.editingIndex = editingIndex;
+  window.editingId = editingId;
+}
+
+/* ---------- CLIENTES: BUSCADOR LIVE ---------- */
+$('#buscarCliente')?.addEventListener('input', renderClientesLista);
+
+/* ---------- EXPORT CSV VENTAS (mantiene función pro) ---------- */
+function exportVentasCSV(){
+  const rows=[['Cliente','Fecha','Nº','Total','Pagado','Pendiente','Estado','Método']];
+  facturas.forEach(f=>{
+    rows.push([
+      f.cliente?.nombre||'',
+      new Date(f.fecha).toLocaleString(),
+      f.numero||'',
+      (f.totals?.total||0),
+      (f.totals?.pagado||0),
+      (f.totals?.pendiente||0),
+      f.estado||'',
+      f.metodo||''
+    ]);
+  });
+
+  const csv = rows
+    .map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','))
+    .join('\n');
+
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='ventas.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+$('#btnExportVentas')?.addEventListener('click', exportVentasCSV);
+
+/* ---------- ATAJOS TECLADO PRO ---------- */
+function focusNextInputInRow(current){
+  // Busca el siguiente input/select dentro de la misma fila <tr>
+  const tr = current.closest('tr');
+  if(!tr) return false;
+
+  const focusables = Array.from(tr.querySelectorAll('input,select,textarea,button'))
+    .filter(el => !el.disabled && el.type!=='button' && el.className!=='del');
+
+  const idx = focusables.indexOf(current);
+  if(idx>=0 && idx < focusables.length-1){
+    focusables[idx+1].focus();
+    focusables[idx+1].select?.();
+    return true;
   }
 
-  init();
+  // si no hay más en esa fila, salta al primer campo de la siguiente fila
+  const nextTr = tr.nextElementSibling;
+  if(nextTr){
+    const nxt = nextTr.querySelector('input,select,textarea');
+    if(nxt){
+      nxt.focus();
+      nxt.select?.();
+      return true;
+    }
+  }
+  return false;
+}
 
+document.addEventListener('keydown', (e)=>{
+  // Alt+S = Guardar
+  if(e.altKey && (e.key==='s' || e.key==='S')){
+    e.preventDefault();
+    $('#btnGuardar')?.click();
+    return;
+  }
+  // Alt+N = Nueva factura
+  if(e.altKey && (e.key==='n' || e.key==='N')){
+    e.preventDefault();
+    $('#btnNueva')?.click();
+    return;
+  }
+  // Ctrl+Enter = Añadir línea
+  if(e.ctrlKey && e.key==='Enter'){
+    e.preventDefault();
+    $('#btnAddLinea')?.click();
+    return;
+  }
+
+  // Enter = saltar al siguiente input en líneas (sin enviar)
+  if(e.key==='Enter'){
+    const el = document.activeElement;
+    if(!el) return;
+    const insideLines = el.closest('#lineasBody');
+    if(insideLines){
+      e.preventDefault();
+      // si es botón del, no
+      if(el.classList?.contains('del')) return;
+      // intenta mover
+      const moved = focusNextInputInRow(el);
+      if(!moved){
+        // si no movió, añade nueva línea y enfoca producto
+        addLinea();
+        const tb = $('#lineasBody');
+        const last = tb?.lastElementChild;
+        const inp = last?.querySelector('.name');
+        inp?.focus();
+      }
+    }
+  }
+});
+
+/* ---------- REPARACIÓN PEQUEÑA: INCREMENTOS RÁPIDOS EN CANTIDAD ---------- */
+document.addEventListener('click', (e)=>{
+  const t=e.target;
+  if(!(t instanceof HTMLElement)) return;
+
+  // Click en cantidad = selecciona todo rápido
+  if(t.classList?.contains('qty') || t.classList?.contains('price') || t.classList?.contains('gross') || t.classList?.contains('tare')){
+    try{ t.select?.(); }catch(err){}
+  }
+});
+
+/* ---------- BOTÓN: LIMPIAR BÚSQUEDA FACTURAS ---------- */
+$('#btnClearSearch')?.addEventListener('click', ()=>{
+  const b=$('#buscaCliente');
+  if(b){ b.value=''; renderFacturas(); }
+});
+
+/* ---------- RENDER GLOBAL ---------- */
+function renderAll(){
+  renderClientesSelect();
+  renderClientesLista();
+
+  populateProductDatalist();
+  renderProductos();
+
+  renderFacturas();
+  renderPendientes();
+
+  drawKPIs();
+  drawCharts();
+  drawTop();
+  renderVentasCliente();
+
+  drawResumen();
+}
+
+/* ---------- BOOT FINAL (SIN CLOUD, 100% LOCAL) ---------- */
+(function finalBoot(){
+  // asegurar defaults
+  seedClientesIfEmpty();
+  ensureClienteIds();
+  seedProductsIfEmpty();
+  setProviderDefaultsIfEmpty();
+
+  // fecha input
+  ensureFechaFacturaInput();
+
+  // líneas
+  const tb=$('#lineasBody');
+  if(tb && tb.children.length===0){
+    for(let i=0;i<5;i++) addLinea();
+  }
+
+  // pagos temp
+  renderPagosTemp();
+
+  // Render todo
+  renderAll();
+
+  // Recalcula
+  recalc();
+
+  // Inicializa badge edit si existe
+  setEditBadge?.();
+
+  // sincroniza globals
+  syncEditGlobals();
+
+  console.log('✅ ARSLAN PRO V10.4 (MONO Edition) — App cargada OK');
 })();
+
+/* ---------- CIERRE DEL IIFE PRINCIPAL (del PARTE 1) ---------- */
+})(); // ✅ Este es el CIERRE CORRECTO FINAL
