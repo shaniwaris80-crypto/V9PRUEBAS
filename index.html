@@ -1,642 +1,573 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>ARSLAN • FACTURAS KIWI ULTRA PRO (V3.2)</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>ARSLAN • KIWI FACTURAS PRO</title>
 
-  <!-- Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="./style.css" />
 
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-
-  <!-- jsPDF + AutoTable -->
+  <!-- ✅ jsPDF + AutoTable -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
-  <link rel="stylesheet" href="style.css" />
+  <!-- ✅ QR -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+
+  <meta name="theme-color" content="#16a34a" />
 </head>
 
 <body>
-  <div class="app">
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="kiwi"></div>
+      <div class="brandText">
+        <div class="brandName">ARSLAN <span>KIWI</span></div>
+        <div class="brandSub">Facturas & Contabilidad PRO</div>
+      </div>
+    </div>
 
-    <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-      <div class="brand">
-        <div class="kiwi-dot"></div>
-        <div class="brand-text">
-          <div class="brand-title">ARSLAN</div>
-          <div class="brand-sub">KIWI • ULTRA PRO</div>
+    <div class="topbarRight">
+      <button class="btn ghost" id="btnSync" title="Sincronizar nube">
+        ☁️ Sync
+      </button>
+      <button class="btn ghost" id="btnExportJson" title="Exportar JSON local">
+        ⬇️ Export
+      </button>
+      <button class="btn ghost" id="btnImportJson" title="Importar JSON">
+        ⬆️ Import
+      </button>
+
+      <div class="userChip" id="userChip" hidden>
+        <div class="dot"></div>
+        <div>
+          <div class="uName" id="uEmail">—</div>
+          <div class="uSmall" id="uUid">—</div>
         </div>
       </div>
 
-      <nav class="nav">
-        <button class="nav-item active" data-route="dashboard">
-          <i data-lucide="layout-dashboard"></i><span>Dashboard</span>
-        </button>
-        <button class="nav-item" data-route="invoices">
-          <i data-lucide="file-text"></i><span>Facturas</span>
-        </button>
-        <button class="nav-item" data-route="clients">
-          <i data-lucide="users"></i><span>Clientes</span>
-        </button>
-        <button class="nav-item" data-route="reports">
-          <i data-lucide="bar-chart-3"></i><span>Contabilidad</span>
-        </button>
-        <button class="nav-item" data-route="settings">
-          <i data-lucide="settings"></i><span>Ajustes</span>
-        </button>
-      </nav>
+      <button class="btn danger" id="btnLogout" hidden>Salir</button>
+    </div>
+  </header>
 
-      <div class="sidebar-footer">
-        <div class="cloud-status" id="cloudStatus">
-          <span class="dot gray" id="cloudDot"></span>
-          <span class="cloud-text" id="cloudText">Local (sin nube)</span>
+  <!-- LOGIN -->
+  <section class="loginWrap" id="loginWrap">
+    <div class="card loginCard">
+      <h1>Iniciar sesión</h1>
+      <p class="muted">Acceso nube real (Firebase). Las facturas se sincronizan en todos tus dispositivos.</p>
+
+      <div class="formGrid">
+        <label class="lbl">
+          <span>Email</span>
+          <input id="loginEmail" type="email" placeholder="tuemail@..." autocomplete="email" />
+        </label>
+
+        <label class="lbl">
+          <span>Contraseña</span>
+          <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" />
+        </label>
+
+        <button class="btn primary" id="btnLogin">Entrar</button>
+        <button class="btn" id="btnRegister">Crear cuenta</button>
+      </div>
+
+      <div class="tip">
+        ✅ Consejo: usa siempre el mismo email y contraseña en todos tus móviles/PC para compartir la misma nube.
+      </div>
+    </div>
+  </section>
+
+  <!-- APP -->
+  <main class="app" id="app" hidden>
+    <!-- NAV -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="facturas">📄 Facturas</button>
+      <button class="tab" data-tab="clientes">👥 Clientes</button>
+      <button class="tab" data-tab="contabilidad">📊 Contabilidad</button>
+      <button class="tab" data-tab="ajustes">⚙️ Ajustes</button>
+    </nav>
+
+    <!-- FACTURAS -->
+    <section class="panel show" id="tab-facturas">
+      <div class="panelTop">
+        <div>
+          <h2>Facturas</h2>
+          <div class="muted">Crear, editar, guardar PDF en nube, WhatsApp y control de pagos.</div>
         </div>
 
-        <div class="sidebar-mini">
-          <button class="mini-btn" id="btnToggleTheme" title="Modo día/noche">
-            <i data-lucide="moon"></i>
-          </button>
-          <button class="mini-btn" id="btnQuickBackup" title="Exportar backup JSON">
-            <i data-lucide="download"></i>
-          </button>
-          <button class="mini-btn" id="btnQuickImport" title="Importar JSON">
-            <i data-lucide="upload"></i>
-          </button>
-        </div>
-
-        <div class="version">
-          <span>V3.2</span> · <span class="kiwi">Ultra PRO</span>
+        <div class="panelActions">
+          <button class="btn primary" id="btnNewInvoice">➕ Nueva factura</button>
+          <button class="btn" id="btnNewFromTemplate">✨ Duplicar última</button>
         </div>
       </div>
-    </aside>
 
-    <!-- Main -->
-    <main class="main">
-      <header class="topbar">
-        <div class="topbar-left">
-          <button class="hamburger" id="btnHamburger" aria-label="Menú">
-            <i data-lucide="menu"></i>
-          </button>
-          <div class="page-title">
-            <div class="title" id="pageTitle">Dashboard</div>
-            <div class="subtitle" id="pageSubtitle">Resumen del negocio</div>
+      <div class="filters">
+        <div class="chipRow">
+          <button class="chip active" data-filter="all">Todas</button>
+          <button class="chip" data-filter="pendiente">Pendiente</button>
+          <button class="chip" data-filter="parcial">Parcial</button>
+          <button class="chip" data-filter="pagada">Pagada</button>
+        </div>
+
+        <div class="filterGrid">
+          <label class="lbl">
+            <span>Buscar</span>
+            <input id="invSearch" type="text" placeholder="cliente / número / tag..." />
+          </label>
+
+          <label class="lbl">
+            <span>Cliente</span>
+            <select id="invClientFilter"></select>
+          </label>
+
+          <label class="lbl">
+            <span>Tag</span>
+            <select id="invTagFilter"></select>
+          </label>
+
+          <label class="lbl">
+            <span>Mes</span>
+            <input id="invMonthFilter" type="month" />
+          </label>
+        </div>
+      </div>
+
+      <div class="tableCard">
+        <table class="table" id="invoiceTable">
+          <thead>
+            <tr>
+              <th>Nº</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Tags</th>
+              <th>Estado</th>
+              <th class="right">Total</th>
+              <th class="right">Pagado</th>
+              <th class="right">Pendiente</th>
+              <th>PDF</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="invoiceTbody"></tbody>
+        </table>
+      </div>
+
+      <!-- EDITOR FACTURA -->
+      <section class="editorWrap" id="invoiceEditor" hidden>
+        <div class="editorHeader">
+          <div>
+            <h3 id="edTitle">Factura</h3>
+            <div class="muted" id="edSub">Edición completa — tabla PRO</div>
+          </div>
+          <div class="editorActions">
+            <button class="btn" id="btnEdClose">Cerrar</button>
+            <button class="btn danger" id="btnEdDelete">Eliminar</button>
+            <button class="btn primary" id="btnEdSave">Guardar</button>
           </div>
         </div>
 
-        <div class="topbar-right">
-          <div class="searchbox">
-            <i data-lucide="search"></i>
-            <input id="globalSearch" type="text" placeholder="Buscar factura, cliente, tag, importe…" autocomplete="off" />
-          </div>
+        <div class="editorGrid">
+          <div class="card">
+            <h4>Datos</h4>
+            <div class="grid2">
+              <label class="lbl">
+                <span>Nº Factura</span>
+                <input id="edNumber" type="text" placeholder="FA-YYYYMMDDHHMM" />
+              </label>
 
-          <button class="btn primary" id="btnNewInvoice">
-            <i data-lucide="plus"></i> Nueva factura
-          </button>
+              <label class="lbl">
+                <span>Fecha</span>
+                <input id="edDate" type="date" />
+              </label>
 
-          <button class="btn ghost" id="btnCloudLogin">
-            <i data-lucide="cloud"></i> Nube
-          </button>
-        </div>
-      </header>
+              <label class="lbl">
+                <span>Cliente</span>
+                <select id="edClient"></select>
+              </label>
 
-      <section class="content">
+              <label class="lbl">
+                <span>Tags (separadas por coma)</span>
+                <input id="edTags" type="text" placeholder="Centro, Severo..." />
+              </label>
 
-        <!-- DASHBOARD -->
-        <div class="view" id="view-dashboard">
-          <div class="grid-kpis">
-            <div class="card kpi">
-              <div class="kpi-label">Hoy</div>
-              <div class="kpi-value" id="kpiToday">0,00 €</div>
-              <div class="kpi-sub" id="kpiTodayCount">0 facturas</div>
-            </div>
-            <div class="card kpi">
-              <div class="kpi-label">Semana</div>
-              <div class="kpi-value" id="kpiWeek">0,00 €</div>
-              <div class="kpi-sub" id="kpiWeekCount">0 facturas</div>
-            </div>
-            <div class="card kpi">
-              <div class="kpi-label">Mes</div>
-              <div class="kpi-value" id="kpiMonth">0,00 €</div>
-              <div class="kpi-sub" id="kpiMonthCount">0 facturas</div>
-            </div>
-            <div class="card kpi">
-              <div class="kpi-label">Beneficio (Mes)</div>
-              <div class="kpi-value" id="kpiProfitMonth">0,00 €</div>
-              <div class="kpi-sub" id="kpiProfitHint">Ingresos - Gastos</div>
-            </div>
-          </div>
+              <label class="lbl">
+                <span>Método pago</span>
+                <select id="edMethod">
+                  <option>Efectivo</option>
+                  <option>Transferencia</option>
+                  <option>Tarjeta</option>
+                  <option>Bizum</option>
+                </select>
+              </label>
 
-          <div class="grid-two">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Evolución ingresos (últimos 30 días)</div>
-                <div class="card-actions">
-                  <button class="btn tiny" id="btnRefreshChart"><i data-lucide="refresh-cw"></i></button>
-                </div>
-              </div>
-              <div class="card-body">
-                <canvas id="chart30"></canvas>
-              </div>
+              <label class="lbl">
+                <span>Estado</span>
+                <select id="edStatus">
+                  <option value="pendiente">pendiente</option>
+                  <option value="parcial">parcial</option>
+                  <option value="pagada">pagada</option>
+                </select>
+              </label>
             </div>
 
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Top clientes (mes actual)</div>
-              </div>
-              <div class="card-body">
-                <div class="list" id="topClients"></div>
-              </div>
-            </div>
-          </div>
+            <div class="grid2">
+              <label class="lbl">
+                <span>Transporte (€)</span>
+                <input id="edTransport" type="number" inputmode="decimal" step="0.01" value="0" />
+              </label>
 
-          <div class="grid-two">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Ingresos vs Gastos (12 meses)</div>
-              </div>
-              <div class="card-body">
-                <canvas id="chartPL"></canvas>
-              </div>
+              <label class="lbl">
+                <span>IVA (%)</span>
+                <input id="edIvaPct" type="number" inputmode="decimal" step="0.01" value="4" />
+              </label>
             </div>
 
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Top Tags (mes actual)</div>
-              </div>
-              <div class="card-body">
-                <div class="list" id="topTags"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- INVOICES -->
-        <div class="view hidden" id="view-invoices">
-          <div class="toolbar">
-            <div class="chips">
-              <button class="chip active" data-filter="all">Todas</button>
-              <button class="chip" data-filter="pending">Pendientes</button>
-              <button class="chip" data-filter="paid">Pagadas</button>
-              <button class="chip" data-filter="today">Hoy</button>
-              <button class="chip" data-filter="month">Mes</button>
-            </div>
-
-            <div class="toolbar-right">
-              <select id="filterTag" class="select">
-                <option value="">Todos los tags</option>
-              </select>
-              <button class="btn" id="btnExportInvoicesCSV">
-                <i data-lucide="file-down"></i> Export CSV
-              </button>
-            </div>
+            <label class="lbl">
+              <span>Observaciones</span>
+              <input id="edNotes" type="text" placeholder="—" />
+            </label>
           </div>
 
           <div class="card">
-            <div class="table-wrap">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Nº</th>
-                    <th>Cliente</th>
-                    <th>Tags</th>
-                    <th>Total</th>
-                    <th>Estado</th>
-                    <th style="width:340px">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody id="invoiceTable"></tbody>
-              </table>
+            <h4>Pagos</h4>
+            <div class="payRow">
+              <div class="metric">
+                <div class="mLabel">Total</div>
+                <div class="mValue" id="mTotal">0,00 €</div>
+              </div>
+              <div class="metric">
+                <div class="mLabel">Pagado</div>
+                <div class="mValue ok" id="mPaid">0,00 €</div>
+              </div>
+              <div class="metric">
+                <div class="mLabel">Pendiente</div>
+                <div class="mValue bad" id="mDue">0,00 €</div>
+              </div>
             </div>
+
+            <div class="payGrid">
+              <label class="lbl">
+                <span>Importe pago</span>
+                <input id="payAmount" type="number" inputmode="decimal" step="0.01" placeholder="0.00" />
+              </label>
+              <label class="lbl">
+                <span>Fecha pago</span>
+                <input id="payDate" type="date" />
+              </label>
+              <label class="lbl">
+                <span>Método</span>
+                <select id="payMethod">
+                  <option>Transferencia</option>
+                  <option>Efectivo</option>
+                  <option>Tarjeta</option>
+                  <option>Bizum</option>
+                </select>
+              </label>
+              <button class="btn" id="btnAddPayment">➕ Añadir pago</button>
+            </div>
+
+            <div class="miniList" id="payList"></div>
           </div>
         </div>
 
-        <!-- CLIENTS -->
-        <div class="view hidden" id="view-clients">
-          <div class="toolbar">
-            <div class="toolbar-left">
-              <button class="btn primary" id="btnNewClient">
-                <i data-lucide="user-plus"></i> Nuevo cliente
-              </button>
+        <div class="card">
+          <div class="tableHead">
+            <h4>Tabla de productos (PRO)</h4>
+            <div class="tableActions">
+              <button class="btn" id="btnAddLine">➕ Línea</button>
+              <button class="btn" id="btnAutoNet">🧠 Neto auto</button>
+              <button class="btn" id="btnMakePDFLocal">📄 PDF (local)</button>
+              <button class="btn primary" id="btnMakePDFCloud">☁️ Guardar PDF nube</button>
             </div>
           </div>
 
-          <div class="card">
-            <div class="table-wrap">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th>Cliente</th>
-                    <th>NIF</th>
-                    <th>Dirección</th>
-                    <th>Tags</th>
-                    <th>Total acumulado</th>
-                    <th style="width:220px">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody id="clientTable"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- REPORTS -->
-        <div class="view hidden" id="view-reports">
-          <div class="grid-two">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Contabilidad avanzada (P&L)</div>
-                <div class="card-actions">
-                  <button class="btn tiny primary" id="btnNewExpense">
-                    <i data-lucide="plus"></i> Gasto
-                  </button>
-                </div>
-              </div>
-              <div class="card-body">
-                <div class="pl-grid">
-                  <div class="pl-box">
-                    <div class="pl-label">Ingresos (rango)</div>
-                    <div class="pl-value" id="plIncome">0,00 €</div>
-                  </div>
-                  <div class="pl-box">
-                    <div class="pl-label">Gastos (rango)</div>
-                    <div class="pl-value" id="plExpense">0,00 €</div>
-                  </div>
-                  <div class="pl-box big">
-                    <div class="pl-label">Beneficio (rango)</div>
-                    <div class="pl-value" id="plProfit">0,00 €</div>
-                  </div>
-                </div>
-
-                <div class="row two mt">
-                  <div>
-                    <label class="label">Desde</label>
-                    <input type="date" id="repFrom" class="input" />
-                  </div>
-                  <div>
-                    <label class="label">Hasta</label>
-                    <input type="date" id="repTo" class="input" />
-                  </div>
-                </div>
-
-                <button class="btn primary full mt" id="btnRunReport">
-                  <i data-lucide="sparkles"></i> Generar reporte
-                </button>
-
-                <div class="grid-two mt">
-                  <div>
-                    <div class="muted strong">Ranking Clientes</div>
-                    <div class="list mt" id="rankClients"></div>
-                  </div>
-                  <div>
-                    <div class="muted strong">Ranking Tags</div>
-                    <div class="list mt" id="rankTags"></div>
-                  </div>
-                </div>
-
-                <div class="divider"></div>
-
-                <div class="muted strong">Listado de Gastos (rango)</div>
-                <div class="table-wrap mt">
-                  <table class="table">
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Proveedor</th>
-                        <th>Categoría</th>
-                        <th>Concepto</th>
-                        <th>Importe</th>
-                        <th style="width:160px">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody id="expenseTable"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Ingresos por mes (últimos 12)</div>
-              </div>
-              <div class="card-body">
-                <canvas id="chartMonths"></canvas>
-              </div>
-            </div>
+          <div class="tableScroll">
+            <table class="table tiny" id="linesTable">
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Modo</th>
+                  <th class="right">Cant.</th>
+                  <th class="right">Bruto</th>
+                  <th class="right">Tara</th>
+                  <th class="right">Neto</th>
+                  <th class="right">Precio</th>
+                  <th>Origen</th>
+                  <th class="right">Importe</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="linesTbody"></tbody>
+            </table>
           </div>
         </div>
 
-        <!-- SETTINGS -->
-        <div class="view hidden" id="view-settings">
-          <div class="grid-two">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Nube (Firebase)</div>
+        <div class="card">
+          <div class="twoCols">
+            <div>
+              <h4>WhatsApp PRO</h4>
+              <div class="muted">Enviar al cliente con PDF nube (si existe) o resumen.</div>
+              <div class="grid2">
+                <label class="lbl">
+                  <span>Teléfono cliente</span>
+                  <input id="waPhone" type="tel" placeholder="6XX XXX XXX" />
+                </label>
+                <label class="lbl">
+                  <span>Mensaje</span>
+                  <input id="waMsg" type="text" placeholder="Hola, te envío la factura..." />
+                </label>
               </div>
-              <div class="card-body">
-                <div class="row">
-                  <label class="switch">
-                    <input type="checkbox" id="toggleCloud" />
-                    <span class="slider"></span>
-                  </label>
-                  <div>
-                    <div class="strong">Activar Nube</div>
-                    <div class="muted">Sincroniza clientes + facturas + PDFs PRO</div>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <label class="switch">
-                    <input type="checkbox" id="toggleAutoPDF" checked />
-                    <span class="slider"></span>
-                  </label>
-                  <div>
-                    <div class="strong">Auto-subir PDF</div>
-                    <div class="muted">Al guardar factura, sube el PDF automáticamente</div>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <label class="switch">
-                    <input type="checkbox" id="togglePdfCache" checked />
-                    <span class="slider"></span>
-                  </label>
-                  <div>
-                    <div class="strong">Cache PDF local</div>
-                    <div class="muted">Permite abrir facturas PDF aunque falle internet</div>
-                  </div>
-                </div>
-
-                <div class="row gap">
-                  <button class="btn" id="btnForceSync"><i data-lucide="refresh-cw"></i> Forzar Sync</button>
-                  <button class="btn" id="btnCloudLogout"><i data-lucide="log-out"></i> Cerrar sesión nube</button>
-                </div>
-
-                <div class="note">
-                  💡 Pega tu Firebase config en <b>app.js</b> (config + storage).
-                </div>
-              </div>
+              <button class="btn" id="btnSendWA">📲 Enviar WhatsApp</button>
             </div>
 
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Backups</div>
-              </div>
-              <div class="card-body">
-                <button class="btn full" id="btnExportJSON"><i data-lucide="download"></i> Exportar JSON</button>
-                <button class="btn full" id="btnImportJSON"><i data-lucide="upload"></i> Importar JSON</button>
-                <input type="file" id="fileImport" accept="application/json" class="hidden" />
-                <div class="note">
-                  ✅ Importar hace <b>merge inteligente</b> y evita duplicados.
-                </div>
+            <div class="noteBox">
+              <div class="noteTitle">✅ Plantilla PDF</div>
+              <div class="noteText">
+                Igual a tu modelo: cabecera + tabla PRO + QR + totales + estado.
+                El PDF se guarda en Storage y el link se queda en la nube junto con la factura.
               </div>
             </div>
           </div>
         </div>
 
       </section>
+    </section>
 
-      <!-- Mobile Bottom Tabs -->
-      <div class="mobile-tabs" id="mobileTabs">
-        <button class="tab active" data-route="dashboard"><i data-lucide="layout-dashboard"></i></button>
-        <button class="tab" data-route="invoices"><i data-lucide="file-text"></i></button>
-        <button class="tab" data-route="clients"><i data-lucide="users"></i></button>
-        <button class="tab" data-route="reports"><i data-lucide="bar-chart-3"></i></button>
-        <button class="tab" data-route="settings"><i data-lucide="settings"></i></button>
-      </div>
-    </main>
-  </div>
-
-  <!-- Toast -->
-  <div class="toast-wrap" id="toastWrap"></div>
-
-  <!-- MODAL: Cloud Login -->
-  <div class="modal hidden" id="modalCloud">
-    <div class="modal-card">
-      <div class="modal-head">
-        <div class="modal-title">☁️ Iniciar sesión en la nube</div>
-        <button class="icon-btn" data-close="modalCloud"><i data-lucide="x"></i></button>
-      </div>
-      <div class="modal-body">
-        <div class="note">
-          ✅ Nube guarda: clientes, facturas, gastos y PDFs. <br>
-          ✅ Podrás abrir PDFs históricos desde cualquier dispositivo.
+    <!-- CLIENTES -->
+    <section class="panel" id="tab-clientes">
+      <div class="panelTop">
+        <div>
+          <h2>Clientes</h2>
+          <div class="muted">Gestión de clientes + tags fijos + datos fiscales.</div>
         </div>
-
-        <label class="label">Email</label>
-        <input class="input" id="cloudEmail" type="email" placeholder="tuemail@gmail.com" />
-
-        <label class="label">Password</label>
-        <input class="input" id="cloudPass" type="password" placeholder="••••••••" />
-
-        <div class="row gap mt">
-          <button class="btn primary full" id="btnCloudSignIn">
-            <i data-lucide="log-in"></i> Entrar
-          </button>
-          <button class="btn full" id="btnCloudRegister">
-            <i data-lucide="user-plus"></i> Crear cuenta
-          </button>
+        <div class="panelActions">
+          <button class="btn primary" id="btnNewClient">➕ Nuevo cliente</button>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- MODAL: Invoice Editor -->
-  <div class="modal hidden" id="modalInvoice">
-    <div class="modal-card big">
-      <div class="modal-head">
-        <div class="modal-title" id="invModalTitle">🧾 Nueva factura</div>
-        <button class="icon-btn" data-close="modalInvoice"><i data-lucide="x"></i></button>
+      <div class="tableCard">
+        <table class="table" id="clientsTable">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>NIF/CIF</th>
+              <th>Dirección</th>
+              <th>Teléfono</th>
+              <th>Email</th>
+              <th>Tags</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="clientsTbody"></tbody>
+        </table>
       </div>
 
-      <div class="modal-body">
-        <div class="row two">
+      <section class="editorWrap" id="clientEditor" hidden>
+        <div class="editorHeader">
           <div>
-            <label class="label">Fecha</label>
-            <input type="date" class="input" id="invDate" />
+            <h3 id="clTitle">Cliente</h3>
+            <div class="muted">Datos fiscales + tags PRO</div>
           </div>
-          <div>
-            <label class="label">Número</label>
-            <input type="text" class="input" id="invNumber" placeholder="FA-YYYYMMDDHHMM" />
-          </div>
-        </div>
-
-        <label class="label">Cliente</label>
-        <select class="select" id="invClient"></select>
-
-        <div class="row two mt">
-          <div>
-            <label class="label">Tags (multi) — separados por coma</label>
-            <input class="input" id="invTags" placeholder="Centro, Severo, Tomillares" />
-          </div>
-          <div>
-            <label class="label">Estado</label>
-            <select class="select" id="invStatus">
-              <option value="PENDIENTE">PENDIENTE</option>
-              <option value="PAGADO">PAGADO</option>
-            </select>
+          <div class="editorActions">
+            <button class="btn" id="btnClClose">Cerrar</button>
+            <button class="btn danger" id="btnClDelete">Eliminar</button>
+            <button class="btn primary" id="btnClSave">Guardar</button>
           </div>
         </div>
 
-        <!-- ITEMS -->
-        <div class="items-head">
-          <div class="items-title">📦 Productos inteligentes</div>
-          <div class="items-actions">
-            <button class="btn tiny" id="btnSmartFillBox"><i data-lucide="package"></i> Caja Fija</button>
-            <button class="btn tiny primary" id="btnAddItem">
-              <i data-lucide="plus"></i> Añadir
-            </button>
+        <div class="card">
+          <div class="grid2">
+            <label class="lbl">
+              <span>Nombre fiscal</span>
+              <input id="clName" type="text" />
+            </label>
+            <label class="lbl">
+              <span>NIF/CIF</span>
+              <input id="clNif" type="text" />
+            </label>
+
+            <label class="lbl">
+              <span>Dirección</span>
+              <input id="clAddr" type="text" />
+            </label>
+            <label class="lbl">
+              <span>Ciudad / CP</span>
+              <input id="clCity" type="text" placeholder="Burgos 09003" />
+            </label>
+
+            <label class="lbl">
+              <span>Teléfono</span>
+              <input id="clPhone" type="tel" />
+            </label>
+            <label class="lbl">
+              <span>Email</span>
+              <input id="clEmail" type="email" />
+            </label>
           </div>
+
+          <label class="lbl">
+            <span>Tags fijos (separadas por coma)</span>
+            <input id="clTags" type="text" placeholder="RIVIERA, Centro, VIP..." />
+          </label>
+        </div>
+      </section>
+    </section>
+
+    <!-- CONTABILIDAD -->
+    <section class="panel" id="tab-contabilidad">
+      <div class="panelTop">
+        <div>
+          <h2>Contabilidad</h2>
+          <div class="muted">Resumen mensual, pendiente total, ranking de clientes y tags.</div>
         </div>
 
-        <div class="items-grid" id="itemsGrid"></div>
-
-        <div class="items-totals">
-          <div class="tot-line">
-            <span>Subtotal</span><b id="tSubtotal">0,00 €</b>
-          </div>
-          <div class="tot-line">
-            <span>IVA 4%</span><b id="tIVA">0,00 €</b>
-          </div>
-          <div class="tot-line big">
-            <span>Total</span><b id="tTotal">0,00 €</b>
-          </div>
-        </div>
-
-        <label class="label">Notas</label>
-        <input type="text" class="input" id="invNotes" placeholder="Observaciones (opcional)..." />
-
-        <div class="row gap mt">
-          <button class="btn" id="btnInvPDFLocal"><i data-lucide="file-down"></i> PDF</button>
-          <button class="btn" id="btnInvPDFCloud"><i data-lucide="cloud-upload"></i> PDF + Nube</button>
-          <button class="btn ghost" id="btnInvViewPDF" disabled><i data-lucide="eye"></i> Ver PDF</button>
-          <button class="btn" id="btnInvWhatsApp"><i data-lucide="message-circle"></i> WhatsApp</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="row gap">
-          <button class="btn primary full" id="btnInvSave">
-            <i data-lucide="save"></i> Guardar
-          </button>
-          <button class="btn full" id="btnInvDuplicate">
-            <i data-lucide="copy"></i> Duplicar
-          </button>
-        </div>
-
-        <div class="note">
-          ✅ Caja fija + tara + neto automático. ✅ Precio por kg o unidad. ✅ Tags múltiples. ✅ PDF nube + WhatsApp.
+        <div class="panelActions">
+          <button class="btn" id="btnRefreshReports">🔄 Actualizar</button>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- MODAL: Client Editor -->
-  <div class="modal hidden" id="modalClient">
-    <div class="modal-card">
-      <div class="modal-head">
-        <div class="modal-title" id="cliModalTitle">👤 Nuevo cliente</div>
-        <button class="icon-btn" data-close="modalClient"><i data-lucide="x"></i></button>
-      </div>
-      <div class="modal-body">
-        <label class="label">Nombre</label>
-        <input class="input" id="cliName" type="text" placeholder="RIVIERA" />
-
-        <label class="label">NIF</label>
-        <input class="input" id="cliNIF" type="text" placeholder="B12345678" />
-
-        <label class="label">Dirección</label>
-        <input class="input" id="cliAddress" type="text" placeholder="Calle..., Ciudad..." />
-
-        <label class="label">Email (opcional)</label>
-        <input class="input" id="cliEmail" type="email" placeholder="cliente@email.com" />
-
-        <label class="label">Teléfono (opcional)</label>
-        <input class="input" id="cliPhone" type="text" placeholder="600000000" />
-
-        <label class="label">Tags cliente (coma)</label>
-        <input class="input" id="cliTags" type="text" placeholder="Centro, Severo, Edificio" />
-
-        <div class="row gap mt">
-          <button class="btn primary full" id="btnCliSave"><i data-lucide="save"></i> Guardar</button>
-          <button class="btn danger full" id="btnCliDelete"><i data-lucide="trash-2"></i> Eliminar</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: Expense Editor -->
-  <div class="modal hidden" id="modalExpense">
-    <div class="modal-card">
-      <div class="modal-head">
-        <div class="modal-title" id="expModalTitle">🧾 Nuevo gasto</div>
-        <button class="icon-btn" data-close="modalExpense"><i data-lucide="x"></i></button>
-      </div>
-      <div class="modal-body">
-        <div class="row two">
-          <div>
-            <label class="label">Fecha</label>
-            <input type="date" class="input" id="expDate" />
+      <div class="reportGrid">
+        <div class="card">
+          <h4>Resumen</h4>
+          <div class="grid2">
+            <label class="lbl">
+              <span>Mes</span>
+              <input id="repMonth" type="month" />
+            </label>
+            <label class="lbl">
+              <span>Filtro Tag</span>
+              <select id="repTag"></select>
+            </label>
           </div>
-          <div>
-            <label class="label">Importe (€)</label>
-            <input type="number" step="0.01" class="input" id="expAmount" placeholder="0.00" />
+
+          <div class="kpiRow">
+            <div class="kpi">
+              <div class="kLabel">Ingresos</div>
+              <div class="kValue" id="kIn">0,00 €</div>
+            </div>
+            <div class="kpi">
+              <div class="kLabel">Pagado</div>
+              <div class="kValue ok" id="kPaid">0,00 €</div>
+            </div>
+            <div class="kpi">
+              <div class="kLabel">Pendiente</div>
+              <div class="kValue bad" id="kDue">0,00 €</div>
+            </div>
           </div>
+
+          <div class="miniHint">*Pendiente = total - pagado (incluye parciales).</div>
         </div>
 
-        <label class="label">Proveedor</label>
-        <input class="input" id="expVendor" placeholder="Montenegro / Esmo / Alquiler..." />
-
-        <div class="row two mt">
-          <div>
-            <label class="label">Categoría</label>
-            <select class="select" id="expCat">
-              <option value="COMPRA">COMPRA</option>
-              <option value="ALQUILER">ALQUILER</option>
-              <option value="GASOLINA">GASOLINA</option>
-              <option value="SUELDOS">SUELDOS</option>
-              <option value="GESTORIA">GESTORIA</option>
-              <option value="OTROS">OTROS</option>
-            </select>
-          </div>
-          <div>
-            <label class="label">Concepto</label>
-            <input class="input" id="expConcept" placeholder="Factura proveedor / gasto..." />
-          </div>
+        <div class="card">
+          <h4>Ranking Clientes</h4>
+          <div class="miniList" id="rankClients"></div>
         </div>
 
-        <label class="label">Notas</label>
-        <input class="input" id="expNotes" placeholder="Opcional..." />
-
-        <div class="row gap mt">
-          <button class="btn primary full" id="btnExpSave"><i data-lucide="save"></i> Guardar gasto</button>
-          <button class="btn danger full" id="btnExpDelete"><i data-lucide="trash-2"></i> Eliminar</button>
+        <div class="card">
+          <h4>Ranking Tags</h4>
+          <div class="miniList" id="rankTags"></div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- MODAL: PDF Viewer -->
-  <div class="modal hidden" id="modalPDF">
-    <div class="modal-card big">
-      <div class="modal-head">
-        <div class="modal-title">📄 PDF Factura</div>
-        <button class="icon-btn" data-close="modalPDF"><i data-lucide="x"></i></button>
+      <div class="card">
+        <h4>Facturas del mes</h4>
+        <div class="tableCard">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nº</th>
+                <th>Cliente</th>
+                <th>Estado</th>
+                <th class="right">Total</th>
+                <th class="right">Pagado</th>
+                <th class="right">Pendiente</th>
+              </tr>
+            </thead>
+            <tbody id="repTbody"></tbody>
+          </table>
+        </div>
       </div>
-      <div class="modal-body">
-        <iframe id="pdfFrame" class="pdf-frame" src=""></iframe>
-      </div>
-    </div>
-  </div>
+    </section>
 
-  <script type="module" src="app.js"></script>
+    <!-- AJUSTES -->
+    <section class="panel" id="tab-ajustes">
+      <div class="panelTop">
+        <div>
+          <h2>Ajustes</h2>
+          <div class="muted">Configura proveedor, IVA por defecto, plantilla de numeración, etc.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4>Proveedor (sale en el PDF)</h4>
+        <div class="grid2">
+          <label class="lbl">
+            <span>Nombre</span>
+            <input id="setSupName" type="text" />
+          </label>
+          <label class="lbl">
+            <span>NIF</span>
+            <input id="setSupNif" type="text" />
+          </label>
+          <label class="lbl">
+            <span>Dirección</span>
+            <input id="setSupAddr" type="text" />
+          </label>
+          <label class="lbl">
+            <span>Teléfono</span>
+            <input id="setSupTel" type="text" />
+          </label>
+          <label class="lbl">
+            <span>Email</span>
+            <input id="setSupEmail" type="text" />
+          </label>
+          <label class="lbl">
+            <span>IVA por defecto (%)</span>
+            <input id="setIvaDefault" type="number" step="0.01" />
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label class="lbl">
+            <span>Plantilla Nº factura</span>
+            <input id="setNumberTpl" type="text" placeholder="FA-YYYYMMDDHHMM" />
+          </label>
+          <label class="lbl">
+            <span>Texto PDF (abajo)</span>
+            <input id="setPdfNote" type="text" placeholder="IVA incluido en los precios." />
+          </label>
+        </div>
+
+        <div class="rowEnd">
+          <button class="btn primary" id="btnSaveSettings">Guardar ajustes</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4>Herramientas</h4>
+        <div class="toolsGrid">
+          <button class="btn" id="btnResetLocal">🧹 Limpiar local (NO nube)</button>
+          <button class="btn danger" id="btnDangerWipeCloud">⚠️ Borrar nube (ADMIN)</button>
+        </div>
+        <div class="miniHint">⚠️ “Borrar nube” elimina facturas/clientes del usuario logueado.</div>
+      </div>
+    </section>
+
+    <!-- TOAST -->
+    <div class="toast" id="toast" hidden></div>
+
+    <!-- FLOAT -->
+    <button class="fab" id="fabNew" title="Nueva factura">➕</button>
+  </main>
+
+  <input type="file" id="fileImport" accept="application/json" hidden />
+
+  <!-- APP (module) -->
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
