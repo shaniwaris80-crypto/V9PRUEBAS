@@ -1,11 +1,13 @@
 /* =========================================================
-   ARSLAN • FACTURAS KIWI PRO (V3.0 Cloud PDF Edition)
-   ✅ UI PRO SaaS + mobile tabs
-   ✅ Gestión + Contabilidad (reportes reales)
-   ✅ Facturas editables (incluye fecha)
-   ✅ PDF Local + PDF en nube
-   ✅ Firebase Auth + Realtime DB + Storage
-   ✅ Merge inteligente para no perder datos
+   ARSLAN • FACTURAS KIWI PRO (V3.1)
+   ✅ Tabla de productos (kg/caja/ud/manojo)
+   ✅ Tara + Origen + Precio unitario
+   ✅ IVA 4% automático
+   ✅ Subtotal + IVA + Total
+   ✅ Datos proveedor + datos cliente completos en PDF
+   ✅ PDF local + PDF guardado en nube (Firebase Storage)
+   ✅ Realtime DB guarda: clientes, facturas, totales, tags, estado, fecha...
+   ✅ Facturas editables: fecha, productos, precios, tara, origen...
 ========================================================= */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
@@ -20,9 +22,7 @@ import {
   getDatabase,
   ref as dbRef,
   get,
-  set,
-  update,
-  remove
+  set
 } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-database.js";
 import {
   getStorage,
@@ -35,7 +35,6 @@ import {
    0) FIREBASE CONFIG (PEGA AQUÍ)
 ========================= */
 const FIREBASE_CONFIG = {
-  // 🔥 PEGA AQUÍ TU CONFIG REAL DE FIREBASE (Project settings → Web App)
   // apiKey: "...",
   // authDomain: "...",
   // databaseURL: "...",
@@ -46,21 +45,34 @@ const FIREBASE_CONFIG = {
 };
 
 /* =========================
-   1) Local Storage Keys
+   1) Datos PROVEEDOR (TU EMPRESA)
 ========================= */
-const LS_KEY = "arslan_kiwi_pro_v3_state";
-const LS_PREF = "arslan_kiwi_pro_v3_prefs";
+const SUPPLIER = {
+  name: "Mohammad Arslan Waris",
+  nif: "X6389988J",
+  address: "Calle San Pablo 17, 09002 Burgos",
+  phone: "631 667 893",
+  email: "shaniwaris80@gmail.com"
+};
 
 /* =========================
-   2) State
+   2) IVA
+========================= */
+const VAT_RATE = 0.04; // 4%
+
+/* =========================
+   3) LocalStorage
+========================= */
+const LS_KEY = "arslan_kiwi_pro_v31_state";
+const LS_PREF = "arslan_kiwi_pro_v31_prefs";
+
+/* =========================
+   4) State
 ========================= */
 let state = {
   clients: [],
   invoices: [],
-  meta: {
-    lastSyncAt: 0,
-    schema: "v3"
-  }
+  meta: { schema: "v3.1", lastSyncAt: 0 }
 };
 
 let prefs = {
@@ -83,7 +95,8 @@ let ui = {
   tagFilter: "",
   search: "",
   editingInvoiceId: null,
-  editingClientId: null
+  editingClientId: null,
+  editorItems: []
 };
 
 let charts = {
@@ -92,38 +105,23 @@ let charts = {
 };
 
 /* =========================
-   3) Utils
+   5) Utils
 ========================= */
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-function now() { return Date.now(); }
+function now(){ return Date.now(); }
 
-function toast(type, title, msg){
-  const wrap = $("#toastWrap");
-  const el = document.createElement("div");
-  el.className = `toast ${type||""}`;
-  el.innerHTML = `
-    <div class="ticon">${iconHTML(type)}</div>
-    <div>
-      <b>${escapeHTML(title||"Info")}</b><br>
-      <small>${escapeHTML(msg||"")}</small>
-    </div>
-  `;
-  wrap.appendChild(el);
-  setTimeout(()=>{ el.style.opacity="0"; el.style.transform="translateY(4px)"; }, 2600);
-  setTimeout(()=>{ el.remove(); }, 3200);
+function escapeHTML(s){
+  return String(s||"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
-function iconHTML(type){
-  const map = {
-    ok: "check-circle-2",
-    warn: "alert-triangle",
-    bad: "x-circle"
-  };
-  const name = map[type] || "info";
-  return `<i data-lucide="${name}"></i>`;
-}
+function safeLower(s){ return String(s||"").toLowerCase().trim(); }
 
 function fmtEUR(n){
   const x = Number(n||0);
@@ -156,16 +154,26 @@ function uid(prefix){
   return `${prefix}_${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`.slice(0, 28);
 }
 
-function escapeHTML(s){
-  return String(s||"")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+function toast(type, title, msg){
+  const wrap = $("#toastWrap");
+  const el = document.createElement("div");
+  el.className = `toast ${type||""}`;
+  el.innerHTML = `
+    <div class="ticon">${iconHTML(type)}</div>
+    <div>
+      <b>${escapeHTML(title||"Info")}</b><br>
+      <small>${escapeHTML(msg||"")}</small>
+    </div>
+  `;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.opacity="0"; el.style.transform="translateY(4px)"; }, 2600);
+  setTimeout(()=>{ el.remove(); }, 3200);
+  lucide.createIcons();
 }
-
-function safeLower(s){ return String(s||"").toLowerCase().trim(); }
+function iconHTML(type){
+  const map = { ok:"check-circle-2", warn:"alert-triangle", bad:"x-circle" };
+  return `<i data-lucide="${map[type] || "info"}"></i>`;
+}
 
 function isDefaultFirebaseConfig(){
   return !FIREBASE_CONFIG || !FIREBASE_CONFIG.apiKey;
@@ -176,17 +184,25 @@ function cloudPathRoot(){
   return `users/${firebase.user.uid}/data`;
 }
 
+function setCloudUI(color, text){
+  const dot = $("#cloudDot");
+  const t = $("#cloudText");
+  if(!dot || !t) return;
+
+  dot.classList.remove("gray","green","yellow","red");
+  dot.classList.add(color || "gray");
+  t.textContent = text || "Local (sin nube)";
+}
+
 /* =========================
-   4) Persistence (Local)
+   6) Persistence
 ========================= */
 function loadLocal(){
   try{
     const raw = localStorage.getItem(LS_KEY);
     if(raw){
       const obj = JSON.parse(raw);
-      if(obj && obj.clients && obj.invoices){
-        state = obj;
-      }
+      if(obj && obj.clients && obj.invoices) state = obj;
     }
   }catch(e){}
 
@@ -199,22 +215,14 @@ function loadLocal(){
   }catch(e){}
 }
 
-function saveLocal(){
-  localStorage.setItem(LS_KEY, JSON.stringify(state));
-}
-
-function savePrefs(){
-  localStorage.setItem(LS_PREF, JSON.stringify(prefs));
-}
+function saveLocal(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function savePrefs(){ localStorage.setItem(LS_PREF, JSON.stringify(prefs)); }
 
 /* =========================
-   5) Firebase init + auth
+   7) Firebase
 ========================= */
 function initFirebase(){
-  if(isDefaultFirebaseConfig()){
-    // no config
-    return;
-  }
+  if(isDefaultFirebaseConfig()) return;
   if(firebase.app) return;
 
   firebase.app = initializeApp(FIREBASE_CONFIG);
@@ -238,7 +246,7 @@ function initFirebase(){
 
 async function cloudLogin(email, pass){
   initFirebase();
-  if(isDefaultFirebaseConfig()) {
+  if(isDefaultFirebaseConfig()){
     toast("bad","Falta Firebase config","Pega tu config en app.js");
     return;
   }
@@ -252,7 +260,7 @@ async function cloudLogin(email, pass){
 
 async function cloudRegister(email, pass){
   initFirebase();
-  if(isDefaultFirebaseConfig()) {
+  if(isDefaultFirebaseConfig()){
     toast("bad","Falta Firebase config","Pega tu config en app.js");
     return;
   }
@@ -275,33 +283,71 @@ async function cloudLogout(){
 }
 
 /* =========================
-   6) Cloud Sync (Realtime DB)
-   - Merge inteligente para no perder
+   8) Model: Clients + Items + Invoice
 ========================= */
 function normalizeClient(c){
   return {
     id: c.id || uid("cli"),
     name: String(c.name||"").trim(),
     nif: String(c.nif||"").trim(),
-    tags: Array.isArray(c.tags) ? c.tags : (String(c.tags||"").split(",").map(x=>x.trim()).filter(Boolean)),
+    address: String(c.address||"").trim(),
+    email: String(c.email||"").trim(),
+    phone: String(c.phone||"").trim(),
+    tags: Array.isArray(c.tags) ? c.tags : String(c.tags||"").split(",").map(x=>x.trim()).filter(Boolean),
     createdAt: c.createdAt || now(),
     updatedAt: now()
   };
 }
 
+function normalizeItem(it){
+  const qty = Number(it.qty || 0);
+  const price = Number(it.unitPrice || 0);
+  return {
+    name: String(it.name||"").trim(),
+    unit: it.unit || "kg",           // kg / caja / ud / manojo
+    qty: isFinite(qty) ? qty : 0,
+    unitPrice: isFinite(price) ? price : 0,
+    tara: Number(it.tara || 0) || 0, // tara kg (opcional)
+    origin: String(it.origin||"").trim()
+  };
+}
+
+function calcInvoiceTotals(items){
+  const clean = (items||[]).map(normalizeItem).filter(i => i.name || i.qty || i.unitPrice);
+  const subtotal = clean.reduce((a, x) => a + (Number(x.qty||0) * Number(x.unitPrice||0)), 0);
+  const vat = subtotal * VAT_RATE;
+  const total = subtotal + vat;
+  return { cleanItems: clean, subtotal, vat, total };
+}
+
 function normalizeInvoice(inv){
+  const items = Array.isArray(inv.items) ? inv.items : [];
+  const t = calcInvoiceTotals(items);
+
   return {
     id: inv.id || uid("inv"),
     number: String(inv.number||genInvoiceNumber()).trim(),
     dateISO: inv.dateISO || ymd(),
+
     clientId: inv.clientId || "",
     clientNameCache: String(inv.clientNameCache||"").trim(),
+
     tag: String(inv.tag||"").trim(),
-    amount: Number(inv.amount||0),
     status: inv.status || "PENDIENTE",
-    notes: String(inv.notes||""),
+    notes: String(inv.notes||"").trim(),
+
+    // ITEMS
+    items: t.cleanItems,
+
+    // CONTABILIDAD
+    subtotal: Number(inv.subtotal ?? t.subtotal),
+    vatRate: VAT_RATE,
+    vatAmount: Number(inv.vatAmount ?? t.vat),
+    total: Number(inv.total ?? t.total),
+
     createdAt: inv.createdAt || now(),
     updatedAt: now(),
+
     pdf: inv.pdf || null
   };
 }
@@ -318,7 +364,7 @@ function mergeData(localData, cloudData){
   const out = {
     clients: [],
     invoices: [],
-    meta: { schema:"v3", lastSyncAt: now() }
+    meta: { schema:"v3.1", lastSyncAt: now() }
   };
 
   const locClients = (localData?.clients||[]).map(normalizeClient);
@@ -327,37 +373,35 @@ function mergeData(localData, cloudData){
   const locInv = (localData?.invoices||[]).map(normalizeInvoice);
   const cloInv = (cloudData?.invoices||[]).map(normalizeInvoice);
 
-  // Clients merge:
-  const mapClientById = new Map();
-  const mapClientByName = new Map();
+  // Clients merge
+  const byId = new Map();
+  const byName = new Map();
 
   function addClient(c){
     const keyName = safeLower(c.name);
-    if(mapClientById.has(c.id)){
-      const prev = mapClientById.get(c.id);
-      // keep latest
-      mapClientById.set(c.id, prev.updatedAt > c.updatedAt ? prev : c);
+    if(byId.has(c.id)){
+      const prev = byId.get(c.id);
+      byId.set(c.id, prev.updatedAt > c.updatedAt ? prev : c);
       return;
     }
-    if(keyName && mapClientByName.has(keyName)){
-      const prev = mapClientByName.get(keyName);
+    if(keyName && byName.has(keyName)){
+      const prev = byName.get(keyName);
       const chosen = prev.updatedAt > c.updatedAt ? prev : c;
-      mapClientById.set(chosen.id, chosen);
-      mapClientByName.set(keyName, chosen);
+      byId.set(chosen.id, chosen);
+      byName.set(keyName, chosen);
       return;
     }
-    mapClientById.set(c.id, c);
-    if(keyName) mapClientByName.set(keyName, c);
+    byId.set(c.id, c);
+    if(keyName) byName.set(keyName, c);
   }
 
   [...cloClients, ...locClients].forEach(addClient);
-  out.clients = Array.from(mapClientById.values());
+  out.clients = Array.from(byId.values());
 
-  // Build client name remap (if same name diff id)
   const nameToId = new Map();
   out.clients.forEach(c => nameToId.set(safeLower(c.name), c.id));
 
-  // Invoices merge:
+  // Invoices merge
   const invById = new Map();
   const invBySig = new Map();
 
@@ -381,19 +425,18 @@ function mergeData(localData, cloudData){
 
   [...cloInv, ...locInv].forEach(addInvoice);
 
-  // Re-map clientId if needed by cache name:
-  const mergedInv = Array.from(invById.values()).map(inv=>{
+  out.invoices = Array.from(invById.values()).map(inv=>{
     const cname = safeLower(inv.clientNameCache);
-    if(cname && nameToId.has(cname)){
-      inv.clientId = nameToId.get(cname);
-    }
+    if(cname && nameToId.has(cname)) inv.clientId = nameToId.get(cname);
     return inv;
-  });
+  }).sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
 
-  out.invoices = mergedInv.sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
   return out;
 }
 
+/* =========================
+   9) Cloud Sync
+========================= */
 async function syncFromCloud(){
   if(!prefs.cloudEnabled) return;
   initFirebase();
@@ -401,16 +444,14 @@ async function syncFromCloud(){
 
   try{
     const root = cloudPathRoot();
-    const r = dbRef(firebase.db, root);
-    const snap = await get(r);
+    const snap = await get(dbRef(firebase.db, root));
     const cloudData = snap.exists() ? snap.val() : null;
 
     const merged = mergeData(state, cloudData);
-
     state = merged;
     saveLocal();
 
-    // push merged back to cloud to ensure unified state
+    // push merged back
     await set(dbRef(firebase.db, root), merged);
     state.meta.lastSyncAt = now();
     saveLocal();
@@ -426,8 +467,7 @@ async function pushToCloud(){
   if(!firebase.user || !firebase.db) return;
   try{
     setCloudUI("yellow","Guardando…");
-    const root = cloudPathRoot();
-    await set(dbRef(firebase.db, root), state);
+    await set(dbRef(firebase.db, cloudPathRoot()), state);
     state.meta.lastSyncAt = now();
     saveLocal();
     setCloudUI("green","Sincronizado ✅");
@@ -437,18 +477,8 @@ async function pushToCloud(){
   }
 }
 
-function setCloudUI(color, text){
-  const dot = $("#cloudDot");
-  const t = $("#cloudText");
-  if(!dot || !t) return;
-
-  dot.classList.remove("gray","green","yellow","red");
-  dot.classList.add(color || "gray");
-  t.textContent = text || "Local (sin nube)";
-}
-
 /* =========================
-   7) PDF Generation + Cloud Upload
+   10) PDF PRO (Proveedor + Cliente + Tabla Items + IVA 4%)
 ========================= */
 function buildPDF(invoice){
   const { jsPDF } = window.jspdf;
@@ -457,70 +487,112 @@ function buildPDF(invoice){
   const margin = 42;
   const w = doc.internal.pageSize.getWidth();
 
-  // Header
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.text("ARSLAN • FACTURAS", margin, 62);
+  const cli = getClientById(invoice.clientId) || null;
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.text("KIWI PRO — Documento de Factura", margin, 82);
+  // Header
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(18);
+  doc.text("ARSLAN • FACTURA", margin, 52);
+
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(10);
+  doc.setTextColor(90);
+  doc.text("KIWI PRO — Facturación y Contabilidad", margin, 68);
+  doc.setTextColor(0);
 
   doc.setDrawColor(180);
-  doc.line(margin, 96, w - margin, 96);
+  doc.line(margin, 80, w-margin, 80);
 
-  // Info block
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Factura:", margin, 126);
-  doc.setFont("helvetica", "normal");
-  doc.text(invoice.number || "-", margin + 70, 126);
+  // Left: Supplier
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text("PROVEEDOR", margin, 104);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10);
+  doc.text(`${SUPPLIER.name}`, margin, 120);
+  doc.text(`NIF: ${SUPPLIER.nif}`, margin, 134);
+  doc.text(`${SUPPLIER.address}`, margin, 148);
+  doc.text(`Tel: ${SUPPLIER.phone}`, margin, 162);
+  doc.text(`Email: ${SUPPLIER.email}`, margin, 176);
 
-  doc.setFont("helvetica", "bold");
-  doc.text("Fecha:", margin, 146);
-  doc.setFont("helvetica", "normal");
-  doc.text(invoice.dateISO || "-", margin + 70, 146);
+  // Right: Invoice summary
+  const rx = w/2 + 40;
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text("FACTURA", rx, 104);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10);
+  doc.text(`Nº: ${invoice.number}`, rx, 120);
+  doc.text(`Fecha: ${invoice.dateISO}`, rx, 134);
+  doc.text(`Estado: ${invoice.status}`, rx, 148);
+  doc.text(`Tag: ${invoice.tag || "-"}`, rx, 162);
 
-  doc.setFont("helvetica", "bold");
-  doc.text("Cliente:", margin, 166);
-  doc.setFont("helvetica", "normal");
-  doc.text(invoice.clientNameCache || "-", margin + 70, 166);
+  // Client block
+  doc.setDrawColor(200);
+  doc.line(margin, 192, w-margin, 192);
 
-  doc.setFont("helvetica", "bold");
-  doc.text("Tag:", margin, 186);
-  doc.setFont("helvetica", "normal");
-  doc.text(invoice.tag || "-", margin + 70, 186);
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text("CLIENTE", margin, 212);
 
-  doc.setFont("helvetica", "bold");
-  doc.text("Estado:", margin, 206);
-  doc.setFont("helvetica", "normal");
-  doc.text(invoice.status || "-", margin + 70, 206);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10);
+  doc.text(`${cli?.name || invoice.clientNameCache || "-"}`, margin, 228);
+  doc.text(`NIF: ${cli?.nif || "-"}`, margin, 242);
+  doc.text(`${cli?.address || "-"}`, margin, 256);
 
-  // Table (simple)
-  doc.autoTable({
-    startY: 240,
-    head: [["Concepto", "Importe"]],
-    body: [[
-      invoice.notes ? `Factura — ${invoice.notes}` : "Factura",
-      `${fmtNum2(invoice.amount)} €`
-    ]],
-    styles: { fontSize: 11, cellPadding: 10 },
-    headStyles: { fillColor: [22,163,74] },
-    alternateRowStyles: { fillColor: [245,247,250] }
+  if(cli?.email) doc.text(`Email: ${cli.email}`, margin, 270);
+  if(cli?.phone) doc.text(`Tel: ${cli.phone}`, margin, 284);
+
+  // Items table
+  const rows = (invoice.items||[]).map(it=>{
+    const lineTotal = Number(it.qty||0) * Number(it.unitPrice||0);
+    return [
+      it.name || "",
+      it.unit || "",
+      fmtNum2(it.qty||0),
+      `${fmtNum2(it.unitPrice||0)} €`,
+      it.tara ? fmtNum2(it.tara) : "",
+      it.origin || "",
+      `${fmtNum2(lineTotal)} €`
+    ];
   });
 
-  const lastY = doc.lastAutoTable.finalY + 18;
+  doc.autoTable({
+    startY: 310,
+    head: [["Producto", "Ud", "Cant", "Precio", "Tara", "Origen", "Importe"]],
+    body: rows.length ? rows : [["(Sin productos)", "", "", "", "", "", ""]],
+    styles: { fontSize: 9.5, cellPadding: 7 },
+    headStyles: { fillColor: [22,163,74] },
+    alternateRowStyles: { fillColor: [245,247,250] },
+    columnStyles: {
+      0: { cellWidth: 190 },
+      1: { cellWidth: 34 },
+      2: { cellWidth: 44, halign:"right" },
+      3: { cellWidth: 58, halign:"right" },
+      4: { cellWidth: 44, halign:"right" },
+      5: { cellWidth: 64 },
+      6: { cellWidth: 58, halign:"right" }
+    }
+  });
 
-  // Total
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text(`TOTAL: ${fmtNum2(invoice.amount)} €`, margin, lastY + 18);
+  const after = doc.lastAutoTable.finalY + 18;
+
+  // Totals
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text(`Subtotal: ${fmtNum2(invoice.subtotal||0)} €`, w-margin-170, after);
+  doc.text(`IVA 4%: ${fmtNum2(invoice.vatAmount||0)} €`, w-margin-170, after+16);
+  doc.setFontSize(13);
+  doc.text(`TOTAL: ${fmtNum2(invoice.total||0)} €`, w-margin-170, after+36);
+
+  // Notes
+  doc.setFont("helvetica","normal"); doc.setFontSize(10);
+  doc.setTextColor(80);
+  if(invoice.notes){
+    doc.text(`Notas: ${invoice.notes}`, margin, after+22);
+  }
+  doc.setTextColor(0);
 
   // Footer
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9);
   doc.setTextColor(120);
   doc.text("Documento generado por ARSLAN • KIWI PRO", margin, 815);
+  doc.text("IVA aplicado: 4% (IVA incluido en totales)", w-margin-210, 815);
+  doc.setTextColor(0);
 
   return doc;
 }
@@ -542,7 +614,6 @@ async function uploadPDFToCloud(invoice){
     return null;
   }
 
-  // Generate PDF blob
   const doc = buildPDF(invoice);
   const blob = doc.output("blob");
 
@@ -555,12 +626,10 @@ async function uploadPDFToCloud(invoice){
 
   setCloudUI("green","PDF en nube ✅");
   toast("ok","PDF en nube","Subido correctamente.");
-
   return { storagePath: path, downloadURL: url, updatedAt: now() };
 }
 
 async function ensureInvoicePDFCloud(invoice){
-  // Upload PDF and attach to invoice, then save to cloud
   const pdfInfo = await uploadPDFToCloud(invoice);
   if(!pdfInfo) return;
 
@@ -575,12 +644,11 @@ async function ensureInvoicePDFCloud(invoice){
 }
 
 /* =========================
-   8) CRUD
+   11) CRUD
 ========================= */
 function getClientById(id){
   return state.clients.find(c=>c.id===id) || null;
 }
-
 function getInvoiceById(id){
   return state.invoices.find(i=>i.id===id) || null;
 }
@@ -596,7 +664,6 @@ function addOrUpdateClient(client){
 }
 
 async function deleteClient(id){
-  // prevent deleting if invoices exist
   const used = state.invoices.some(i=>i.clientId===id);
   if(used){
     toast("warn","No se puede","Este cliente tiene facturas.");
@@ -614,13 +681,10 @@ async function addOrUpdateInvoice(inv, opts={uploadPDF:false}){
 
   // cache client name
   const cli = getClientById(x.clientId);
-  if(cli){
-    x.clientNameCache = cli.name;
-  }
+  if(cli) x.clientNameCache = cli.name;
 
   const idx = state.invoices.findIndex(i=>i.id===x.id);
   if(idx>=0){
-    // keep existing pdf unless overwritten
     const prev = state.invoices[idx];
     x.pdf = x.pdf || prev.pdf || null;
     state.invoices[idx] = { ...prev, ...x, updatedAt: now() };
@@ -629,11 +693,8 @@ async function addOrUpdateInvoice(inv, opts={uploadPDF:false}){
   }
 
   saveLocal();
-
-  // Cloud push data
   await pushToCloud();
 
-  // Upload PDF if requested or autoPDF
   const shouldUpload = prefs.cloudEnabled && firebase.user && (opts.uploadPDF || prefs.autoPDF);
   if(shouldUpload){
     await ensureInvoicePDFCloud(x);
@@ -652,25 +713,89 @@ async function deleteInvoice(id){
 }
 
 /* =========================
-   9) Rendering + Router
+   12) UI: Items editor
+========================= */
+function newItem(){
+  return normalizeItem({ name:"", unit:"kg", qty:1, unitPrice:0, tara:0, origin:"" });
+}
+
+function renderItemsGrid(){
+  const wrap = $("#itemsGrid");
+  if(!wrap) return;
+
+  wrap.innerHTML = ui.editorItems.map((it, idx)=>`
+    <div class="item-row" data-idx="${idx}">
+      <input class="input" data-f="name" placeholder="Producto" value="${escapeHTML(it.name)}" />
+      <select class="select" data-f="unit">
+        ${["kg","caja","ud","manojo"].map(u=>`<option value="${u}" ${it.unit===u?"selected":""}>${u}</option>`).join("")}
+      </select>
+      <input class="input" data-f="qty" type="number" step="0.01" value="${it.qty}" />
+      <input class="input" data-f="unitPrice" type="number" step="0.01" value="${it.unitPrice}" />
+      <input class="input" data-f="tara" type="number" step="0.01" value="${it.tara}" />
+      <input class="input" data-f="origin" placeholder="Origen" value="${escapeHTML(it.origin)}" />
+      <button class="item-del" data-act="del"><i data-lucide="trash-2"></i></button>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll(".item-row").forEach(row=>{
+    row.addEventListener("input",(e)=>{
+      const idx = Number(row.dataset.idx);
+      const el = e.target;
+      const f = el.dataset.f;
+      if(!f) return;
+
+      const cur = ui.editorItems[idx];
+      if(!cur) return;
+
+      if(f==="qty" || f==="unitPrice" || f==="tara"){
+        cur[f] = Number(el.value || 0);
+      }else{
+        cur[f] = el.value;
+      }
+      ui.editorItems[idx] = normalizeItem(cur);
+      updateTotalsUI();
+    });
+
+    row.addEventListener("click",(e)=>{
+      const b = e.target.closest("button");
+      if(!b) return;
+      if(b.dataset.act==="del"){
+        const idx = Number(row.dataset.idx);
+        ui.editorItems.splice(idx,1);
+        if(ui.editorItems.length===0) ui.editorItems.push(newItem());
+        renderItemsGrid();
+        updateTotalsUI();
+      }
+    });
+  });
+
+  lucide.createIcons();
+  updateTotalsUI();
+}
+
+function updateTotalsUI(){
+  const t = calcInvoiceTotals(ui.editorItems);
+  $("#tSubtotal").textContent = fmtEUR(t.subtotal);
+  $("#tIVA").textContent = fmtEUR(t.vat);
+  $("#tTotal").textContent = fmtEUR(t.total);
+}
+
+/* =========================
+   13) Router + Render
 ========================= */
 function routeTo(route){
   ui.route = route;
+
   const titleMap = {
     dashboard: ["Dashboard","Resumen del negocio"],
-    invoices: ["Facturas","Gestión de facturación + PDFs"],
-    clients: ["Clientes","CRM simple + tags"],
-    reports: ["Contabilidad","Reportes y rankings"],
+    invoices: ["Facturas","Gestión + PDFs guardados en nube"],
+    clients: ["Clientes","Datos completos + tags"],
+    reports: ["Contabilidad","Totales por mes, cliente y tags"],
     settings: ["Ajustes","Nube, backups y preferencias"]
   };
 
-  $$(".nav-item").forEach(b=>{
-    b.classList.toggle("active", b.dataset.route === route);
-  });
-
-  $$(".mobile-tabs .tab").forEach(t=>{
-    t.classList.toggle("active", t.dataset.route === route);
-  });
+  $$(".nav-item").forEach(b=> b.classList.toggle("active", b.dataset.route===route));
+  $$(".mobile-tabs .tab").forEach(t=> t.classList.toggle("active", t.dataset.route===route));
 
   $("#pageTitle").textContent = titleMap[route]?.[0] || "ARSLAN";
   $("#pageSubtitle").textContent = titleMap[route]?.[1] || "";
@@ -681,38 +806,11 @@ function routeTo(route){
   renderAll();
 }
 
-function renderAll(){
-  // Theme
-  document.body.classList.toggle("dark", prefs.theme === "dark");
-
-  // Cloud UI
-  if(!prefs.cloudEnabled){
-    setCloudUI("gray", "Local (sin nube)");
-  }else{
-    if(isDefaultFirebaseConfig()){
-      setCloudUI("red","Falta Firebase config");
-    }else if(firebase.user){
-      setCloudUI("green","Nube conectada ✅");
-    }else{
-      setCloudUI("red","Nube (sin login)");
-    }
-  }
-
-  // Settings toggles
-  $("#toggleCloud").checked = !!prefs.cloudEnabled;
-  $("#toggleAutoPDF").checked = !!prefs.autoPDF;
-
-  // Rebuild tags select options
-  renderTagFilterOptions();
-  renderInvoiceEditorOptions();
-
-  // Views content
-  renderDashboard();
-  renderInvoices();
-  renderClients();
-  renderReports();
-
-  lucide.createIcons();
+function collectTags(){
+  const tags = new Set();
+  state.clients.forEach(c => (c.tags||[]).forEach(t=> tags.add(String(t).trim())));
+  state.invoices.forEach(i => { if(i.tag) tags.add(String(i.tag).trim()); });
+  return Array.from(tags).filter(Boolean).sort((a,b)=>a.localeCompare(b));
 }
 
 function renderTagFilterOptions(){
@@ -724,7 +822,6 @@ function renderTagFilterOptions(){
 }
 
 function renderInvoiceEditorOptions(){
-  // clients select
   const selC = $("#invClient");
   const selT = $("#invTag");
 
@@ -733,18 +830,61 @@ function renderInvoiceEditorOptions(){
     .map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`)
     .join("");
 
-  // tags list
   const tags = collectTags();
   const current = selT.value;
   selT.innerHTML = `<option value="">— Sin tag —</option>` + tags.map(t=>`<option value="${escapeHTML(t)}">${escapeHTML(t)}</option>`).join("");
   selT.value = current || "";
 }
 
-function collectTags(){
-  const tags = new Set();
-  state.clients.forEach(c=> (c.tags||[]).forEach(t=> tags.add(String(t).trim()).toString()));
-  state.invoices.forEach(i=> { if(i.tag) tags.add(String(i.tag).trim()); });
-  return Array.from(tags).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+function filteredInvoicesBase(){
+  let list = [...state.invoices];
+
+  const q = safeLower(ui.search);
+  if(q){
+    list = list.filter(i=>{
+      return safeLower(i.number).includes(q) ||
+        safeLower(i.clientNameCache).includes(q) ||
+        safeLower(i.tag).includes(q) ||
+        String(i.total||"").includes(q);
+    });
+  }
+
+  if(ui.tagFilter){
+    list = list.filter(i => (i.tag||"") === ui.tagFilter);
+  }
+  return list;
+}
+
+function renderAll(){
+  document.body.classList.toggle("dark", prefs.theme === "dark");
+
+  if(!prefs.cloudEnabled){
+    setCloudUI("gray","Local (sin nube)");
+  }else{
+    if(isDefaultFirebaseConfig()) setCloudUI("red","Falta Firebase config");
+    else if(firebase.user) setCloudUI("green","Nube conectada ✅");
+    else setCloudUI("red","Nube (sin login)");
+  }
+
+  $("#toggleCloud").checked = !!prefs.cloudEnabled;
+  $("#toggleAutoPDF").checked = !!prefs.autoPDF;
+
+  renderTagFilterOptions();
+  renderInvoiceEditorOptions();
+
+  renderDashboard();
+  renderInvoices();
+  renderClients();
+  renderReports();
+
+  lucide.createIcons();
+}
+
+/* =========================
+   14) Dashboard + Reports
+========================= */
+function sumTotals(list){
+  return list.reduce((a,x)=>a + Number(x.total||0), 0);
 }
 
 function renderDashboard(){
@@ -752,7 +892,6 @@ function renderDashboard(){
   const dtNow = new Date();
   const thisMonth = `${dtNow.getFullYear()}-${String(dtNow.getMonth()+1).padStart(2,"0")}`;
 
-  // week range: last 7 days
   const weekStart = new Date(); weekStart.setDate(weekStart.getDate()-6);
   const weekFrom = ymd(weekStart);
 
@@ -763,49 +902,20 @@ function renderDashboard(){
   const invMonth = inv.filter(i=>i.dateISO.startsWith(thisMonth));
   const invPending = inv.filter(i=>i.status==="PENDIENTE");
 
-  $("#kpiToday").textContent = fmtEUR(sum(invToday));
+  $("#kpiToday").textContent = fmtEUR(sumTotals(invToday));
   $("#kpiTodayCount").textContent = `${invToday.length} facturas`;
 
-  $("#kpiWeek").textContent = fmtEUR(sum(invWeek));
+  $("#kpiWeek").textContent = fmtEUR(sumTotals(invWeek));
   $("#kpiWeekCount").textContent = `${invWeek.length} facturas`;
 
-  $("#kpiMonth").textContent = fmtEUR(sum(invMonth));
+  $("#kpiMonth").textContent = fmtEUR(sumTotals(invMonth));
   $("#kpiMonthCount").textContent = `${invMonth.length} facturas`;
 
-  $("#kpiPending").textContent = fmtEUR(sum(invPending));
+  $("#kpiPending").textContent = fmtEUR(sumTotals(invPending));
   $("#kpiPendingCount").textContent = `${invPending.length} facturas`;
 
-  // Chart 30 days
   renderChart30(inv);
-
-  // Top clients month
   renderTopClients(invMonth);
-}
-
-function sum(list){
-  return list.reduce((a,x)=>a + Number(x.amount||0), 0);
-}
-
-function filteredInvoicesBase(){
-  let list = [...state.invoices];
-
-  // global search
-  const q = safeLower(ui.search);
-  if(q){
-    list = list.filter(i=>{
-      return safeLower(i.number).includes(q) ||
-             safeLower(i.clientNameCache).includes(q) ||
-             safeLower(i.tag).includes(q) ||
-             String(i.amount||"").includes(q);
-    });
-  }
-
-  // tag filter
-  if(ui.tagFilter){
-    list = list.filter(i=> (i.tag||"") === ui.tagFilter);
-  }
-
-  return list;
 }
 
 function renderChart30(list){
@@ -818,8 +928,8 @@ function renderChart30(list){
     const d = new Date(base);
     d.setDate(base.getDate()+k);
     const key = ymd(d);
-    days.push(key.slice(5)); // MM-DD
-    const sumDay = list.filter(i=>i.dateISO===key).reduce((a,x)=>a+Number(x.amount||0),0);
+    days.push(key.slice(5));
+    const sumDay = list.filter(i=>i.dateISO===key).reduce((a,x)=>a+Number(x.total||0),0);
     vals.push(sumDay);
   }
 
@@ -830,22 +940,8 @@ function renderChart30(list){
 
   charts.chart30 = new Chart(ctx, {
     type:"line",
-    data:{
-      labels: days,
-      datasets:[{
-        label:"€",
-        data: vals,
-        tension:.35,
-        fill:false
-      }]
-    },
-    options:{
-      responsive:true,
-      plugins:{ legend:{ display:false } },
-      scales:{
-        y:{ ticks:{ callback:(v)=> `${v}€` } }
-      }
-    }
+    data:{ labels: days, datasets:[{ label:"€", data: vals, tension:.35, fill:false }] },
+    options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v)=> `${v}€` } } } }
   });
 }
 
@@ -853,13 +949,10 @@ function renderTopClients(invMonth){
   const map = new Map();
   invMonth.forEach(i=>{
     const k = i.clientNameCache || "SIN CLIENTE";
-    map.set(k, (map.get(k)||0) + Number(i.amount||0));
+    map.set(k, (map.get(k)||0) + Number(i.total||0));
   });
 
-  const arr = Array.from(map.entries())
-    .sort((a,b)=>b[1]-a[1])
-    .slice(0,8);
-
+  const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const wrap = $("#topClients");
   wrap.innerHTML = arr.length ? arr.map(([name,val])=>`
     <div class="list-item">
@@ -875,7 +968,6 @@ function renderInvoices(){
 
   let list = filteredInvoicesBase();
 
-  // filter chips
   const today = ymd();
   const dtNow = new Date();
   const thisMonth = `${dtNow.getFullYear()}-${String(dtNow.getMonth()+1).padStart(2,"0")}`;
@@ -889,14 +981,14 @@ function renderInvoices(){
 
   tbody.innerHTML = list.map(inv=>{
     const badgeClass = inv.status==="PAGADO" ? "ok" : "warn";
-    const hasPDF = inv.pdf && inv.pdf.downloadURL;
+    const hasPDF = !!(inv.pdf && inv.pdf.downloadURL);
     return `
       <tr>
         <td>${escapeHTML(inv.dateISO||"")}</td>
         <td><b>${escapeHTML(inv.number||"")}</b></td>
         <td>${escapeHTML(inv.clientNameCache||"")}</td>
         <td>${inv.tag ? `<span class="badge">${escapeHTML(inv.tag)}</span>` : `<span class="muted small">—</span>`}</td>
-        <td>${fmtEUR(inv.amount||0)}</td>
+        <td><b>${fmtEUR(inv.total||0)}</b></td>
         <td><span class="badge ${badgeClass}">${escapeHTML(inv.status)}</span></td>
         <td>
           <div class="actions">
@@ -923,10 +1015,9 @@ function renderClients(){
   const tbody = $("#clientTable");
   if(!tbody) return;
 
-  // totals per client
   const totals = new Map();
   state.invoices.forEach(i=>{
-    totals.set(i.clientId, (totals.get(i.clientId)||0) + Number(i.amount||0));
+    totals.set(i.clientId, (totals.get(i.clientId)||0) + Number(i.total||0));
   });
 
   const list = [...state.clients].sort((a,b)=>safeLower(a.name).localeCompare(safeLower(b.name)));
@@ -938,8 +1029,9 @@ function renderClients(){
       <tr>
         <td><b>${escapeHTML(c.name)}</b></td>
         <td>${escapeHTML(c.nif||"")}</td>
+        <td>${escapeHTML(c.address||"")}</td>
         <td>${tags || `<span class="muted small">—</span>`}</td>
-        <td>${fmtEUR(sumC)}</td>
+        <td><b>${fmtEUR(sumC)}</b></td>
         <td>
           <div class="actions">
             <button class="btn" data-cact="edit" data-id="${c.id}"><i data-lucide="pencil"></i></button>
@@ -954,29 +1046,23 @@ function renderClients(){
 }
 
 function renderReports(){
-  // months chart
   renderChartMonths();
-
-  // default date range last 30
   if(!$("#repFrom").value){
     const d = new Date(); d.setDate(d.getDate()-30);
     $("#repFrom").value = ymd(d);
   }
-  if(!$("#repTo").value){
-    $("#repTo").value = ymd();
-  }
+  if(!$("#repTo").value) $("#repTo").value = ymd();
 }
 
 function renderChartMonths(){
   const ctx = $("#chartMonths");
   if(!ctx) return;
 
-  // group by YYYY-MM
   const map = new Map();
   state.invoices.forEach(i=>{
     const k = String(i.dateISO||"").slice(0,7);
     if(!k || k.length<7) return;
-    map.set(k, (map.get(k)||0) + Number(i.amount||0));
+    map.set(k, (map.get(k)||0) + Number(i.total||0));
   });
 
   const keys = Array.from(map.keys()).sort((a,b)=>a.localeCompare(b)).slice(-12);
@@ -986,32 +1072,22 @@ function renderChartMonths(){
 
   charts.chartMonths = new Chart(ctx,{
     type:"bar",
-    data:{
-      labels: keys,
-      datasets:[{ label:"€", data: vals }]
-    },
-    options:{
-      responsive:true,
-      plugins:{ legend:{ display:false } },
-      scales:{ y:{ ticks:{ callback:(v)=> `${v}€` } } }
-    }
+    data:{ labels: keys, datasets:[{ label:"€", data: vals }] },
+    options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v)=> `${v}€` } } } }
   });
 }
 
-/* =========================
-   10) Report generation (range)
-========================= */
 function runReport(){
   const from = $("#repFrom").value || "0000-00-00";
   const to = $("#repTo").value || "9999-99-99";
 
   const list = state.invoices.filter(i=> i.dateISO>=from && i.dateISO<=to);
+  const totalRange = sumTotals(list);
 
-  // ranking clients
   const mapC = new Map();
   list.forEach(i=>{
     const k = i.clientNameCache || "SIN CLIENTE";
-    mapC.set(k, (mapC.get(k)||0) + Number(i.amount||0));
+    mapC.set(k, (mapC.get(k)||0) + Number(i.total||0));
   });
   const arrC = Array.from(mapC.entries()).sort((a,b)=>b[1]-a[1]);
 
@@ -1021,22 +1097,21 @@ function runReport(){
         <b>#${idx+1} ${escapeHTML(n)}</b><br>
         <small>${fmtEUR(v)}</small>
       </div>
-      <span class="badge ok">${((v/sum(list))*100 || 0).toFixed(1)}%</span>
+      <span class="badge ok">${totalRange ? ((v/totalRange)*100).toFixed(1) : "0.0"}%</span>
     </div>
   `).join("") : `<div class="muted">Sin datos en el rango.</div>`;
 
-  // ranking tags
   const mapT = new Map();
   list.forEach(i=>{
     const k = i.tag ? i.tag : "SIN TAG";
-    mapT.set(k, (mapT.get(k)||0) + Number(i.amount||0));
+    mapT.set(k, (mapT.get(k)||0) + Number(i.total||0));
   });
   const arrT = Array.from(mapT.entries()).sort((a,b)=>b[1]-a[1]);
 
   $("#rankTags").innerHTML = arrT.length ? arrT.map(([t,v])=>`
     <div class="list-item">
       <div><b>${escapeHTML(t)}</b><br><small>${fmtEUR(v)}</small></div>
-      <span class="badge">${((v/sum(list))*100 || 0).toFixed(1)}%</span>
+      <span class="badge">${totalRange ? ((v/totalRange)*100).toFixed(1) : "0.0"}%</span>
     </div>
   `).join("") : `<div class="muted">Sin datos.</div>`;
 
@@ -1044,41 +1119,16 @@ function runReport(){
 }
 
 /* =========================
-   11) Modals
+   15) Modals
 ========================= */
 function openModal(id){ $(`#${id}`).classList.remove("hidden"); lucide.createIcons(); }
 function closeModal(id){ $(`#${id}`).classList.add("hidden"); }
 
-function closeAllModals(){
-  $$(".modal").forEach(m=>m.classList.add("hidden"));
-}
+function closeAllModals(){ $$(".modal").forEach(m=>m.classList.add("hidden")); }
 
-function openInvoiceEditor(invoice){
-  ui.editingInvoiceId = invoice?.id || null;
-
-  $("#invModalTitle").textContent = invoice ? `✏️ Editar factura` : `🧾 Nueva factura`;
-
-  $("#invDate").value = invoice?.dateISO || ymd();
-  $("#invNumber").value = invoice?.number || genInvoiceNumber();
-
-  // select client
-  renderInvoiceEditorOptions();
-  if(invoice?.clientId){
-    $("#invClient").value = invoice.clientId;
-  }else{
-    // default first
-    if(state.clients[0]) $("#invClient").value = state.clients[0].id;
-  }
-
-  $("#invTag").value = invoice?.tag || "";
-  $("#invStatus").value = invoice?.status || "PENDIENTE";
-  $("#invAmount").value = invoice?.amount != null ? Number(invoice.amount).toFixed(2) : "";
-  $("#invNotes").value = invoice?.notes || "";
-
-  const canView = !!(invoice?.pdf?.downloadURL);
-  $("#btnInvViewPDF").disabled = !canView;
-
-  openModal("modalInvoice");
+function openPDF(url){
+  $("#pdfFrame").src = url;
+  openModal("modalPDF");
 }
 
 function openClientEditor(client){
@@ -1087,27 +1137,52 @@ function openClientEditor(client){
 
   $("#cliName").value = client?.name || "";
   $("#cliNIF").value = client?.nif || "";
+  $("#cliAddress").value = client?.address || "";
+  $("#cliEmail").value = client?.email || "";
+  $("#cliPhone").value = client?.phone || "";
   $("#cliTags").value = (client?.tags || []).join(", ");
 
   $("#btnCliDelete").style.display = client ? "inline-flex" : "none";
-
   openModal("modalClient");
 }
 
-function openPDF(url){
-  $("#pdfFrame").src = url;
-  openModal("modalPDF");
+function openInvoiceEditor(invoice){
+  ui.editingInvoiceId = invoice?.id || null;
+
+  $("#invModalTitle").textContent = invoice ? "✏️ Editar factura" : "🧾 Nueva factura";
+  $("#invDate").value = invoice?.dateISO || ymd();
+  $("#invNumber").value = invoice?.number || genInvoiceNumber();
+
+  renderInvoiceEditorOptions();
+
+  if(invoice?.clientId){
+    $("#invClient").value = invoice.clientId;
+  }else{
+    if(state.clients[0]) $("#invClient").value = state.clients[0].id;
+  }
+
+  $("#invTag").value = invoice?.tag || "";
+  $("#invStatus").value = invoice?.status || "PENDIENTE";
+  $("#invNotes").value = invoice?.notes || "";
+
+  ui.editorItems = (invoice?.items && invoice.items.length) ? invoice.items.map(normalizeItem) : [newItem()];
+  renderItemsGrid();
+
+  const canView = !!(invoice?.pdf?.downloadURL);
+  $("#btnInvViewPDF").disabled = !canView;
+
+  openModal("modalInvoice");
 }
 
 /* =========================
-   12) Import/Export JSON + CSV
+   16) Export/Import
 ========================= */
 function exportJSON(){
   const data = JSON.stringify(state, null, 2);
   const blob = new Blob([data], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `ARSLAN_KIWI_BACKUP_${ymd()}_v3.json`;
+  a.download = `ARSLAN_KIWI_BACKUP_${ymd()}_v31.json`;
   a.click();
   URL.revokeObjectURL(a.href);
   toast("ok","Backup JSON","Exportado correctamente.");
@@ -1132,16 +1207,16 @@ function importJSONFile(file){
 }
 
 function exportInvoicesCSV(){
-  const rows = [
-    ["dateISO","number","client","tag","amount","status","pdfURL"]
-  ];
+  const rows = [["dateISO","number","client","tag","subtotal","iva4","total","status","pdfURL"]];
   state.invoices.forEach(i=>{
     rows.push([
       i.dateISO||"",
       i.number||"",
       i.clientNameCache||"",
       i.tag||"",
-      String(i.amount||0),
+      String(i.subtotal||0),
+      String(i.vatAmount||0),
+      String(i.total||0),
       i.status||"",
       i.pdf?.downloadURL || ""
     ]);
@@ -1150,14 +1225,14 @@ function exportInvoicesCSV(){
   const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `FACTURAS_${ymd()}.csv`;
+  a.download = `FACTURAS_${ymd()}_v31.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
   toast("ok","CSV exportado","Listo.");
 }
 
 /* =========================
-   13) Events
+   17) Events
 ========================= */
 function bindEvents(){
   // nav
@@ -1195,9 +1270,11 @@ function bindEvents(){
     }
     openModal("modalCloud");
   });
+
   $("#btnCloudSignIn").addEventListener("click", ()=>{
     cloudLogin($("#cloudEmail").value.trim(), $("#cloudPass").value);
   });
+
   $("#btnCloudRegister").addEventListener("click", ()=>{
     cloudRegister($("#cloudEmail").value.trim(), $("#cloudPass").value);
   });
@@ -1279,22 +1356,21 @@ function bindEvents(){
     if(act==="edit") openInvoiceEditor(inv);
 
     if(act==="dup"){
-      const copy = { ...inv, id: uid("inv"), number: genInvoiceNumber(), createdAt: now(), updatedAt: now(), pdf:null };
+      const copy = normalizeInvoice({
+        ...inv,
+        id: uid("inv"),
+        number: genInvoiceNumber(),
+        createdAt: now(),
+        updatedAt: now(),
+        pdf: null
+      });
       await addOrUpdateInvoice(copy, {uploadPDF:false});
       toast("ok","Duplicada","Factura duplicada.");
     }
 
-    if(act==="pdfLocal"){
-      downloadPDFLocal(inv);
-    }
-
-    if(act==="pdfCloud"){
-      await ensureInvoicePDFCloud(inv);
-    }
-
-    if(act==="viewPDF"){
-      if(inv.pdf?.downloadURL) openPDF(inv.pdf.downloadURL);
-    }
+    if(act==="pdfLocal") downloadPDFLocal(inv);
+    if(act==="pdfCloud") await ensureInvoicePDFCloud(inv);
+    if(act==="viewPDF"){ if(inv.pdf?.downloadURL) openPDF(inv.pdf.downloadURL); }
 
     if(act==="del"){
       const ok = confirm("¿Eliminar factura? Esto no se puede deshacer.");
@@ -1314,10 +1390,6 @@ function bindEvents(){
 
     if(act==="edit") openClientEditor(cli);
     if(act==="newInv"){
-      if(!state.clients.length){
-        toast("warn","Crea un cliente","Primero añade un cliente.");
-        return;
-      }
       openInvoiceEditor({
         id:null,
         dateISO: ymd(),
@@ -1325,22 +1397,26 @@ function bindEvents(){
         clientId: cli.id,
         clientNameCache: cli.name,
         tag: "",
-        amount: 0,
         status:"PENDIENTE",
-        notes:""
+        notes:"",
+        items:[newItem()]
       });
     }
   });
 
   // client save/delete
   $("#btnCliSave").addEventListener("click", ()=>{
-    const obj = {
+    const obj = normalizeClient({
       id: ui.editingClientId || uid("cli"),
       name: $("#cliName").value.trim(),
       nif: $("#cliNIF").value.trim(),
+      address: $("#cliAddress").value.trim(),
+      email: $("#cliEmail").value.trim(),
+      phone: $("#cliPhone").value.trim(),
       tags: $("#cliTags").value.split(",").map(x=>x.trim()).filter(Boolean),
       updatedAt: now()
-    };
+    });
+
     if(!obj.name){
       toast("warn","Falta nombre","Escribe el nombre del cliente.");
       return;
@@ -1358,24 +1434,14 @@ function bindEvents(){
   });
 
   // invoice editor buttons
+  $("#btnAddItem").addEventListener("click", ()=>{
+    ui.editorItems.push(newItem());
+    renderItemsGrid();
+  });
+
   $("#btnInvSave").addEventListener("click", async ()=>{
-    const id = ui.editingInvoiceId || uid("inv");
-    const clientId = $("#invClient").value;
-
-    const inv = {
-      id,
-      dateISO: $("#invDate").value || ymd(),
-      number: $("#invNumber").value.trim() || genInvoiceNumber(),
-      clientId,
-      clientNameCache: getClientById(clientId)?.name || "",
-      tag: $("#invTag").value || "",
-      status: $("#invStatus").value || "PENDIENTE",
-      amount: Number($("#invAmount").value || 0),
-      notes: $("#invNotes").value.trim(),
-      updatedAt: now()
-    };
-
-    await addOrUpdateInvoice(inv, { uploadPDF:false });
+    const inv = buildInvoiceFromEditor(ui.editingInvoiceId || uid("inv"));
+    await addOrUpdateInvoice(inv, {uploadPDF:false});
     closeModal("modalInvoice");
   });
 
@@ -1387,21 +1453,32 @@ function bindEvents(){
     const inv = getInvoiceById(ui.editingInvoiceId);
     if(!inv) return;
 
-    const copy = { ...inv, id: uid("inv"), number: genInvoiceNumber(), createdAt: now(), updatedAt: now(), pdf:null };
+    const copy = normalizeInvoice({
+      ...inv,
+      id: uid("inv"),
+      number: genInvoiceNumber(),
+      createdAt: now(),
+      updatedAt: now(),
+      pdf: null
+    });
+
     await addOrUpdateInvoice(copy, {uploadPDF:false});
     toast("ok","Duplicada","Factura duplicada.");
   });
 
   $("#btnInvPDFLocal").addEventListener("click", ()=>{
-    const inv = buildInvoiceFromEditor();
-    downloadPDFLocal(inv);
+    const inv = buildInvoiceFromEditor(ui.editingInvoiceId || uid("inv"));
+    const temp = normalizeInvoice(inv);
+    downloadPDFLocal(temp);
   });
 
   $("#btnInvPDFCloud").addEventListener("click", async ()=>{
-    // save first if not exists
-    const inv = buildInvoiceFromEditor(true);
+    const id = ui.editingInvoiceId || uid("inv");
+    const inv = buildInvoiceFromEditor(id);
+
     await addOrUpdateInvoice(inv, {uploadPDF:false});
-    await ensureInvoicePDFCloud(getInvoiceById(inv.id));
+    const saved = getInvoiceById(id);
+    if(saved) await ensureInvoicePDFCloud(saved);
   });
 
   $("#btnInvViewPDF").addEventListener("click", ()=>{
@@ -1440,7 +1517,7 @@ function bindEvents(){
   });
 
   // Keyboard shortcuts
-  document.addEventListener("keydown", async (e)=>{
+  document.addEventListener("keydown", (e)=>{
     if(e.key === "Escape") closeAllModals();
 
     if(e.ctrlKey && e.key.toLowerCase() === "n"){
@@ -1458,56 +1535,120 @@ function bindEvents(){
   });
 }
 
-function buildInvoiceFromEditor(forceId=false){
-  const existingId = ui.editingInvoiceId;
-  const id = existingId || (forceId ? uid("inv") : uid("inv"));
+function buildInvoiceFromEditor(id){
   const clientId = $("#invClient").value;
+  const client = getClientById(clientId);
+
+  const t = calcInvoiceTotals(ui.editorItems);
 
   return normalizeInvoice({
     id,
     dateISO: $("#invDate").value || ymd(),
     number: $("#invNumber").value.trim() || genInvoiceNumber(),
     clientId,
-    clientNameCache: getClientById(clientId)?.name || "",
+    clientNameCache: client?.name || "",
     tag: $("#invTag").value || "",
     status: $("#invStatus").value || "PENDIENTE",
-    amount: Number($("#invAmount").value || 0),
     notes: $("#invNotes").value.trim(),
+    items: t.cleanItems,
+    subtotal: t.subtotal,
+    vatAmount: t.vat,
+    total: t.total,
     updatedAt: now()
   });
 }
 
 /* =========================
-   14) Boot
+   18) Seed: Todos tus clientes (precargados)
 ========================= */
 function seedIfEmpty(){
   if(state.clients.length) return;
 
-  // Demo client
-  state.clients = [
-    normalizeClient({ id:"cli_riviera", name:"RIVIERA", nif:"B16794893", tags:["Centro","Severo","Edificio","Tomillares"] }),
-    normalizeClient({ id:"cli_braseros", name:"BRASEROS", nif:"", tags:["Centro","Severo","Edificio","Tomillares"] })
+  const clients = [
+    // RIVIERA
+    {
+      id: "cli_riviera",
+      name: "RIVIERA (CONOR ESY SLU)",
+      nif: "B16794893",
+      address: "Paseo del Espolón, 09003 Burgos",
+      email: "",
+      phone: "",
+      tags: ["Centro","Severo","Edificio","Tomillares"]
+    },
+
+    // GOLDEN GARDEN
+    {
+      id: "cli_golden_garden",
+      name: "GOLDEN GARDEN",
+      nif: "71281665L",
+      address: "Trinidad, 12, 09003, Burgos",
+      email: "",
+      phone: "",
+      tags: ["IVA incluido"]
+    },
+
+    // CON/SENTIDOS
+    {
+      id: "cli_consentidos",
+      name: "Con/sentidos (Cuevas Palacios Restauración S.L.)",
+      nif: "B10694792",
+      address: "C/ San Lesmes, 1 - 09004 Burgos",
+      email: "",
+      phone: "947 20 35 51",
+      tags: []
+    },
+
+    // AL PAN PAN (ALESAL PAN / CAFÉ SAN LESMES)
+    {
+      id: "cli_alesal_pan",
+      name: "Alesal Pan y Café S.L",
+      nif: "B09582420",
+      address: "Calle San Lesmes 1, Burgos",
+      email: "bertiz.miranda@gmail.com",
+      phone: "947277977",
+      tags: ["ALESAL PAN","CAFÉ SAN LESMES"]
+    },
+
+    // AL PAN PAN BURGOS SL (otra ficha si quieres separarla)
+    {
+      id: "cli_alpanpan_burgos",
+      name: "Al Pan Pan Burgos, S.L.",
+      nif: "B09569344",
+      address: "C/ Miranda, 17 Bajo, 09002 Burgos",
+      email: "bertiz.miranda@gmail.com",
+      phone: "947277977",
+      tags: []
+    },
+
+    // CAFE BAR NUOVO
+    {
+      id: "cli_nuovo",
+      name: "CAFE BAR NUOVO",
+      nif: "120221393",
+      address: "C/ San Juan de Ortega 14, 09007 Burgos",
+      email: "",
+      phone: "",
+      tags: []
+    }
   ];
 
+  state.clients = clients.map(normalizeClient);
   state.invoices = [];
   saveLocal();
 }
 
+/* =========================
+   19) Boot
+========================= */
 function init(){
   loadLocal();
   seedIfEmpty();
 
-  // theme from prefs
-  document.body.classList.toggle("dark", prefs.theme === "dark");
-
-  // init firebase if cloud enabled
   if(prefs.cloudEnabled) initFirebase();
 
   bindEvents();
   routeTo("dashboard");
   renderAll();
-
-  // start icons
   lucide.createIcons();
 }
 
