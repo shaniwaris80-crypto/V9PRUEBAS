@@ -1,2082 +1,1280 @@
 /* =========================================================
-   ARSLAN • FACTURAS — KIWI EDITION (B/W + Offline + Cloud)
-   app.js (1/3) — Core: state, storage, ui skeleton, helpers
-   ========================================================= */
+   ARSLAN • FACTURAS — KIWI Edition (PRO B/W)
+   app.js — REHECHO COMPLETO
+   PARTE 1/2
 
-"use strict";
+   ✅ Offline-first (LocalStorage)
+   ✅ Facturas (grid pro 1 línea, 5 filas por defecto, + añadir)
+   ✅ Proveedor izq + QR centro + Cliente der
+   ✅ Clientes CRUD
+   ✅ Productos CRUD + Historial (últimas 5) SOLO pantalla
+   ✅ Import/Export JSON
+   ✅ Import precios por link (desde prices.html ?prices= / #prices=)
+   ✅ Crear pack de precios (abre prices.html con ?pack=)
+   ✅ Contabilidad (PIN) - bloque real
+   ✅ Ajustes (IVA, QR template, Logo SVG, Firebase config)
+
+   ⏭️ PARTE 2/2 añade:
+   - PDF PRO (logo + tabla + QR + totales)
+   - Cloud Firebase opcional (login, sync, merge, pdfUrl)
+========================================================= */
+
+const $ = (q) => document.querySelector(q);
+const $$ = (q) => Array.from(document.querySelectorAll(q));
 
 /* =========================
-   0) KEYS / DEFAULTS
+   Storage keys
 ========================= */
-const K = {
-  provider:  "af_kiwi_provider",
-  clients:   "af_kiwi_clients",
-  products:  "af_kiwi_products",
-  invoices:  "af_kiwi_invoices",
-  settings:  "af_kiwi_settings",
-  pdfIndex:  "af_kiwi_pdf_index" // lightweight index (actual blobs in IndexedDB)
-};
+const LS_KEY = "arslan_kiwi_facturas_v3_db";
+const LS_ACC_UNLOCK = "arslan_kiwi_facturas_v3_acc_unlocked";
 
+/* =========================
+   Defaults (Proveedor + Clientes conocidos)
+========================= */
 const DEFAULT_PROVIDER = {
   name: "Mohammad Arslan Waris",
-  nif:  "",
-  addr: "",
-  tel:  "",
-  email:""
+  nif: "X6389988J",
+  addr: "Calle San Pablo 17, Burgos",
+  phone: "631667893",
+  email: "shaniwaris80@gmail.com"
 };
 
-const DEFAULT_SETTINGS = {
-  vatRate: 4,
-  shipRate: 10,
-  vatIncludedDefault: false,
-
-  qrTpl: "AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}",
-
-  // Accounting PIN
-  pin: "7392",
-
-  // Cloud
-  cloud: {
-    enabled: false,         // becomes true when config saved + initialized
-    autoSync: false,
-    config: {               // Firebase config
-      apiKey: "",
-      authDomain: "",
-      databaseURL: "",
-      projectId: "",
-      appId: "",
-      storageBucket: ""
-    },
-    user: null,             // { uid, email }
-    lastSyncAt: 0
+const DEFAULT_CLIENTS = [
+  {
+    id: "cli_golden_garden",
+    name: "David Herrera Estalayo",
+    nif: "71281665L",
+    addr: "Trinidad, 12, 09003, Burgos",
+    phone: "",
+    email: "",
+    alias: "GOLDEN GARDEN",
+    notes: "IVA incluido en precios (sin desglose)"
   },
-
-  // Behavior
-  preventOverwriteClosedInvoices: true
-};
-
-// Basic schema
-// client: { id, name, alias, nif, addr, tel, email, tags[], vatIncluded, shipOn, createdAt, updatedAt }
-// product:{ id, name, unitDefault:'kg'|'caja'|'ud', kgBox:number, price:number, cost:number, origin, priceHist:[{ts, price}] }
-// invoice:{ id, number, dateISO, clientId, clientSnap:{...}, providerSnap:{...}, tags[], notes,
-//           lines:[{id, prodId, prodName, mode, qty, bruto, tara, neto, price, origin, amt}],
-//           shipOn, vatIncluded, closed,
-//           payments:[{id, ts, method, amount}],
-//           pdf:{ localIdbKey, cloudUrl },
-//           createdAt, updatedAt }
+  {
+    id: "cli_cons_sentidos",
+    name: "Cuevas Palacios Restauración S.L.",
+    nif: "B10694792",
+    addr: "C/ San Lesmes, 1 - 09004 Burgos",
+    phone: "947203551",
+    email: "",
+    alias: "CON/SENTIDOS",
+    notes: ""
+  },
+  {
+    id: "cli_alpanpan",
+    name: "Al Pan Pan Burgos, S.L.",
+    nif: "B09569344",
+    addr: "C/ Miranda, 17 Bajo, 09002 Burgos",
+    phone: "947277977",
+    email: "bertiz.miranda@gmail.com",
+    alias: "AL PAN PAN",
+    notes: ""
+  },
+  {
+    id: "cli_alesalpan",
+    name: "Alesal Pan y Café S.L",
+    nif: "B09582420",
+    addr: "Calle San Lesmes 1",
+    phone: "",
+    email: "",
+    alias: "ALESAL PAN / CAFÉ DE CALLE SAN LESMES",
+    notes: ""
+  },
+  {
+    id: "cli_riviera",
+    name: "CONOR ESY SLU",
+    nif: "B16794893",
+    addr: "Paseo del Espolón, 09003 Burgos",
+    phone: "",
+    email: "",
+    alias: "RIVIERA",
+    notes: ""
+  },
+  {
+    id: "cli_nuovo",
+    name: "CAFE BAR NUOVO",
+    nif: "120221393",
+    addr: "C/ San Juan de Ortega 14, 09007 Burgos",
+    phone: "",
+    email: "",
+    alias: "NUOVO",
+    notes: ""
+  }
+];
 
 /* =========================
-   1) SAFE STORAGE
+   Vocabulario (Productos)
+   (lista tuya — se normaliza a MAYÚSCULAS)
 ========================= */
-function loadJSON(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const v = JSON.parse(raw);
-    return (v === null || v === undefined) ? fallback : v;
-  } catch (e) {
-    console.warn("loadJSON fail", key, e);
-    return fallback;
-  }
-}
-
-function saveJSON(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-    return true;
-  } catch (e) {
-    console.warn("saveJSON fail", key, e);
-    return false;
-  }
-}
+const DEFAULT_VOCAB_TEXT = `
+MANZANA PINK LADY
+MANDARINA COLOMBE
+MANDARINA PLASENCIA
+MANDARINA USOPRADES
+MANZANA GRNNY SMITH
+NARANJA MESA USOPRADES
+NARANJA ZUMO USOPRADES
+MANZANA STORY
+GUAYABA
+ROMANESCU
+PATATA AGRIA
+PATATA MONALISA
+PATATA SPUNTA
+CEBOLLINO
+ENELDO
+REMOLACHA
+LECHUGA ROBLE
+ESCAROLA
+GUISANTES
+KIWI MARIPOSA
+AGUACATE LISO
+KIWI ZESPRI GOLD
+PARAGUAYO
+KIWI TOMASIN PLANCHA
+PERA RINCON DEL SOTO
+MELOCOTON PRIMERA
+AGUACATE GRANEL
+MARACUYA
+MANZANA GOLDEN 24
+PLATANO CANARIO PRIMERA
+MANDARINA HOJA
+MANZANA GOLDEN 20
+NARANJA TOMASIN
+NECTARINA
+NUECES
+SANDIA
+LIMON SEGUNDA
+MANZANA FUJI
+NARANJA MESA SONRISA
+JENGIBRE
+BATATA
+AJO PRIMERA
+CEBOLLA NORMAL
+CALABAZA GRANDE
+PATATA LAVADA
+TOMATE CHERRY RAMA
+TOMATE CHERRY PERA
+TOMATE DANIELA
+TOMATE ROSA PRIMERA
+TOMATE ASURCADO MARRON
+TOMATE RAMA
+PIMIENTO PADRON
+ZANAHORIA
+PEPINO
+CEBOLLETA
+PUERROS
+BROCOLI
+JUDIA VERDE
+BERENJENA
+PIMIENTO ITALIANO VERDE
+PIMIENTO ITALIANO ROJO
+CHAMPINON
+UVA ROJA
+UVA BLANCA
+ALCACHOFA
+CALABACIN
+COLIFLOR
+BATAVIA
+ICEBERG
+MANDARINA SEGUNDA
+MANZANA GOLDEN 28
+NARANJA ZUMO
+KIWI SEGUNDA
+MANZANA ROYAL GALA 24
+PLATANO CANARIO SUELTO
+CEREZA
+FRESAS
+ARANDANOS
+ESPINACA
+PEREJIL
+CILANTRO
+ACELGAS
+PIMIENTO VERDE
+PIMIENTO ROJO
+MACHO VERDE
+MACHO MADURO
+YUCA
+AVOCADO
+PERA CONFERENCIA PRIMERA BIS
+REINETA PARDA
+POMELO CHINO
+MANDARINA TABALET
+BERZA
+COL DE BRUSELAS
+NUECES SEGUNDA
+CEBOLLA ROJA
+MENTA
+HABANERO
+RABANITOS
+POMELO
+PAPAYA
+REINETA 28
+NISPERO
+ALBARICOQUE
+TOMATE PERA
+TOMATE BOLA
+TOMATE PINK
+VALVENOSTA GOLDEN
+MELOCOTON ROJO
+MELON GALIA
+APIO
+NARANJA SANHUJA
+LIMON PRIMERA
+MANGO
+MELOCOTON AMARILLO
+VALVENOSTA ROJA
+PINA
+NARANJA HOJA
+PERA CONFERENCIA SEGUNDA
+CEBOLLA DULCE
+TOMATE ASURCADO AZUL
+ESPARRAGOS BLANCOS
+ESPARRAGOS TRIGUEROS
+REINETA PRIMERA
+AGUACATE PRIMERA
+COCO
+NECTARINA SEGUNDA
+REINETA 24
+NECTARINA CARNE BLANCA
+GUINDILLA
+REINETA VERDE
+PATATA 25KG
+PATATA 5 KG
+TOMATE RAFF
+REPOLLO
+KIWI ZESPRI
+PARAGUAYO SEGUNDA
+MELON
+REINETA 26
+TOMATE ROSA
+MANZANA CRISPS
+ALOE VERA PIEZAS
+TOMATE ENSALADA
+PATATA 10KG
+MELON BOLLO
+CIRUELA ROJA
+LIMA
+GUINEO VERDE
+SETAS
+BANANA
+BONIATO
+FRAMBUESA
+BREVAS
+PERA AGUA
+YAUTIA
+YAME
+OKRA
+MANZANA MELASSI
+CACAHUETE
+SANDIA NEGRA
+SANDIA RAYADA
+HIGOS
+KUMATO
+KIWI CHILE
+MELOCOTON AMARILLO SEGUNDA
+HIERBABUENA
+LECHUGA ROMANA
+KAKI
+CIRUELA CLAUDIA
+PERA LIMONERA
+CIRUELA AMARILLA
+HIGOS BLANCOS
+UVA ALVILLO
+LIMON EXTRA
+PITAHAYA ROJA
+HIGO CHUMBO
+CLEMENTINA
+GRANADA
+NECTARINA PRIMERA BIS
+CHIRIMOYA
+UVA CHELVA
+PIMIENTO CALIFORNIA VERDE
+KIWI TOMASIN
+PIMIENTO CALIFORNIA ROJO
+MANDARINA SATSUMA
+CASTANA
+MANZANA KANZI
+PERA ERCOLINA
+NABO
+UVA ALVILLO NEGRA
+CHAYOTE
+ROYAL GALA 28
+MANDARINA PRIMERA
+PIMIENTO PINTON
+MELOCOTON AMARILLO DE CALANDA
+HINOJOS
+MANDARINA DE HOJA
+UVA ROJA PRIMERA
+UVA BLANCA PRIMERA
+`.trim();
 
 /* =========================
-   2) UTILS
+   Helpers
 ========================= */
-function uid(prefix = "id") {
+function uid(prefix="id"){
   return `${prefix}_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
 }
-
-function pad2(n) { return String(n).padStart(2, "0"); }
-
-function nowISODate() {
+function norm(s){
+  return (s||"").toString().trim().replace(/\s+/g," ").toUpperCase();
+}
+function safeJSONParse(s){
+  try{ return JSON.parse(s); }catch(e){ return null; }
+}
+function n2(x){
+  const t = (x ?? "").toString().replace(",", ".").trim();
+  if(t === "") return 0;
+  const v = Number(t);
+  return Number.isFinite(v) ? v : 0;
+}
+function moneyEUR(n){
+  const x = Number(n);
+  const v = Number.isFinite(x) ? x : 0;
+  return v.toLocaleString("es-ES", { style:"currency", currency:"EUR" });
+}
+function clamp2(n){
+  const x = Number(n);
+  if(!Number.isFinite(x)) return 0;
+  return Math.round(x * 100) / 100;
+}
+function todayISO(){
   const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
 }
-
-// FA-YYYYMMDDHHMM
-function makeInvoiceNumber(dt = new Date()) {
-  const y = dt.getFullYear();
-  const m = pad2(dt.getMonth()+1);
-  const d = pad2(dt.getDate());
-  const hh = pad2(dt.getHours());
-  const mm = pad2(dt.getMinutes());
-  return `FA-${y}${m}${d}${hh}${mm}`;
+function timeStamp(){
+  const d = new Date();
+  return d.toISOString();
 }
-
-function toNum(x) {
-  if (x === null || x === undefined) return 0;
-  if (typeof x === "number") return isFinite(x) ? x : 0;
-  const s = String(x).replace(",", ".").trim();
-  const n = parseFloat(s);
-  return isFinite(n) ? n : 0;
+function setMini(id, txt){
+  const el = $(id);
+  if(el) el.textContent = txt;
 }
-
-function clampNonNeg(n) {
-  n = toNum(n);
-  return n < 0 ? 0 : n;
+function showModal(el){
+  if(!el) return;
+  el.classList.add("show");
+  el.setAttribute("aria-hidden","false");
 }
-
-function round2(n) {
-  n = toNum(n);
-  return Math.round(n * 100) / 100;
+function hideModal(el){
+  if(!el) return;
+  el.classList.remove("show");
+  el.setAttribute("aria-hidden","true");
 }
-
-function money(n) {
-  n = round2(n);
-  // Spanish formatting without Intl (fast + stable)
-  const parts = n.toFixed(2).split(".");
-  const int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${int},${parts[1]}`;
+function lzDecompressParam(param){
+  if(!param) return null;
+  try{
+    const json = window.LZString?.decompressFromEncodedURIComponent(param);
+    if(!json) return null;
+    return safeJSONParse(json);
+  }catch(e){ return null; }
 }
-
-function normStr(s) {
-  return String(s || "").trim();
-}
-
-function normKey(s) {
-  return normStr(s).toLowerCase();
-}
-
-function splitTags(s) {
-  return normStr(s)
-    .split(",")
-    .map(t => t.trim())
-    .filter(Boolean);
-}
-
-function hasTag(inv, q) {
-  const t = (inv.tags || []).map(normKey);
-  return t.includes(normKey(q));
-}
-
-function includesAny(hay, needle) {
-  return normKey(hay).includes(normKey(needle));
+function lzCompress(obj){
+  const json = JSON.stringify(obj);
+  return window.LZString?.compressToEncodedURIComponent(json) || "";
 }
 
 /* =========================
-   3) TOAST
+   DB model
 ========================= */
-let toastTimer = null;
-function showToast(msg, ms = 1800) {
-  const t = EL.toast;
-  if (!t) return;
-  t.textContent = msg;
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    t.hidden = true;
-  }, ms);
-}
-
-/* =========================
-   4) DOM HELPERS
-========================= */
-function $(id) { return document.getElementById(id); }
-
-function setPill(el, text, variant = "normal") {
-  if (!el) return;
-  el.textContent = text;
-  el.style.background = (variant === "ok") ? "#000" : "";
-  el.style.color = (variant === "ok") ? "#fff" : "";
-  el.style.borderColor = (variant === "ok") ? "#000" : "";
-}
-
-function safeSetValue(el, v) {
-  if (!el) return;
-  el.value = (v === null || v === undefined) ? "" : String(v);
-}
-
-function safeSetText(el, v) {
-  if (!el) return;
-  el.textContent = (v === null || v === undefined) ? "" : String(v);
-}
-
-/* =========================
-   5) STATE
-========================= */
-const STATE = {
-  provider: structuredClone(DEFAULT_PROVIDER),
-  clients: [],
-  products: [],
-  invoices: [],
-  settings: structuredClone(DEFAULT_SETTINGS),
-
-  // UI state
-  currentView: "invoicesView",
-  activeInvoiceId: null,
-  activeClientId: null,
-  activeProductId: null,
-
-  // Accounting lock
-  accountingUnlocked: false,
-
-  // caches
-  productById: new Map(),
-  clientById: new Map()
-};
-
-const EL = {
-  // top
-  modePill: null,
-  btnSync: null,
-  btnAuth: null,
-
-  // tabs/views
-  tabs: [],
-  views: [],
-
-  // invoice list
-  invoiceSearch: null,
-  invoiceList: null,
-  invoiceListMeta: null,
-  btnNewInvoice: null,
-  btnDuplicate: null,
-  btnDelete: null,
-  btnSave: null,
-  btnExportJSON: null,
-  btnImportJSON: null,
-  fileImport: null,
-
-  // invoice header
-  prov_name: null, prov_nif: null, prov_addr: null, prov_tel: null, prov_email: null,
-  client_select: null, btnOpenClient: null,
-  cli_name: null, cli_nif: null, cli_addr: null, cli_tel: null, cli_email: null,
-  qrMount: null, qrHint: null,
-
-  // invoice meta
-  inv_number: null,
-  inv_date: null,
-  inv_tags: null,
-  inv_notes: null,
-
-  // lines
-  linesBody: null,
-  rowTpl: null,
-  btnAddLine: null,
-  btnClearLines: null,
-  btnWhats: null,
-  btnPDF: null,
-
-  // totals
-  tot_sub: null,
-  tot_ship: null,
-  tot_vat: null,
-  tot_all: null,
-  shipPctLabel: null,
-  vatModeLabel: null,
-  chkShip: null,
-  chkVatIncluded: null,
-  chkAutoSync: null,
-
-  // payments/status
-  pay_method: null,
-  pay_amount: null,
-  btnAddPay: null,
-  payList: null,
-  paid_total: null,
-  due_total: null,
-  invStatusPill: null,
-  chkClosed: null,
-
-  // pdf area
-  btnOpenPDF: null,
-  btnCopyPDF: null,
-  pdfMeta: null,
-
-  // clients
-  clientSearch: null,
-  btnNewClient: null,
-  btnClientsExport: null,
-  clientsList: null,
-
-  c_name: null, c_alias: null, c_nif: null, c_addr: null, c_tel: null, c_email: null, c_tags: null,
-  c_vatIncluded: null, c_shipOn: null,
-  btnClientSave: null, btnClientDelete: null,
-
-  // products
-  productSearch: null,
-  btnNewProduct: null,
-  btnProductsExport: null,
-  productsList: null,
-
-  p_name: null, p_unit: null, p_kgBox: null, p_price: null, p_cost: null, p_origin: null, p_hist: null,
-  btnProductSave: null, btnProductDelete: null,
-
-  // accounting
-  btnUnlock: null,
-  lockBox: null,
-  accountingBody: null,
-  acc_from: null, acc_to: null, acc_client: null, acc_tag: null, btnAccApply: null,
-  kpi_sales: null, kpi_vat: null, kpi_count: null, kpi_margin: null,
-  accTable: null,
-
-  // settings
-  set_vat: null, set_ship: null, set_vatIncludedDefault: null, set_qrTpl: null,
-  btnSettingsSave: null,
-  fb_apiKey: null, fb_authDomain: null, fb_databaseURL: null, fb_projectId: null, fb_appId: null, fb_storageBucket: null,
-  btnTestCloud: null, btnSaveCloud: null, cloudHint: null,
-  pricesLinkInfo: null,
-  btnResetLocal: null, btnHardReset: null,
-
-  // modals
-  authModal: null,
-  auth_email: null,
-  auth_pass: null,
-  btnLogin: null,
-  btnSignup: null,
-  btnLogout: null,
-  authMsg: null,
-
-  pinModal: null,
-  pinInput: null,
-  btnPinOk: null,
-  pinMsg: null,
-
-  // editor labels
-  editorTitle: null,
-  editorSubtitle: null,
-
-  // toast
-  toast: null
-};
-
-/* =========================
-   6) BOOTSTRAP DOM REFS
-========================= */
-function bindElements() {
-  // top
-  EL.modePill = $("modePill");
-  EL.btnSync = $("btnSync");
-  EL.btnAuth = $("btnAuth");
-
-  // tabs/views
-  EL.tabs = Array.from(document.querySelectorAll(".tab"));
-  EL.views = Array.from(document.querySelectorAll(".view"));
-
-  // invoice list
-  EL.invoiceSearch = $("invoiceSearch");
-  EL.invoiceList = $("invoiceList");
-  EL.invoiceListMeta = $("invoiceListMeta");
-  EL.btnNewInvoice = $("btnNewInvoice");
-  EL.btnDuplicate = $("btnDuplicate");
-  EL.btnDelete = $("btnDelete");
-  EL.btnSave = $("btnSave");
-  EL.btnExportJSON = $("btnExportJSON");
-  EL.btnImportJSON = $("btnImportJSON");
-  EL.fileImport = $("fileImport");
-
-  // header
-  EL.prov_name = $("prov_name");
-  EL.prov_nif  = $("prov_nif");
-  EL.prov_addr = $("prov_addr");
-  EL.prov_tel  = $("prov_tel");
-  EL.prov_email= $("prov_email");
-
-  EL.client_select = $("client_select");
-  EL.btnOpenClient = $("btnOpenClient");
-
-  EL.cli_name = $("cli_name");
-  EL.cli_nif  = $("cli_nif");
-  EL.cli_addr = $("cli_addr");
-  EL.cli_tel  = $("cli_tel");
-  EL.cli_email= $("cli_email");
-
-  EL.qrMount = $("qrMount");
-  EL.qrHint  = $("qrHint");
-
-  // meta
-  EL.inv_number = $("inv_number");
-  EL.inv_date   = $("inv_date");
-  EL.inv_tags   = $("inv_tags");
-  EL.inv_notes  = $("inv_notes");
-
-  // lines
-  EL.linesBody = $("linesBody");
-  EL.rowTpl    = $("rowTpl");
-  EL.btnAddLine = $("btnAddLine");
-  EL.btnClearLines = $("btnClearLines");
-  EL.btnWhats = $("btnWhats");
-  EL.btnPDF = $("btnPDF");
-
-  // totals
-  EL.tot_sub = $("tot_sub");
-  EL.tot_ship = $("tot_ship");
-  EL.tot_vat = $("tot_vat");
-  EL.tot_all = $("tot_all");
-  EL.shipPctLabel = $("shipPctLabel");
-  EL.vatModeLabel = $("vatModeLabel");
-  EL.chkShip = $("chkShip");
-  EL.chkVatIncluded = $("chkVatIncluded");
-  EL.chkAutoSync = $("chkAutoSync");
-
-  // payments
-  EL.pay_method = $("pay_method");
-  EL.pay_amount = $("pay_amount");
-  EL.btnAddPay = $("btnAddPay");
-  EL.payList = $("payList");
-  EL.paid_total = $("paid_total");
-  EL.due_total = $("due_total");
-  EL.invStatusPill = $("invStatusPill");
-  EL.chkClosed = $("chkClosed");
-
-  // pdf
-  EL.btnOpenPDF = $("btnOpenPDF");
-  EL.btnCopyPDF = $("btnCopyPDF");
-  EL.pdfMeta = $("pdfMeta");
-
-  // clients
-  EL.clientSearch = $("clientSearch");
-  EL.btnNewClient = $("btnNewClient");
-  EL.btnClientsExport = $("btnClientsExport");
-  EL.clientsList = $("clientsList");
-  EL.c_name = $("c_name");
-  EL.c_alias = $("c_alias");
-  EL.c_nif = $("c_nif");
-  EL.c_tags = $("c_tags");
-  EL.c_addr = $("c_addr");
-  EL.c_tel = $("c_tel");
-  EL.c_email = $("c_email");
-  EL.c_vatIncluded = $("c_vatIncluded");
-  EL.c_shipOn = $("c_shipOn");
-  EL.btnClientSave = $("btnClientSave");
-  EL.btnClientDelete = $("btnClientDelete");
-
-  // products
-  EL.productSearch = $("productSearch");
-  EL.btnNewProduct = $("btnNewProduct");
-  EL.btnProductsExport = $("btnProductsExport");
-  EL.productsList = $("productsList");
-  EL.p_name = $("p_name");
-  EL.p_unit = $("p_unit");
-  EL.p_kgBox = $("p_kgBox");
-  EL.p_price = $("p_price");
-  EL.p_cost = $("p_cost");
-  EL.p_origin = $("p_origin");
-  EL.p_hist = $("p_hist");
-  EL.btnProductSave = $("btnProductSave");
-  EL.btnProductDelete = $("btnProductDelete");
-
-  // accounting
-  EL.btnUnlock = $("btnUnlock");
-  EL.lockBox = $("lockBox");
-  EL.accountingBody = $("accountingBody");
-  EL.acc_from = $("acc_from");
-  EL.acc_to = $("acc_to");
-  EL.acc_client = $("acc_client");
-  EL.acc_tag = $("acc_tag");
-  EL.btnAccApply = $("btnAccApply");
-  EL.kpi_sales = $("kpi_sales");
-  EL.kpi_vat = $("kpi_vat");
-  EL.kpi_count = $("kpi_count");
-  EL.kpi_margin = $("kpi_margin");
-  EL.accTable = $("accTable");
-
-  // settings
-  EL.set_vat = $("set_vat");
-  EL.set_ship = $("set_ship");
-  EL.set_vatIncludedDefault = $("set_vatIncludedDefault");
-  EL.set_qrTpl = $("set_qrTpl");
-  EL.btnSettingsSave = $("btnSettingsSave");
-
-  EL.fb_apiKey = $("fb_apiKey");
-  EL.fb_authDomain = $("fb_authDomain");
-  EL.fb_databaseURL = $("fb_databaseURL");
-  EL.fb_projectId = $("fb_projectId");
-  EL.fb_appId = $("fb_appId");
-  EL.fb_storageBucket = $("fb_storageBucket");
-  EL.btnTestCloud = $("btnTestCloud");
-  EL.btnSaveCloud = $("btnSaveCloud");
-  EL.cloudHint = $("cloudHint");
-  EL.pricesLinkInfo = $("pricesLinkInfo");
-  EL.btnResetLocal = $("btnResetLocal");
-  EL.btnHardReset = $("btnHardReset");
-
-  // modals
-  EL.authModal = $("authModal");
-  EL.auth_email = $("auth_email");
-  EL.auth_pass = $("auth_pass");
-  EL.btnLogin = $("btnLogin");
-  EL.btnSignup = $("btnSignup");
-  EL.btnLogout = $("btnLogout");
-  EL.authMsg = $("authMsg");
-
-  EL.pinModal = $("pinModal");
-  EL.pinInput = $("pinInput");
-  EL.btnPinOk = $("btnPinOk");
-  EL.pinMsg = $("pinMsg");
-
-  // editor labels
-  EL.editorTitle = $("editorTitle");
-  EL.editorSubtitle = $("editorSubtitle");
-
-  // toast
-  EL.toast = $("toast");
-}
-
-/* =========================
-   7) LOCAL LOAD / SAVE
-========================= */
-function rebuildIndexes() {
-  STATE.productById = new Map(STATE.products.map(p => [p.id, p]));
-  STATE.clientById = new Map(STATE.clients.map(c => [c.id, c]));
-}
-
-function ensureDefaults() {
-  // provider
-  STATE.provider = Object.assign(structuredClone(DEFAULT_PROVIDER), STATE.provider || {});
-  // settings
-  STATE.settings = deepMerge(structuredClone(DEFAULT_SETTINGS), STATE.settings || {});
-  if (!STATE.settings.cloud) STATE.settings.cloud = structuredClone(DEFAULT_SETTINGS.cloud);
-  if (!STATE.settings.cloud.config) STATE.settings.cloud.config = structuredClone(DEFAULT_SETTINGS.cloud.config);
-
-  // arrays
-  if (!Array.isArray(STATE.clients)) STATE.clients = [];
-  if (!Array.isArray(STATE.products)) STATE.products = [];
-  if (!Array.isArray(STATE.invoices)) STATE.invoices = [];
-
-  // sanitize
-  STATE.clients = STATE.clients.filter(Boolean);
-  STATE.products = STATE.products.filter(Boolean);
-  STATE.invoices = STATE.invoices.filter(Boolean);
-
-  rebuildIndexes();
-}
-
-function deepMerge(target, src) {
-  if (!src || typeof src !== "object") return target;
-  for (const k of Object.keys(src)) {
-    const v = src[k];
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      if (!target[k] || typeof target[k] !== "object") target[k] = {};
-      deepMerge(target[k], v);
-    } else {
-      target[k] = v;
-    }
-  }
-  return target;
-}
-
-function loadAllLocal() {
-  STATE.provider = loadJSON(K.provider, structuredClone(DEFAULT_PROVIDER));
-  STATE.clients  = loadJSON(K.clients, []);
-  STATE.products = loadJSON(K.products, []);
-  STATE.invoices = loadJSON(K.invoices, []);
-  STATE.settings = loadJSON(K.settings, structuredClone(DEFAULT_SETTINGS));
-  ensureDefaults();
-}
-
-function saveAllLocal() {
-  saveJSON(K.provider, STATE.provider);
-  saveJSON(K.clients, STATE.clients);
-  saveJSON(K.products, STATE.products);
-  saveJSON(K.invoices, STATE.invoices);
-  saveJSON(K.settings, STATE.settings);
-}
-
-function touchEntity(ent) {
-  const ts = Date.now();
-  if (!ent.createdAt) ent.createdAt = ts;
-  ent.updatedAt = ts;
-}
-
-/* =========================
-   8) NAVIGATION
-========================= */
-function setView(viewId) {
-  STATE.currentView = viewId;
-  for (const v of EL.views) {
-    v.classList.toggle("active", v.id === viewId);
-  }
-  for (const t of EL.tabs) {
-    t.classList.toggle("active", t.dataset.view === viewId);
-  }
-
-  // render-on-enter views
-  if (viewId === "clientsView") renderClients();
-  if (viewId === "productsView") renderProducts();
-  if (viewId === "accountingView") renderAccounting();
-  if (viewId === "settingsView") renderSettings();
-}
-
-/* =========================
-   9) SERVICE WORKER REGISTER
-========================= */
-async function registerSW() {
-  try {
-    if (!("serviceWorker" in navigator)) return;
-    await navigator.serviceWorker.register("./sw.js");
-  } catch (e) {
-    console.warn("SW register fail", e);
-  }
-}
-
-/* =========================
-   10) SCRIPT LOADER (CDN libs)
-========================= */
-function loadScriptOnce(src, globalCheckFn, timeoutMs = 12000) {
-  return new Promise((resolve, reject) => {
-    try {
-      if (globalCheckFn && globalCheckFn()) return resolve(true);
-
-      const existing = document.querySelector(`script[data-src="${src}"]`);
-      if (existing) {
-        const t0 = Date.now();
-        const tick = () => {
-          if (globalCheckFn && globalCheckFn()) return resolve(true);
-          if (Date.now() - t0 > timeoutMs) return reject(new Error("timeout"));
-          setTimeout(tick, 150);
-        };
-        tick();
-        return;
-      }
-
-      const s = document.createElement("script");
-      s.src = src;
-      s.async = true;
-      s.defer = true;
-      s.dataset.src = src;
-
-      const timer = setTimeout(() => {
-        s.remove();
-        reject(new Error("timeout"));
-      }, timeoutMs);
-
-      s.onload = () => {
-        clearTimeout(timer);
-        resolve(true);
-      };
-      s.onerror = () => {
-        clearTimeout(timer);
-        reject(new Error("load_error"));
-      };
-
-      document.head.appendChild(s);
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-/* =========================
-   11) EVENT WIRING (skeleton)
-========================= */
-function wireBaseEvents() {
-  // tabs
-  EL.tabs.forEach(btn => {
-    btn.addEventListener("click", () => setView(btn.dataset.view));
-  });
-
-  // global shortcuts
-  window.addEventListener("keydown", (e) => {
-    // "/" focus search
-    if (e.key === "/" && !isTypingInInput(e.target)) {
-      e.preventDefault();
-      if (EL.invoiceSearch) EL.invoiceSearch.focus();
-    }
-    // Ctrl+S save invoice
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-      e.preventDefault();
-      saveActiveInvoiceFromUI();
-    }
-    // Ctrl+P PDF
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
-      if (STATE.currentView === "invoicesView") {
-        e.preventDefault();
-        generatePDFForActiveInvoice();
-      }
-    }
-  });
-
-  // invoice list search
-  EL.invoiceSearch?.addEventListener("input", () => renderInvoiceList());
-
-  // new invoice
-  EL.btnNewInvoice?.addEventListener("click", () => {
-    const inv = createNewInvoice();
-    STATE.invoices.unshift(inv);
-    saveAllLocal();
-    renderInvoiceList();
-    openInvoice(inv.id);
-    showToast("Factura creada");
-    maybeAutoSync();
-  });
-
-  // duplicate / delete / save
-  EL.btnDuplicate?.addEventListener("click", () => duplicateActiveInvoice());
-  EL.btnDelete?.addEventListener("click", () => deleteActiveInvoice());
-  EL.btnSave?.addEventListener("click", () => saveActiveInvoiceFromUI());
-
-  // export/import JSON
-  EL.btnExportJSON?.addEventListener("click", () => exportBackupJSON());
-  EL.btnImportJSON?.addEventListener("click", () => EL.fileImport?.click());
-  EL.fileImport?.addEventListener("change", (e) => importBackupJSONFromFile(e));
-
-  // header provider edits (saved in settings/provider snapshot)
-  const provFields = [EL.prov_name, EL.prov_nif, EL.prov_addr, EL.prov_tel, EL.prov_email];
-  provFields.forEach(inp => inp?.addEventListener("input", () => {
-    // live update active invoice snapshots + provider defaults
-    if (!STATE.activeInvoiceId) return;
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.providerSnap = readProviderFromUI();
-    touchEntity(inv);
-    saveAllLocal();
-    renderQRForActive();
-    maybeAutoSync();
-  }));
-
-  // client select + open client page
-  EL.client_select?.addEventListener("change", () => {
-    if (!STATE.activeInvoiceId) return;
-    const id = EL.client_select.value;
-    applyClientToActiveInvoice(id);
-  });
-  EL.btnOpenClient?.addEventListener("click", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    if (inv.clientId) {
-      STATE.activeClientId = inv.clientId;
-      setView("clientsView");
-      renderClients();
-      showToast("Cliente abierto");
-    } else {
-      setView("clientsView");
-    }
-  });
-
-  // invoice meta
-  EL.inv_date?.addEventListener("change", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.dateISO = EL.inv_date.value || nowISODate();
-    touchEntity(inv);
-    saveAllLocal();
-    renderInvoiceList();
-    renderQRForActive();
-    maybeAutoSync();
-  });
-  EL.inv_tags?.addEventListener("input", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.tags = splitTags(EL.inv_tags.value);
-    touchEntity(inv);
-    saveAllLocal();
-    renderInvoiceList();
-    maybeAutoSync();
-  });
-  EL.inv_notes?.addEventListener("input", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.notes = normStr(EL.inv_notes.value);
-    touchEntity(inv);
-    saveAllLocal();
-    maybeAutoSync();
-  });
-
-  // totals toggles
-  EL.chkShip?.addEventListener("change", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.shipOn = !!EL.chkShip.checked;
-    touchEntity(inv);
-    saveAllLocal();
-    recalcAndRenderTotals();
-    maybeAutoSync();
-  });
-  EL.chkVatIncluded?.addEventListener("change", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.vatIncluded = !!EL.chkVatIncluded.checked;
-    touchEntity(inv);
-    saveAllLocal();
-    recalcAndRenderTotals();
-    renderQRForActive();
-    maybeAutoSync();
-  });
-  EL.chkAutoSync?.addEventListener("change", () => {
-    STATE.settings.cloud.autoSync = !!EL.chkAutoSync.checked;
-    saveAllLocal();
-    showToast(STATE.settings.cloud.autoSync ? "Auto-sync ON" : "Auto-sync OFF");
-  });
-
-  // lines
-  EL.btnAddLine?.addEventListener("click", () => addLineToActiveInvoice());
-  EL.btnClearLines?.addEventListener("click", () => clearLinesActiveInvoice());
-
-  EL.btnWhats?.addEventListener("click", () => exportWhatsAppTXT());
-  EL.btnPDF?.addEventListener("click", () => generatePDFForActiveInvoice());
-
-  // payments
-  EL.btnAddPay?.addEventListener("click", () => addPaymentToActiveInvoice());
-  EL.chkClosed?.addEventListener("change", () => {
-    const inv = getActiveInvoice();
-    if (!inv) return;
-    inv.closed = !!EL.chkClosed.checked;
-    touchEntity(inv);
-    saveAllLocal();
-    showToast(inv.closed ? "Factura cerrada" : "Factura abierta");
-    maybeAutoSync();
-  });
-
-  // open/copy pdf
-  EL.btnOpenPDF?.addEventListener("click", () => openLocalOrCloudPDF());
-  EL.btnCopyPDF?.addEventListener("click", () => copyCloudPDFLink());
-
-  // clients
-  EL.clientSearch?.addEventListener("input", () => renderClients());
-  EL.btnNewClient?.addEventListener("click", () => newClient());
-  EL.btnClientSave?.addEventListener("click", () => saveClientFromUI());
-  EL.btnClientDelete?.addEventListener("click", () => deleteActiveClient());
-  EL.btnClientsExport?.addEventListener("click", () => exportClientsJSON());
-
-  // products
-  EL.productSearch?.addEventListener("input", () => renderProducts());
-  EL.btnNewProduct?.addEventListener("click", () => newProduct());
-  EL.btnProductSave?.addEventListener("click", () => saveProductFromUI());
-  EL.btnProductDelete?.addEventListener("click", () => deleteActiveProduct());
-  EL.btnProductsExport?.addEventListener("click", () => exportProductsJSON());
-
-  // accounting
-  EL.btnUnlock?.addEventListener("click", () => openPINModal());
-  EL.btnAccApply?.addEventListener("click", () => renderAccounting());
-
-  // settings
-  EL.btnSettingsSave?.addEventListener("click", () => saveSettingsFromUI());
-  EL.btnResetLocal?.addEventListener("click", () => resetLocal(false));
-  EL.btnHardReset?.addEventListener("click", () => resetLocal(true));
-
-  // cloud auth modal
-  EL.btnAuth?.addEventListener("click", () => {
-    EL.authModal?.showModal();
-    updateAuthUI();
-  });
-  EL.btnSync?.addEventListener("click", () => syncNow());
-
-  EL.btnLogin?.addEventListener("click", (e) => { e.preventDefault(); cloudLogin(); });
-  EL.btnSignup?.addEventListener("click", (e) => { e.preventDefault(); cloudSignup(); });
-  EL.btnLogout?.addEventListener("click", (e) => { e.preventDefault(); cloudLogout(); });
-
-  EL.btnSaveCloud?.addEventListener("click", (e) => { e.preventDefault(); saveCloudConfigFromUI(); });
-  EL.btnTestCloud?.addEventListener("click", (e) => { e.preventDefault(); testCloud(); });
-}
-
-/* =========================
-   12) INPUT FOCUS DETECTOR
-========================= */
-function isTypingInInput(target) {
-  if (!target) return false;
-  const tag = (target.tagName || "").toLowerCase();
-  return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
-}
-
-/* =========================
-   13) PLACEHOLDERS (implemented in 3B/3C)
-   (No tocar: se completan abajo)
-========================= */
-function renderInvoiceList() {}
-function openInvoice(id) {}
-function getActiveInvoice() { return null; }
-function createNewInvoice() { return null; }
-function duplicateActiveInvoice() {}
-function deleteActiveInvoice() {}
-function saveActiveInvoiceFromUI() {}
-function readProviderFromUI() { return structuredClone(DEFAULT_PROVIDER); }
-function applyClientToActiveInvoice(clientId) {}
-
-function addLineToActiveInvoice() {}
-function clearLinesActiveInvoice() {}
-function recalcAndRenderTotals() {}
-
-function addPaymentToActiveInvoice() {}
-
-function exportWhatsAppTXT() {}
-function generatePDFForActiveInvoice() {}
-
-function openLocalOrCloudPDF() {}
-function copyCloudPDFLink() {}
-
-function renderClients() {}
-function newClient() {}
-function saveClientFromUI() {}
-function deleteActiveClient() {}
-function exportClientsJSON() {}
-
-function renderProducts() {}
-function newProduct() {}
-function saveProductFromUI() {}
-function deleteActiveProduct() {}
-function exportProductsJSON() {}
-
-function openPINModal() {}
-function renderAccounting() {}
-
-function renderSettings() {}
-function saveSettingsFromUI() {}
-function resetLocal(hard) {}
-
-function exportBackupJSON() {}
-function importBackupJSONFromFile(e) {}
-
-function maybeAutoSync() {}
-function syncNow() {}
-
-function updateAuthUI() {}
-function cloudLogin() {}
-function cloudSignup() {}
-function cloudLogout() {}
-function saveCloudConfigFromUI() {}
-function testCloud() {}
-
-function renderQRForActive() {}
-
-/* =========================
-   14) STARTUP (init in 3C)
-========================= */
-// init() se llama al final de 3C (para que todo exista)
-/* =========================================================
-   app.js (2/3) — Invoices, Grid PRO, totals, payments, WhatsApp
-   ========================================================= */
-
-/* =========================
-   20) INVOICE HELPERS
-========================= */
-function getActiveInvoice() {
-  const id = STATE.activeInvoiceId;
-  if (!id) return null;
-  return STATE.invoices.find(x => x.id === id) || null;
-}
-
-function getClientById(id) {
-  return STATE.clientById.get(id) || null;
-}
-
-function getProductById(id) {
-  return STATE.productById.get(id) || null;
-}
-
-function sanitizeInvoice(inv) {
-  if (!inv) return null;
-  if (!inv.id) inv.id = uid("inv");
-  if (!inv.number) inv.number = makeInvoiceNumber(new Date());
-  if (!inv.dateISO) inv.dateISO = nowISODate();
-  if (!Array.isArray(inv.tags)) inv.tags = [];
-  if (!Array.isArray(inv.lines)) inv.lines = [];
-  if (!Array.isArray(inv.payments)) inv.payments = [];
-  if (typeof inv.shipOn !== "boolean") inv.shipOn = false;
-  if (typeof inv.vatIncluded !== "boolean") inv.vatIncluded = !!STATE.settings.vatIncludedDefault;
-  if (typeof inv.closed !== "boolean") inv.closed = false;
-  if (!inv.providerSnap) inv.providerSnap = structuredClone(STATE.provider);
-  if (!inv.clientSnap) inv.clientSnap = null;
-  if (!inv.pdf) inv.pdf = { localIdbKey: "", cloudUrl: "" };
-  touchEntity(inv);
-  return inv;
-}
-
-function createNewInvoice() {
-  const dt = new Date();
-  const inv = sanitizeInvoice({
-    id: uid("inv"),
-    number: makeInvoiceNumber(dt),
-    dateISO: nowISODate(),
-    clientId: "",
-    clientSnap: null,
-    providerSnap: structuredClone(STATE.provider),
-    tags: [],
-    notes: "",
-    lines: [],
-    shipOn: false,
-    vatIncluded: !!STATE.settings.vatIncludedDefault,
-    closed: false,
-    payments: [],
-    pdf: { localIdbKey: "", cloudUrl: "" },
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  });
-
-  // 5 lines default
-  for (let i = 0; i < 5; i++) inv.lines.push(makeEmptyLine());
-  return inv;
-}
-
-function makeEmptyLine() {
+function defaultSettings(){
   return {
-    id: uid("ln"),
-    prodId: "",
-    prodName: "",
-    mode: "kg",      // kg | caja | ud
-    qty: 0,
-    bruto: 0,
-    tara: 0,
-    neto: 0,
-    price: 0,
-    origin: "",
-    amt: 0
+    taxRate: 0.04,
+    qrTemplate: "AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}",
+    logoSvg: `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60">
+  <rect x="2" y="2" width="56" height="56" rx="14" fill="#0b0d10"/>
+  <text x="80" y="40" font-family="Poppins, Arial" font-size="28" font-weight="800" fill="#0b0d10">ARSLAN</text>
+</svg>`,
+    adminPin: "7392",
+    firebase: {
+      apiKey:"",
+      authDomain:"",
+      databaseURL:"",
+      projectId:"",
+      appId:"",
+      storageBucket:""
+    }
   };
 }
 
-function duplicateActiveInvoice() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("No hay factura");
-  const copy = structuredClone(inv);
-  copy.id = uid("inv");
-  copy.number = makeInvoiceNumber(new Date());
-  copy.createdAt = Date.now();
-  copy.updatedAt = Date.now();
-  // duplicate: keep lines/payments but typically reset payments
-  copy.payments = [];
-  copy.pdf = { localIdbKey: "", cloudUrl: "" };
-  copy.closed = false;
-
-  STATE.invoices.unshift(copy);
-  saveAllLocal();
-  renderInvoiceList();
-  openInvoice(copy.id);
-  showToast("Factura duplicada");
-  maybeAutoSync();
+function defaultDB(){
+  return {
+    meta: { version: 3, createdAt: timeStamp(), updatedAt: timeStamp() },
+    provider: { ...DEFAULT_PROVIDER },
+    clients: [...DEFAULT_CLIENTS],
+    products: [], // [{id,name,unitDefault,kgBox,priceKg,priceBox,priceUnit,cost,origin,history:[]}]
+    invoices: [], // newest first
+    settings: defaultSettings()
+  };
 }
 
-function deleteActiveInvoice() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("No hay factura");
-  if (!confirm(`Eliminar factura ${inv.number}?`)) return;
-  const idx = STATE.invoices.findIndex(x => x.id === inv.id);
-  if (idx >= 0) STATE.invoices.splice(idx, 1);
-  STATE.activeInvoiceId = null;
-  saveAllLocal();
-  renderInvoiceList();
-  clearInvoiceEditor();
-  showToast("Factura eliminada");
-  maybeAutoSync();
+let DB = defaultDB();
+let currentInvoiceId = null;
+let currentClientId = null;
+let currentProdId = null;
+
+/* =========================
+   Load/Save local
+========================= */
+function loadLocal(){
+  const raw = localStorage.getItem(LS_KEY);
+  const data = safeJSONParse(raw || "null");
+  if(data && typeof data === "object"){
+    DB = Object.assign(defaultDB(), data);
+    // Ensure nested defaults
+    DB.settings = Object.assign(defaultSettings(), DB.settings || {});
+    DB.settings.firebase = Object.assign(defaultSettings().firebase, (DB.settings.firebase || {}));
+    DB.provider = Object.assign({ ...DEFAULT_PROVIDER }, DB.provider || {});
+    DB.clients = Array.isArray(DB.clients) ? DB.clients : [];
+    DB.products = Array.isArray(DB.products) ? DB.products : [];
+    DB.invoices = Array.isArray(DB.invoices) ? DB.invoices : [];
+  }else{
+    DB = defaultDB();
+  }
+}
+
+function saveLocal(){
+  DB.meta.updatedAt = timeStamp();
+  localStorage.setItem(LS_KEY, JSON.stringify(DB));
+  setMini("#dbState", `Local OK • ${DB.invoices.length} facturas • ${DB.clients.length} clientes • ${DB.products.length} productos`);
 }
 
 /* =========================
-   21) INVOICE LIST RENDER
+   UI refs (Facturas)
 ========================= */
-function invoiceMatches(inv, q) {
-  q = normStr(q);
-  if (!q) return true;
-  const cn = (inv.clientSnap?.name || inv.clientSnap?.alias || "");
-  const tags = (inv.tags || []).join(", ");
-  return (
-    includesAny(inv.number, q) ||
-    includesAny(cn, q) ||
-    includesAny(tags, q)
-  );
+const elPillMode = $("#pillMode");
+const btnSync = $("#btnSync");
+const btnLogin = $("#btnLogin");
+
+const btnExportJson = $("#btnExportJson");
+const btnImportJson = $("#btnImportJson");
+const fileImportJson = $("#fileImportJson");
+
+const tabs = $$(".tab");
+const views = $$(".view");
+
+const invList = $("#invList");
+const invSearch = $("#invSearch");
+const btnNewInvoice = $("#btnNewInvoice");
+
+const invNumber = $("#invNumber");
+const invDate = $("#invDate");
+const invTags = $("#invTags");
+const invNotes = $("#invNotes");
+const btnDupInvoice = $("#btnDupInvoice");
+const btnDelInvoice = $("#btnDelInvoice");
+
+const provName = $("#provName");
+const provNif = $("#provNif");
+const provAddr = $("#provAddr");
+const provPhone = $("#provPhone");
+const provEmail = $("#provEmail");
+
+const clientSelect = $("#clientSelect");
+const cliName = $("#cliName");
+const cliNif = $("#cliNif");
+const cliPhone = $("#cliPhone");
+const cliAddr = $("#cliAddr");
+const cliEmail = $("#cliEmail");
+const cliAlias = $("#cliAlias");
+const btnSaveClientFromInvoice = $("#btnSaveClientFromInvoice");
+const btnNewClientQuick = $("#btnNewClientQuick");
+
+const qrBox = $("#qrBox");
+const qrMini = $("#qrMini");
+const btnRegenQR = $("#btnRegenQR");
+
+const btnAddLine = $("#btnAddLine");
+const btnClearLines = $("#btnClearLines");
+const linesTbody = $("#linesTbody");
+const dlProducts = $("#dlProducts");
+
+const swTrans = $("#swTrans");
+const transPct = $("#transPct");
+const swIvaIncl = $("#swIvaIncl");
+
+const tSubtotal = $("#tSubtotal");
+const tTrans = $("#tTrans");
+const tIva = $("#tIva");
+const tTotal = $("#tTotal");
+const taxNote = $("#taxNote");
+
+const payMethod = $("#payMethod");
+const payAmount = $("#payAmount");
+const btnAddPay = $("#btnAddPay");
+const btnClearPays = $("#btnClearPays");
+const payList = $("#payList");
+const tPaid = $("#tPaid");
+const tDue = $("#tDue");
+const payState = $("#payState");
+
+const btnSaveInvoice = $("#btnSaveInvoice");
+const btnPDF = $("#btnPDF");
+const btnPDFCloud = $("#btnPDFCloud");
+const btnOpenPDF = $("#btnOpenPDF");
+const btnCopyPdfLink = $("#btnCopyPdfLink");
+const btnWhats = $("#btnWhats");
+const btnImportPricesLink = $("#btnImportPricesLink");
+const btnMakePricesLink = $("#btnMakePricesLink");
+const pdfState = $("#pdfState");
+
+/* =========================
+   UI refs (Clientes)
+========================= */
+const cliSearch2 = $("#cliSearch2");
+const btnNewClient = $("#btnNewClient");
+const clientsList = $("#clientsList");
+
+const cName = $("#cName");
+const cNif = $("#cNif");
+const cAlias = $("#cAlias");
+const cAddr = $("#cAddr");
+const cPhone = $("#cPhone");
+const cEmail = $("#cEmail");
+const cNotes = $("#cNotes");
+const btnSaveClient = $("#btnSaveClient");
+const btnDelClient = $("#btnDelClient");
+const clientsMsg = $("#clientsMsg");
+
+/* =========================
+   UI refs (Productos)
+========================= */
+const prodSearch = $("#prodSearch");
+const btnSeedVocab = $("#btnSeedVocab");
+const btnNewProd = $("#btnNewProd");
+const prodList = $("#prodList");
+
+const pName = $("#pName");
+const pUnit = $("#pUnit");
+const pKgBox = $("#pKgBox");
+const pPriceKg = $("#pPriceKg");
+const pPriceBox = $("#pPriceBox");
+const pPriceUnit = $("#pPriceUnit");
+const pCost = $("#pCost");
+const pOrigin = $("#pOrigin");
+const btnSaveProd = $("#btnSaveProd");
+const btnDelProd = $("#btnDelProd");
+const pHist = $("#pHist");
+const prodMsg = $("#prodMsg");
+
+/* =========================
+   UI refs (Contabilidad)
+========================= */
+const accStatus = $("#accStatus");
+const btnUnlockAcc = $("#btnUnlockAcc");
+const btnLockAcc = $("#btnLockAcc");
+
+const accFrom = $("#accFrom");
+const accTo = $("#accTo");
+const accClient = $("#accClient");
+const accTag = $("#accTag");
+const btnRunAcc = $("#btnRunAcc");
+const kSales = $("#kSales");
+const kIva = $("#kIva");
+const kN = $("#kN");
+const kMargin = $("#kMargin");
+const accTable = $("#accTable");
+
+/* =========================
+   UI refs (Ajustes)
+========================= */
+const btnResetLocal = $("#btnResetLocal");
+const setTax = $("#setTax");
+const setQrTpl = $("#setQrTpl");
+const setLogoSvg = $("#setLogoSvg");
+const btnSaveSettings = $("#btnSaveSettings");
+const setMsg = $("#setMsg");
+
+const fbApiKey = $("#fbApiKey");
+const fbAuthDomain = $("#fbAuthDomain");
+const fbDbUrl = $("#fbDbUrl");
+const fbProjectId = $("#fbProjectId");
+const fbAppId = $("#fbAppId");
+const fbBucket = $("#fbBucket");
+const btnSaveFirebase = $("#btnSaveFirebase");
+const fbMsg = $("#fbMsg");
+const btnOpenPricesPage = $("#btnOpenPricesPage");
+
+/* =========================
+   Modals
+========================= */
+const loginModal = $("#loginModal");
+const btnCloseLogin = $("#btnCloseLogin");
+const loginEmail = $("#loginEmail");
+const loginPass = $("#loginPass");
+const btnDoLogin = $("#btnDoLogin");
+const btnDoSignup = $("#btnDoSignup");
+const btnDoLogout = $("#btnDoLogout");
+const loginMsg = $("#loginMsg");
+
+const pinModal = $("#pinModal");
+const btnClosePin = $("#btnClosePin");
+const pinInput = $("#pinInput");
+const btnPinOk = $("#btnPinOk");
+const btnPinCancel = $("#btnPinCancel");
+const pinMsg = $("#pinMsg");
+
+const pricesModal = $("#pricesModal");
+const btnClosePrices = $("#btnClosePrices");
+const pricesLinkInput = $("#pricesLinkInput");
+const btnDoImportPrices = $("#btnDoImportPrices");
+const btnCopyMyPricesEditor = $("#btnCopyMyPricesEditor");
+const pricesMsg = $("#pricesMsg");
+
+/* =========================
+   Tabs nav
+========================= */
+function openView(id){
+  tabs.forEach(b => b.classList.toggle("active", b.dataset.view === id));
+  views.forEach(v => v.classList.toggle("active", v.id === id));
+}
+tabs.forEach(b => b.addEventListener("click", () => openView(b.dataset.view)));
+
+/* =========================
+   Products helpers
+========================= */
+function getProductByName(name){
+  const n = norm(name);
+  return DB.products.find(p => norm(p.name) === n) || null;
+}
+function getProductById(id){
+  return DB.products.find(p => p.id === id) || null;
+}
+function ensureProductHistory(p){
+  if(!Array.isArray(p.history)) p.history = [];
+  p.history = p.history.slice(0, 5);
+}
+function pushPriceHistory(p, snapshot){
+  ensureProductHistory(p);
+  p.history.unshift({ ts: Date.now(), ...snapshot });
+  p.history = p.history.slice(0, 5);
+}
+function productPriceForMode(p, mode){
+  if(!p) return 0;
+  if(mode === "kg") return n2(p.priceKg);
+  if(mode === "caja") return n2(p.priceBox);
+  return n2(p.priceUnit);
 }
 
-function computeInvoiceTotal(inv) {
-  const sub = inv.lines.reduce((acc, ln) => acc + round2(ln.amt), 0);
-  const ship = inv.shipOn ? (sub * (toNum(STATE.settings.shipRate) / 100)) : 0;
-  const base = sub + ship;
-  const vat = inv.vatIncluded ? 0 : (base * (toNum(STATE.settings.vatRate) / 100));
-  const total = base + vat;
-  return { sub: round2(sub), ship: round2(ship), vat: round2(vat), total: round2(total) };
+/* =========================
+   Invoice helpers
+========================= */
+function newInvoiceSkeleton(){
+  const num = `FA-${new Date().getFullYear()}${String(new Date().getMonth()+1).padStart(2,"0")}${String(new Date().getDate()).padStart(2,"0")}${String(new Date().getHours()).padStart(2,"0")}${String(new Date().getMinutes()).padStart(2,"0")}`;
+  const firstClient = DB.clients[0]?.id || "";
+  const taxRate = Number(DB.settings.taxRate ?? 0.04) || 0.04;
+
+  const inv = {
+    id: uid("inv"),
+    number: num,
+    dateISO: todayISO(),
+    tags: "",
+    notes: "",
+    clientId: firstClient,
+    provider: { ...DB.provider },     // snapshot editable in factura (y se puede guardar a provider)
+    clientSnap: null,                // se llena al cargar según clientId
+    lines: [],
+    payments: [],
+    transportEnabled: false,
+    transportPct: 0.10,
+    ivaIncluded: false,
+    taxRate,
+    totals: { subtotal:0, transport:0, iva:0, total:0 },
+    pdf: { localUrl:"", cloudUrl:"" },
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+
+  // 5 líneas por defecto vacías
+  for(let i=0;i<5;i++) inv.lines.push(newEmptyLine());
+  return inv;
 }
 
-function computePaid(inv) {
-  const paid = (inv.payments || []).reduce((a,p)=>a + round2(p.amount), 0);
-  return round2(paid);
+function newEmptyLine(){
+  return {
+    id: uid("ln"),
+    productId: "",
+    productName: "",
+    mode: "kg",
+    qty: 0,
+    gross: 0,
+    tare: 0,
+    net: 0,
+    price: 0,
+    origin: "",
+    amount: 0
+  };
 }
 
-function computeStatus(inv) {
-  const { total } = computeInvoiceTotal(inv);
-  const paid = computePaid(inv);
-  if (paid <= 0.00001) return { label:"Impagada", variant:"normal" };
-  if (paid + 0.01 < total) return { label:"Parcial", variant:"normal" };
-  return { label:"Pagada", variant:"ok" };
+function getInvoiceById(id){
+  return DB.invoices.find(x => x.id === id) || null;
 }
 
-function renderInvoiceList() {
-  const q = EL.invoiceSearch?.value || "";
-  const items = STATE.invoices.filter(inv => invoiceMatches(inv, q));
+function upsertInvoice(inv){
+  inv.updatedAt = Date.now();
+  const idx = DB.invoices.findIndex(x => x.id === inv.id);
+  if(idx >= 0) DB.invoices[idx] = inv;
+  else DB.invoices.unshift(inv);
+}
 
-  safeSetText(EL.invoiceListMeta, `${items.length} facturas`);
+/* =========================
+   Totals compute
+========================= */
+function computeLine(line){
+  const mode = line.mode || "kg";
+  const qty = clamp2(n2(line.qty));
+  const gross = clamp2(n2(line.gross));
+  const tare = clamp2(n2(line.tare));
+  let net = clamp2(n2(line.net));
 
-  if (!EL.invoiceList) return;
-  EL.invoiceList.innerHTML = "";
+  if(mode === "kg"){
+    // net = gross - tare (si el usuario no mete net, lo calculamos)
+    const calc = clamp2(gross - tare);
+    net = calc;
+    line.net = net;
+    line.amount = clamp2(net * clamp2(n2(line.price)));
+    line.qty = 0; // no aplica en kg (pero lo dejamos en 0)
+  }else if(mode === "caja"){
+    // si qty y producto con kgBox, net puede ser qty*kgBox (si gross/tare no se usa)
+    line.qty = qty;
+    const p = line.productId ? getProductById(line.productId) : getProductByName(line.productName);
+    const kgBox = p ? n2(p.kgBox) : 0;
 
-  for (const inv of items) {
-    const totals = computeInvoiceTotal(inv);
-    const cn = inv.clientSnap?.alias || inv.clientSnap?.name || "— Sin cliente —";
-    const status = computeStatus(inv);
+    // si el usuario mete gross/tare, usamos net = gross - tare; si no, net = qty*kgBox (si kgBox existe)
+    const hasGross = (gross > 0 || tare > 0);
+    if(hasGross){
+      net = clamp2(gross - tare);
+    }else if(kgBox > 0 && qty > 0){
+      net = clamp2(qty * kgBox);
+    }else{
+      net = clamp2(n2(line.net));
+    }
+    line.net = net;
 
-    const div = document.createElement("div");
-    div.className = "listItem" + (inv.id === STATE.activeInvoiceId ? " active" : "");
-    div.dataset.id = inv.id;
+    // price: por caja (por defecto). Si priceBox no existe y hay priceKg, el user puede usar priceKg manual.
+    // Regla: si net>0 y el usuario claramente puso precio kg (p.priceKg) y priceBox está vacío => net*price
+    // Pero para no “adivinar” mal, usamos:
+    // - si hay kgBox y priceBox existe => qty*price
+    // - si no, net*price
+    const price = clamp2(n2(line.price));
+    if(qty > 0 && (p && n2(p.priceBox) > 0)){
+      line.amount = clamp2(qty * price);
+    }else{
+      line.amount = clamp2(net * price);
+    }
+  }else{
+    // unidad
+    line.qty = qty;
+    line.net = 0;
+    line.gross = 0;
+    line.tare = 0;
+    line.amount = clamp2(qty * clamp2(n2(line.price)));
+  }
 
-    div.innerHTML = `
-      <div class="liTop">
-        <div class="liNum">${escapeHTML(inv.number)}</div>
-        <div class="liTotal mono">${money(totals.total)}</div>
+  // normalizar
+  line.price = clamp2(n2(line.price));
+  line.origin = (line.origin || "").toString();
+  return line;
+}
+
+function computeInvoiceTotals(inv){
+  // compute lines
+  let subtotal = 0;
+  inv.lines.forEach(ln => {
+    computeLine(ln);
+    subtotal += n2(ln.amount);
+  });
+  subtotal = clamp2(subtotal);
+
+  // transport
+  const transEnabled = !!inv.transportEnabled;
+  const pct = clamp2(n2(inv.transportPct));
+  const transport = transEnabled ? clamp2(subtotal * pct) : 0;
+
+  // IVA
+  const taxRate = clamp2(n2(inv.taxRate ?? DB.settings.taxRate ?? 0.04));
+  let iva = 0;
+  let total = 0;
+
+  if(inv.ivaIncluded){
+    // IVA incluido: no desglosar, iva mostrado = 0 (o informativo)
+    iva = 0;
+    total = clamp2(subtotal + transport);
+  }else{
+    iva = clamp2((subtotal + transport) * taxRate);
+    total = clamp2(subtotal + transport + iva);
+  }
+
+  inv.totals = { subtotal, transport, iva, total };
+  return inv.totals;
+}
+
+/* =========================
+   Payments
+========================= */
+function sumPayments(inv){
+  return clamp2((inv.payments || []).reduce((a,p) => a + n2(p.amount), 0));
+}
+function payStateText(inv){
+  const paid = sumPayments(inv);
+  const total = n2(inv.totals?.total);
+  const due = clamp2(total - paid);
+  if(total <= 0) return "—";
+  if(due <= 0.01) return "PAGADA";
+  if(paid > 0) return "PARCIAL";
+  return "IMPAGADA";
+}
+
+/* =========================
+   Render Datalist products
+========================= */
+function renderProductsDatalist(){
+  if(!dlProducts) return;
+  dlProducts.innerHTML = DB.products
+    .slice()
+    .sort((a,b) => norm(a.name).localeCompare(norm(b.name)))
+    .map(p => `<option value="${p.name}"></option>`)
+    .join("");
+}
+
+/* =========================
+   Render invoice list
+========================= */
+function renderInvoiceList(){
+  const q = norm(invSearch.value || "");
+  const list = DB.invoices.filter(inv => {
+    if(!q) return true;
+    const hay = `${inv.number} ${inv.dateISO} ${inv.tags||""} ${inv.notes||""} ${inv.clientNameCache||""}`.toUpperCase();
+    // clientNameCache se rellena al render
+    return hay.includes(q);
+  });
+
+  invList.innerHTML = "";
+  list.forEach(inv => {
+    const cli = DB.clients.find(c => c.id === inv.clientId) || null;
+    const cliName2 = cli ? (cli.alias || cli.name) : "—";
+    inv.clientNameCache = cliName2;
+
+    // totals compute (ligero)
+    computeInvoiceTotals(inv);
+    const item = document.createElement("div");
+    item.className = "inv-item" + (inv.id === currentInvoiceId ? " active" : "");
+    item.innerHTML = `
+      <div class="top">
+        <div class="num">${inv.number || "—"}</div>
+        <div class="total">${moneyEUR(inv.totals?.total || 0)}</div>
       </div>
-      <div class="liSub">
-        <span>${escapeHTML(inv.dateISO || "")}</span>
+      <div class="sub">
+        <span>${inv.dateISO || ""}</span>
         <span>•</span>
-        <span>${escapeHTML(cn)}</span>
-        <span>•</span>
-        <span>${escapeHTML(status.label)}</span>
-        ${inv.closed ? `<span>•</span><span class="mono">CERRADA</span>` : ``}
+        <span>${cliName2}</span>
+        ${inv.tags ? `<span>•</span><span>${inv.tags}</span>` : ``}
       </div>
     `;
-    div.addEventListener("click", () => openInvoice(inv.id));
-    EL.invoiceList.appendChild(div);
-  }
-}
+    item.addEventListener("click", () => {
+      openInvoice(inv.id);
+    });
+    invList.appendChild(item);
+  });
 
-function clearInvoiceEditor() {
-  safeSetText(EL.editorTitle, "Editor de factura");
-  safeSetText(EL.editorSubtitle, "Selecciona una factura o crea una nueva.");
-  // provider
-  safeSetValue(EL.prov_name, "");
-  safeSetValue(EL.prov_nif, "");
-  safeSetValue(EL.prov_addr, "");
-  safeSetValue(EL.prov_tel, "");
-  safeSetValue(EL.prov_email, "");
-  // client
-  safeSetValue(EL.client_select, "");
-  safeSetValue(EL.cli_name, "");
-  safeSetValue(EL.cli_nif, "");
-  safeSetValue(EL.cli_addr, "");
-  safeSetValue(EL.cli_tel, "");
-  safeSetValue(EL.cli_email, "");
-  // meta
-  safeSetValue(EL.inv_number, "");
-  safeSetValue(EL.inv_date, "");
-  safeSetValue(EL.inv_tags, "");
-  safeSetValue(EL.inv_notes, "");
-  // lines
-  if (EL.linesBody) EL.linesBody.innerHTML = "";
-  // totals
-  safeSetText(EL.tot_sub, "0,00");
-  safeSetText(EL.tot_ship, "0,00");
-  safeSetText(EL.tot_vat, "0,00");
-  safeSetText(EL.tot_all, "0,00");
-  // payments
-  if (EL.payList) EL.payList.innerHTML = "";
-  safeSetText(EL.paid_total, "0,00");
-  safeSetText(EL.due_total, "0,00");
-  setPill(EL.invStatusPill, "Impagada");
-  if (EL.chkClosed) EL.chkClosed.checked = false;
-  // pdf buttons
-  if (EL.btnOpenPDF) EL.btnOpenPDF.disabled = true;
-  if (EL.btnCopyPDF) EL.btnCopyPDF.disabled = true;
-  safeSetText(EL.pdfMeta, "");
-  // QR
-  if (EL.qrMount) EL.qrMount.innerHTML = "";
-}
-
-function escapeHTML(s) {
-  return String(s || "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+  saveLocal();
 }
 
 /* =========================
-   22) INVOICE OPEN / EDITOR POPULATE
+   Render invoice editor
 ========================= */
-function renderClientSelector(selectedId = "") {
-  if (!EL.client_select) return;
-  const prev = selectedId || EL.client_select.value || "";
-  EL.client_select.innerHTML = `<option value="">— Seleccionar cliente —</option>`;
-  for (const c of STATE.clients) {
-    const name = c.alias ? `${c.alias} — ${c.name}` : c.name;
-    const opt = document.createElement("option");
-    opt.value = c.id;
-    opt.textContent = name || "(sin nombre)";
-    EL.client_select.appendChild(opt);
-  }
-  EL.client_select.value = prev;
+function fillProviderUI(p){
+  provName.value = p.name || "";
+  provNif.value = p.nif || "";
+  provAddr.value = p.addr || "";
+  provPhone.value = p.phone || "";
+  provEmail.value = p.email || "";
 }
 
-function openInvoice(id) {
-  const inv = STATE.invoices.find(x => x.id === id);
-  if (!inv) return;
-  sanitizeInvoice(inv);
-  STATE.activeInvoiceId = inv.id;
+function fillClientSelect(){
+  const cur = currentInvoiceId ? getInvoiceById(currentInvoiceId)?.clientId : "";
+  clientSelect.innerHTML = DB.clients
+    .slice()
+    .sort((a,b)=> norm(a.alias||a.name).localeCompare(norm(b.alias||b.name)))
+    .map(c => `<option value="${c.id}">${(c.alias||c.name)} • ${(c.nif||"")}</option>`)
+    .join("");
+  if(cur) clientSelect.value = cur;
+}
 
-  safeSetText(EL.editorTitle, "Editor de factura");
-  safeSetText(EL.editorSubtitle, `${inv.number} · ${inv.dateISO}`);
+function fillClientUI(c){
+  cliName.value = c?.name || "";
+  cliNif.value = c?.nif || "";
+  cliPhone.value = c?.phone || "";
+  cliAddr.value = c?.addr || "";
+  cliEmail.value = c?.email || "";
+  cliAlias.value = c?.alias || "";
+}
 
-  // provider snap
-  const p = inv.providerSnap || STATE.provider;
-  safeSetValue(EL.prov_name, p.name || "");
-  safeSetValue(EL.prov_nif, p.nif || "");
-  safeSetValue(EL.prov_addr, p.addr || "");
-  safeSetValue(EL.prov_tel, p.tel || "");
-  safeSetValue(EL.prov_email, p.email || "");
+function renderLines(inv){
+  linesTbody.innerHTML = "";
 
-  // client selector
-  renderClientSelector(inv.clientId || "");
-  safeSetValue(EL.client_select, inv.clientId || "");
+  inv.lines.forEach((ln) => {
+    const row = document.createElement("div");
+    row.className = "line-row";
+    row.dataset.id = ln.id;
 
-  // client snap fields
-  const cs = inv.clientSnap;
-  safeSetValue(EL.cli_name, cs?.alias || cs?.name || "");
-  safeSetValue(EL.cli_nif, cs?.nif || "");
-  safeSetValue(EL.cli_addr, cs?.addr || "");
-  safeSetValue(EL.cli_tel, cs?.tel || "");
-  safeSetValue(EL.cli_email, cs?.email || "");
+    // Hint (solo pantalla)
+    const hintId = `hint_${ln.id}`;
 
-  // meta
-  safeSetValue(EL.inv_number, inv.number);
-  safeSetValue(EL.inv_date, inv.dateISO);
-  safeSetValue(EL.inv_tags, (inv.tags || []).join(", "));
-  safeSetValue(EL.inv_notes, inv.notes || "");
+    row.innerHTML = `
+      <div class="col-prod">
+        <input class="col-prod-input" data-k="productName" list="dlProducts" placeholder="Producto" value="${(ln.productName||"").replaceAll('"','&quot;')}" autocomplete="off">
+        <div class="hint" id="${hintId}"></div>
+      </div>
 
-  // toggles
-  if (EL.chkShip) EL.chkShip.checked = !!inv.shipOn;
-  if (EL.chkVatIncluded) EL.chkVatIncluded.checked = !!inv.vatIncluded;
-  if (EL.chkAutoSync) EL.chkAutoSync.checked = !!STATE.settings.cloud.autoSync;
-  if (EL.chkClosed) EL.chkClosed.checked = !!inv.closed;
+      <div class="col-modo">
+        <select data-k="mode">
+          <option value="kg">kg</option>
+          <option value="caja">caja</option>
+          <option value="unidad">unidad</option>
+        </select>
+      </div>
 
-  // labels
-  safeSetText(EL.shipPctLabel, `${toNum(STATE.settings.shipRate)}%`);
-  safeSetText(EL.vatModeLabel, inv.vatIncluded ? "IVA incluido" : `${toNum(STATE.settings.vatRate)}%`);
+      <div class="col-cant">
+        <input data-k="qty" type="number" inputmode="decimal" step="0.01" placeholder="0" value="${ln.qty ? ln.qty : ""}">
+      </div>
 
-  // lines
+      <div class="col-bruto">
+        <input data-k="gross" type="number" inputmode="decimal" step="0.01" placeholder="0" value="${ln.gross ? ln.gross : ""}">
+      </div>
+
+      <div class="col-tara">
+        <input data-k="tare" type="number" inputmode="decimal" step="0.01" placeholder="0" value="${ln.tare ? ln.tare : ""}">
+      </div>
+
+      <div class="col-neto">
+        <input data-k="net" type="number" inputmode="decimal" step="0.01) placeholder="0" value="${ln.net ? ln.net : ""}">
+      </div>
+
+      <div class="col-precio">
+        <input data-k="price" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="${ln.price ? ln.price : ""}">
+      </div>
+
+      <div class="col-origen">
+        <input data-k="origin" placeholder="Origen" value="${(ln.origin||"").replaceAll('"','&quot;')}" autocomplete="off">
+      </div>
+
+      <div class="col-importe">
+        <div class="amount-pill">${moneyEUR(ln.amount || 0)}</div>
+      </div>
+
+      <div class="col-x center">
+        <button class="xbtn" type="button" title="Eliminar">✕</button>
+      </div>
+    `;
+
+    // Fix select value
+    row.querySelector(`select[data-k="mode"]`).value = ln.mode || "kg";
+
+    // delete
+    row.querySelector(".xbtn").addEventListener("click", () => {
+      const inv2 = getInvoiceById(currentInvoiceId);
+      if(!inv2) return;
+      const idx = inv2.lines.findIndex(x => x.id === ln.id);
+      if(idx >= 0){
+        inv2.lines.splice(idx, 1);
+        if(inv2.lines.length === 0) inv2.lines.push(newEmptyLine());
+        upsertInvoice(inv2);
+        renderInvoice(inv2);
+      }
+    });
+
+    // events
+    const inputs = Array.from(row.querySelectorAll("input,select"));
+    inputs.forEach((el, i) => {
+      // Enter -> siguiente input en tabla
+      el.addEventListener("keydown", (ev) => {
+        if(ev.key === "Enter"){
+          ev.preventDefault();
+          const flat = Array.from(linesTbody.querySelectorAll("input,select"));
+          const pos = flat.indexOf(el);
+          if(pos >= 0 && flat[pos+1]){
+            flat[pos+1].focus();
+            flat[pos+1].select?.();
+          }
+        }
+      });
+
+      el.addEventListener("input", () => onLineEdit(ln.id, el));
+      el.addEventListener("change", () => onLineEdit(ln.id, el));
+      el.addEventListener("blur", () => {
+        if(el.getAttribute("data-k") === "productName"){
+          onProductChosen(ln.id);
+        }
+      });
+    });
+
+    linesTbody.appendChild(row);
+
+    // hint
+    refreshLineHint(ln.id);
+  });
+}
+
+function getLine(inv, lineId){
+  return inv.lines.find(x => x.id === lineId) || null;
+}
+
+function refreshLineAmountUI(lineId){
+  const inv = getInvoiceById(currentInvoiceId);
+  if(!inv) return;
+  const ln = getLine(inv, lineId);
+  if(!ln) return;
+
+  const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
+  if(!row) return;
+  const amount = row.querySelector(".amount-pill");
+  if(amount) amount.textContent = moneyEUR(ln.amount || 0);
+}
+
+function refreshLineHint(lineId){
+  const inv = getInvoiceById(currentInvoiceId);
+  if(!inv) return;
+  const ln = getLine(inv, lineId);
+  if(!ln) return;
+
+  const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
+  if(!row) return;
+
+  const hint = row.querySelector(".hint");
+  if(!hint) return;
+
+  const p = ln.productId ? getProductById(ln.productId) : getProductByName(ln.productName);
+  if(!p || !Array.isArray(p.history) || p.history.length === 0){
+    hint.textContent = "";
+    return;
+  }
+  const last = p.history[0];
+  const parts = [];
+  if(last.priceKg) parts.push(`€/kg ${last.priceKg}`);
+  if(last.priceBox) parts.push(`€/caja ${last.priceBox}`);
+  if(last.priceUnit) parts.push(`€/ud ${last.priceUnit}`);
+  hint.textContent = `Últimos: ${parts.join(" • ")} (solo pantalla)`;
+}
+
+function onLineEdit(lineId, el){
+  const inv = getInvoiceById(currentInvoiceId);
+  if(!inv) return;
+  const ln = getLine(inv, lineId);
+  if(!ln) return;
+
+  const k = el.getAttribute("data-k");
+  if(!k) return;
+
+  if(k === "productName"){
+    ln.productName = el.value || "";
+    // NO sustituimos automático. Solo si coincide exacto, en blur/change aplicamos defaults.
+  }else if(k === "mode"){
+    ln.mode = el.value || "kg";
+    // Al cambiar modo: si hay producto, ponemos precio por defecto del modo
+    const p = ln.productId ? getProductById(ln.productId) : getProductByName(ln.productName);
+    if(p){
+      const pp = productPriceForMode(p, ln.mode);
+      if(pp > 0) ln.price = pp;
+      if(!ln.origin && p.origin) ln.origin = p.origin;
+    }
+  }else if(k === "origin"){
+    ln.origin = el.value || "";
+  }else{
+    // numeric
+    ln[k] = el.value;
+  }
+
+  // compute and update UI
+  computeInvoiceTotals(inv);
+  upsertInvoice(inv);
+
+  refreshLineAmountUI(lineId);
+  refreshLineHint(lineId);
+  renderTotals(inv);
+  renderPayments(inv);
+
+  saveLocal();
+}
+
+function onProductChosen(lineId){
+  const inv = getInvoiceById(currentInvoiceId);
+  if(!inv) return;
+  const ln = getLine(inv, lineId);
+  if(!ln) return;
+
+  const name = ln.productName || "";
+  const p = getProductByName(name);
+  if(!p) {
+    // no match exacto: no tocamos
+    ln.productId = "";
+    refreshLineHint(lineId);
+    return;
+  }
+
+  // match exacto: aplicamos defaults sin “inventar”
+  ln.productId = p.id;
+  // modo: si aún está en default kg y el producto tiene otro default, lo cambiamos
+  if(!ln.mode) ln.mode = p.unitDefault || "kg";
+  if(p.unitDefault && ln.mode === "kg" && p.unitDefault !== "kg"){
+    ln.mode = p.unitDefault;
+    // reflejar en select
+    const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
+    const sel = row?.querySelector(`select[data-k="mode"]`);
+    if(sel) sel.value = ln.mode;
+  }
+
+  // precio por defecto del modo
+  const pp = productPriceForMode(p, ln.mode);
+  if(pp > 0) {
+    ln.price = pp;
+    // reflejar en input precio
+    const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
+    const inp = row?.querySelector(`input[data-k="price"]`);
+    if(inp) inp.value = String(pp);
+  }
+
+  // origen default si vacío
+  if(!ln.origin && p.origin){
+    ln.origin = p.origin;
+    const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
+    const inp = row?.querySelector(`input[data-k="origin"]`);
+    if(inp) inp.value = ln.origin;
+  }
+
+  computeInvoiceTotals(inv);
+  upsertInvoice(inv);
+  refreshLineHint(lineId);
+  renderTotals(inv);
+  saveLocal();
+}
+
+/* =========================
+   Render totals & payments UI
+========================= */
+function renderTotals(inv){
+  const tot = computeInvoiceTotals(inv);
+
+  tSubtotal.textContent = moneyEUR(tot.subtotal);
+  tTrans.textContent = moneyEUR(tot.transport);
+  tIva.textContent = moneyEUR(tot.iva);
+  tTotal.textContent = moneyEUR(tot.total);
+
+  swTrans.checked = !!inv.transportEnabled;
+  transPct.value = (inv.transportPct ?? 0.10);
+  swIvaIncl.checked = !!inv.ivaIncluded;
+
+  taxNote.textContent = inv.ivaIncluded ? "IVA incluido en precios (sin desglose)" : "IVA desglosado (4%)";
+}
+
+function renderPayments(inv){
+  payList.innerHTML = "";
+  const pays = Array.isArray(inv.payments) ? inv.payments : [];
+  pays.forEach((p) => {
+    const item = document.createElement("div");
+    item.className = "pay-item";
+    item.innerHTML = `
+      <div class="l">
+        <div style="font-weight:900">${moneyEUR(n2(p.amount))}</div>
+        <div class="muted mini">${(p.method||"").toUpperCase()} • ${(p.ts ? new Date(p.ts).toLocaleString("es-ES") : "")}</div>
+      </div>
+      <div class="r">
+        <button class="pay-del" type="button">✕</button>
+      </div>
+    `;
+    item.querySelector(".pay-del").addEventListener("click", () => {
+      const inv2 = getInvoiceById(currentInvoiceId);
+      if(!inv2) return;
+      inv2.payments = inv2.payments.filter(x => x.id !== p.id);
+      upsertInvoice(inv2);
+      renderPayments(inv2);
+      saveLocal();
+    });
+    payList.appendChild(item);
+  });
+
+  const paid = sumPayments(inv);
+  const due = clamp2(n2(inv.totals?.total) - paid);
+  tPaid.textContent = moneyEUR(paid);
+  tDue.textContent = moneyEUR(due);
+
+  const st = payStateText(inv);
+  payState.textContent = `Estado: ${st}`;
+}
+
+/* =========================
+   Render full invoice editor
+========================= */
+function renderInvoice(inv){
+  if(!inv) return;
+
+  // header meta
+  invNumber.value = inv.number || "";
+  invDate.value = inv.dateISO || todayISO();
+  invTags.value = inv.tags || "";
+  invNotes.value = inv.notes || "";
+
+  // provider snapshot in invoice
+  fillProviderUI(inv.provider || DB.provider);
+
+  // client select
+  fillClientSelect();
+  if(inv.clientId) clientSelect.value = inv.clientId;
+
+  // load client data
+  const cli = DB.clients.find(c => c.id === inv.clientId) || null;
+  fillClientUI(cli);
+
+  // switches
+  swTrans.checked = !!inv.transportEnabled;
+  transPct.value = inv.transportPct ?? 0.10;
+  swIvaIncl.checked = !!inv.ivaIncluded;
+
+  // grid
+  inv.lines = Array.isArray(inv.lines) ? inv.lines : [];
+  if(inv.lines.length === 0){
+    for(let i=0;i<5;i++) inv.lines.push(newEmptyLine());
+  }
   renderLines(inv);
 
   // totals + payments
-  recalcAndRenderTotals();
+  computeInvoiceTotals(inv);
+  renderTotals(inv);
   renderPayments(inv);
-
-  // pdf buttons state
-  updatePDFButtons(inv);
-
-  // list highlight
-  renderInvoiceList();
 
   // QR
-  renderQRForActive();
+  renderQR(inv);
+
+  setMini("#pdfState", inv.pdf?.cloudUrl ? "PDF nube: OK" : (inv.pdf?.localUrl ? "PDF local: OK" : "—"));
+  saveLocal();
 }
 
-/* =========================
-   23) APPLY CLIENT SNAP
-========================= */
-function applyClientToActiveInvoice(clientId) {
-  const inv = getActiveInvoice();
-  if (!inv) return;
-
-  inv.clientId = clientId || "";
-  const c = clientId ? getClientById(clientId) : null;
-
-  if (c) {
-    inv.clientSnap = {
-      id: c.id,
-      name: c.name || "",
-      alias: c.alias || "",
-      nif: c.nif || "",
-      addr: c.addr || "",
-      tel: c.tel || "",
-      email: c.email || "",
-      tags: Array.isArray(c.tags) ? c.tags.slice() : [],
-      vatIncluded: !!c.vatIncluded,
-      shipOn: !!c.shipOn
-    };
-
-    // apply per-client defaults (only if invoice is "fresh-ish" or user chooses)
-    inv.vatIncluded = (typeof c.vatIncluded === "boolean") ? !!c.vatIncluded : inv.vatIncluded;
-    inv.shipOn = (typeof c.shipOn === "boolean") ? !!c.shipOn : inv.shipOn;
-
-    // update UI
-    safeSetValue(EL.cli_name, c.alias || c.name || "");
-    safeSetValue(EL.cli_nif, c.nif || "");
-    safeSetValue(EL.cli_addr, c.addr || "");
-    safeSetValue(EL.cli_tel, c.tel || "");
-    safeSetValue(EL.cli_email, c.email || "");
-
-    if (EL.chkVatIncluded) EL.chkVatIncluded.checked = !!inv.vatIncluded;
-    if (EL.chkShip) EL.chkShip.checked = !!inv.shipOn;
-  } else {
-    inv.clientSnap = null;
-    safeSetValue(EL.cli_name, "");
-    safeSetValue(EL.cli_nif, "");
-    safeSetValue(EL.cli_addr, "");
-    safeSetValue(EL.cli_tel, "");
-    safeSetValue(EL.cli_email, "");
-  }
-
-  touchEntity(inv);
-  saveAllLocal();
-  recalcAndRenderTotals();
+function openInvoice(id){
+  const inv = getInvoiceById(id);
+  if(!inv) return;
+  currentInvoiceId = id;
   renderInvoiceList();
-  renderQRForActive();
-  showToast("Cliente aplicado");
-  maybeAutoSync();
+  renderInvoice(inv);
 }
 
-/* =========================
-   24) LINES RENDER + GRID PRO
-========================= */
-function renderLines(inv) {
-  if (!EL.linesBody || !EL.rowTpl) return;
-  EL.linesBody.innerHTML = "";
-
-  // ensure at least 1
-  if (!Array.isArray(inv.lines)) inv.lines = [];
-  if (inv.lines.length === 0) inv.lines.push(makeEmptyLine());
-
-  inv.lines.forEach((ln, idx) => {
-    const row = EL.rowTpl.content.firstElementChild.cloneNode(true);
-
-    const prodInput = row.querySelector(".prodInput");
-    const hintPrice = row.querySelector(".hintPrice");
-    const modeSel = row.querySelector(".modeSel");
-    const qty = row.querySelector(".qty");
-    const bruto = row.querySelector(".bruto");
-    const tara = row.querySelector(".tara");
-    const neto = row.querySelector(".neto");
-    const price = row.querySelector(".price");
-    const origin = row.querySelector(".origin");
-    const amt = row.querySelector(".amt");
-    const btnX = row.querySelector(".btnX");
-
-    // initial values
-    prodInput.value = ln.prodName || "";
-    modeSel.value = ln.mode || "kg";
-    qty.value = ln.qty ? String(ln.qty).replace(".", ",") : "";
-    bruto.value = ln.bruto ? String(ln.bruto).replace(".", ",") : "";
-    tara.value = ln.tara ? String(ln.tara).replace(".", ",") : "";
-    neto.value = ln.neto ? String(ln.neto).replace(".", ",") : "";
-    price.value = ln.price ? String(ln.price).replace(".", ",") : "";
-    origin.value = ln.origin || "";
-    amt.textContent = money(ln.amt || 0);
-
-    // hint price from product hist/current (ONLY screen)
-    updateLineHint(ln, hintPrice);
-
-    // Autocomplete (lightweight native datalist-like overlay)
-    attachProductAutocomplete(prodInput, (chosen) => {
-      applyProductToLine(ln, chosen);
-      // update UI fields (price origin mode defaults)
-      prodInput.value = ln.prodName || "";
-      modeSel.value = ln.mode || "kg";
-      price.value = ln.price ? String(ln.price).replace(".", ",") : "";
-      origin.value = ln.origin || "";
-      updateLineHint(ln, hintPrice);
-      recalcLine(ln);
-      amt.textContent = money(ln.amt || 0);
-      recalcAndRenderTotals();
-      touchEntity(inv);
-      saveAllLocal();
-      maybeAutoSync();
-    });
-
-    // mode change
-    modeSel.addEventListener("change", () => {
-      ln.mode = modeSel.value;
-      // adapt auto fields
-      recalcLine(ln);
-      neto.value = ln.neto ? String(ln.neto).replace(".", ",") : "";
-      amt.textContent = money(ln.amt || 0);
-      recalcAndRenderTotals();
-      touchEntity(inv);
-      saveAllLocal();
-      maybeAutoSync();
-    });
-
-    // qty/bruto/tara/price/origin inputs
-    const onChange = () => {
-      ln.qty = clampNonNeg(toNum(qty.value));
-      ln.bruto = clampNonNeg(toNum(bruto.value));
-      ln.tara = clampNonNeg(toNum(tara.value));
-      ln.price = toNum(price.value); // allow 0
-      ln.origin = normStr(origin.value);
-
-      recalcLine(ln);
-
-      neto.value = (ln.neto ? String(ln.neto).replace(".", ",") : "");
-      amt.textContent = money(ln.amt || 0);
-
-      updateLineHint(ln, hintPrice);
-
-      recalcAndRenderTotals();
-      touchEntity(inv);
-      saveAllLocal();
-      maybeAutoSync();
-    };
-
-    [qty, bruto, tara, price, origin].forEach(inp => {
-      inp.addEventListener("input", onChange);
-    });
-
-    // delete row
-    btnX.addEventListener("click", () => {
-      const inv2 = getActiveInvoice();
-      if (!inv2) return;
-      inv2.lines = inv2.lines.filter(x => x.id !== ln.id);
-      if (inv2.lines.length === 0) inv2.lines.push(makeEmptyLine());
-      touchEntity(inv2);
-      saveAllLocal();
-      renderLines(inv2);
-      recalcAndRenderTotals();
-      maybeAutoSync();
-    });
-
-    // Keyboard: Enter -> next field, and if last -> next row
-    attachEnterNav(row);
-
-    EL.linesBody.appendChild(row);
-  });
-}
-
-function attachEnterNav(row) {
-  const inputs = Array.from(row.querySelectorAll("input, select"));
-  inputs.forEach((inp, i) => {
-    inp.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      // allow Enter on select too
-      e.preventDefault();
-      const next = inputs[i + 1];
-      if (next) {
-        next.focus();
-        if (next.select) next.select();
-        return;
-      }
-      // last field -> next row first input
-      const allRows = Array.from(EL.linesBody.querySelectorAll(".tr"));
-      const idx = allRows.indexOf(row);
-      const nextRow = allRows[idx + 1];
-      if (nextRow) {
-        const first = nextRow.querySelector("input, select");
-        if (first) {
-          first.focus();
-          if (first.select) first.select();
-          return;
-        }
-      } else {
-        // if last row, create new row
-        addLineToActiveInvoice();
-        setTimeout(() => {
-          const rows = Array.from(EL.linesBody.querySelectorAll(".tr"));
-          const last = rows[rows.length - 1];
-          const first = last?.querySelector("input, select");
-          first?.focus();
-        }, 0);
-      }
-    });
-  });
-}
-
-function updateLineHint(ln, hintEl) {
-  if (!hintEl) return;
-  const p = ln.prodId ? getProductById(ln.prodId) : findProductByName(ln.prodName);
-  if (!p) { hintEl.textContent = ""; return; }
-  const hist = Array.isArray(p.priceHist) ? p.priceHist : [];
-  const last = hist[0]?.price;
-  const txt = [];
-  if (p.price) txt.push(`Actual: ${money(p.price)}`);
-  if (last && last !== p.price) txt.push(`Últ: ${money(last)}`);
-  hintEl.textContent = txt.join(" · ");
-}
-
-function findProductByName(name) {
-  const nk = normKey(name);
-  if (!nk) return null;
-  return STATE.products.find(p => normKey(p.name) === nk) || null;
-}
-
-function applyProductToLine(ln, product) {
-  if (!product) return;
-  ln.prodId = product.id;
-  ln.prodName = product.name;
-
-  // default mode
-  ln.mode = product.unitDefault || ln.mode || "kg";
-
-  // set default origin if empty
-  if (!ln.origin) ln.origin = product.origin || "";
-
-  // set price if invoice not closed or line price empty
-  const inv = getActiveInvoice();
-  const canOverwrite = !(STATE.settings.preventOverwriteClosedInvoices && inv?.closed);
-  if (canOverwrite) {
-    // only set if user hasn't typed a price or 0
-    // if it's a brand new selection, overwrite
-    ln.price = toNum(product.price);
-  }
-
-  // optional: if mode caja and kgBox exists, set qty to 1 if empty
-  if (ln.mode === "caja" && !ln.qty) ln.qty = 1;
-}
-
-function recalcLine(ln) {
-  // sanitize
-  ln.qty = clampNonNeg(ln.qty);
-  ln.bruto = clampNonNeg(ln.bruto);
-  ln.tara = clampNonNeg(ln.tara);
-  ln.price = toNum(ln.price);
-
-  // neto base from bruto-tara
-  let neto = clampNonNeg(ln.bruto - ln.tara);
-
-  const p = ln.prodId ? getProductById(ln.prodId) : findProductByName(ln.prodName);
-  const kgBox = p ? toNum(p.kgBox) : 0;
-
-  if (ln.mode === "kg") {
-    ln.neto = round2(neto);
-    ln.amt = round2(ln.neto * ln.price);
-    return;
-  }
-
-  if (ln.mode === "ud") {
-    ln.neto = round2(neto); // keep for info if user typed bruto/tara
-    ln.amt = round2(ln.qty * ln.price);
-    return;
-  }
-
-  // caja
-  // if user didn't fill bruto/tara but product has kgBox -> neto = qty * kgBox
-  if (kgBox > 0 && (ln.bruto <= 0 && ln.tara <= 0)) {
-    ln.neto = round2(ln.qty * kgBox);
-  } else {
-    ln.neto = round2(neto);
-  }
-
-  // pricing interpretation:
-  // default: price is per caja when mode=caja (simpler & controllable)
-  // If user wants per kg, just set product unitDefault=kg or switch mode to kg.
-  ln.amt = round2(ln.qty * ln.price);
-}
-
-/* =========================
-   25) LINE ACTIONS
-========================= */
-function addLineToActiveInvoice() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("Selecciona una factura");
-  inv.lines.push(makeEmptyLine());
-  touchEntity(inv);
-  saveAllLocal();
-  renderLines(inv);
-  recalcAndRenderTotals();
-  maybeAutoSync();
-}
-
-function clearLinesActiveInvoice() {
-  const inv = getActiveInvoice();
-  if (!inv) return;
-  if (!confirm("Vaciar líneas de la factura?")) return;
-  inv.lines = [];
-  for (let i = 0; i < 5; i++) inv.lines.push(makeEmptyLine());
-  touchEntity(inv);
-  saveAllLocal();
-  renderLines(inv);
-  recalcAndRenderTotals();
-  maybeAutoSync();
-}
-
-/* =========================
-   26) TOTALS + PAYMENTS
-========================= */
-function recalcAndRenderTotals() {
-  const inv = getActiveInvoice();
-  if (!inv) return;
-
-  // recalc all lines
-  inv.lines.forEach(recalcLine);
-
-  const totals = computeInvoiceTotal(inv);
-
-  safeSetText(EL.tot_sub, money(totals.sub));
-  safeSetText(EL.tot_ship, money(totals.ship));
-  safeSetText(EL.tot_vat, money(totals.vat));
-  safeSetText(EL.tot_all, money(totals.total));
-
-  safeSetText(EL.shipPctLabel, `${toNum(STATE.settings.shipRate)}%`);
-  safeSetText(EL.vatModeLabel, inv.vatIncluded ? "IVA incluido" : `${toNum(STATE.settings.vatRate)}%`);
-
-  // payments
-  const paid = computePaid(inv);
-  const due = round2(totals.total - paid);
-  safeSetText(EL.paid_total, money(paid));
-  safeSetText(EL.due_total, money(due < 0 ? 0 : due));
-
-  const st = computeStatus(inv);
-  setPill(EL.invStatusPill, st.label, st.variant);
-
-  // persist line totals into invoice updated
-  touchEntity(inv);
-  saveAllLocal();
+function createInvoice(){
+  const inv = newInvoiceSkeleton();
+  upsertInvoice(inv);
+  currentInvoiceId = inv.id;
+  saveLocal();
   renderInvoiceList();
-}
-
-function renderPayments(inv) {
-  if (!EL.payList) return;
-  EL.payList.innerHTML = "";
-
-  if (!inv.payments || inv.payments.length === 0) {
-    EL.payList.innerHTML = `<div class="muted tiny">Sin pagos</div>`;
-    const st = computeStatus(inv);
-    setPill(EL.invStatusPill, st.label, st.variant);
-    return;
-  }
-
-  const wrap = document.createElement("div");
-  wrap.style.display = "grid";
-  wrap.style.gap = "8px";
-
-  inv.payments
-    .slice()
-    .sort((a,b)=>b.ts-a.ts)
-    .forEach((p) => {
-      const row = document.createElement("div");
-      row.className = "listItem";
-      row.style.margin = "0";
-      row.style.cursor = "default";
-      row.innerHTML = `
-        <div class="liTop">
-          <div class="liNum">${escapeHTML(p.method || "")}</div>
-          <div class="liTotal mono">${money(p.amount || 0)}</div>
-        </div>
-        <div class="liSub">
-          <span class="mono">${new Date(p.ts).toLocaleString()}</span>
-          <span>•</span>
-          <button class="btn btn-ghost" style="padding:6px 10px;border-radius:999px;" data-pay-id="${p.id}">Eliminar</button>
-        </div>
-      `;
-      wrap.appendChild(row);
-    });
-
-  EL.payList.appendChild(wrap);
-
-  // delete payment
-  EL.payList.querySelectorAll("button[data-pay-id]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const inv2 = getActiveInvoice();
-      if (!inv2) return;
-      const pid = btn.getAttribute("data-pay-id");
-      inv2.payments = inv2.payments.filter(x => x.id !== pid);
-      touchEntity(inv2);
-      saveAllLocal();
-      renderPayments(inv2);
-      recalcAndRenderTotals();
-      maybeAutoSync();
-    });
-  });
-}
-
-function addPaymentToActiveInvoice() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("Selecciona una factura");
-  const method = EL.pay_method?.value || "efectivo";
-  const amount = round2(clampNonNeg(toNum(EL.pay_amount?.value || 0)));
-  if (amount <= 0) return showToast("Importe inválido");
-
-  inv.payments = inv.payments || [];
-  inv.payments.push({
-    id: uid("pay"),
-    ts: Date.now(),
-    method,
-    amount
-  });
-
-  if (EL.pay_amount) EL.pay_amount.value = "";
-  touchEntity(inv);
-  saveAllLocal();
-  renderPayments(inv);
-  recalcAndRenderTotals();
-  showToast("Pago añadido");
-  maybeAutoSync();
+  renderInvoice(inv);
 }
 
 /* =========================
-   27) SAVE ACTIVE INVOICE FROM UI
+   QR AEAT
 ========================= */
-function readProviderFromUI() {
-  return {
-    name: normStr(EL.prov_name?.value),
-    nif:  normStr(EL.prov_nif?.value),
-    addr: normStr(EL.prov_addr?.value),
-    tel:  normStr(EL.prov_tel?.value),
-    email:normStr(EL.prov_email?.value)
-  };
-}
-
-function saveActiveInvoiceFromUI() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("No hay factura abierta");
-
-  // provider default also updated in settings/provider storage
-  const p = readProviderFromUI();
-  STATE.provider = structuredClone(p);
-  inv.providerSnap = structuredClone(p);
-
-  // client snap live editable fields
-  const cs = inv.clientSnap || {};
-  inv.clientSnap = {
-    id: inv.clientId || "",
-    name: cs.name || "",
-    alias: normStr(EL.cli_name?.value) || cs.alias || "",
-    nif: normStr(EL.cli_nif?.value) || "",
-    addr: normStr(EL.cli_addr?.value) || "",
-    tel: normStr(EL.cli_tel?.value) || "",
-    email: normStr(EL.cli_email?.value) || "",
-    tags: Array.isArray(cs.tags) ? cs.tags.slice() : [],
-    vatIncluded: !!inv.vatIncluded,
-    shipOn: !!inv.shipOn
-  };
-
-  inv.dateISO = EL.inv_date?.value || inv.dateISO || nowISODate();
-  inv.tags = splitTags(EL.inv_tags?.value || "");
-  inv.notes = normStr(EL.inv_notes?.value || "");
-
-  // ensure calculations
-  inv.lines.forEach(recalcLine);
-
-  touchEntity(inv);
-  saveAllLocal();
-  renderInvoiceList();
-  renderQRForActive();
-  showToast("Guardado");
-  maybeAutoSync();
-}
-
-/* =========================
-   28) WHATSAPP TXT
-========================= */
-function buildWhatsAppTXT(inv) {
-  const totals = computeInvoiceTotal(inv);
-  const cName = inv.clientSnap?.alias || inv.clientSnap?.name || "—";
-
-  const header = [
-    `*FACTURA* ${inv.number}`,
-    `Fecha: ${inv.dateISO}`,
-    `Cliente: ${cName}`,
-    `Total: ${money(totals.total)} €`,
-    inv.pdf?.cloudUrl ? `PDF: ${inv.pdf.cloudUrl}` : ""
-  ].filter(Boolean).join("\n");
-
-  const lines = (inv.lines || [])
-    .filter(ln => normStr(ln.prodName))
-    .map(ln => {
-      const mode = ln.mode || "kg";
-      const qty = round2(ln.qty);
-      const neto = round2(ln.neto);
-      const pr = round2(ln.price);
-      const amt = round2(ln.amt);
-      if (mode === "kg") {
-        return `- ${ln.prodName}: Neto ${neto} kg × ${money(pr)} = ${money(amt)}`;
-      }
-      if (mode === "caja") {
-        return `- ${ln.prodName}: ${qty} caja × ${money(pr)} = ${money(amt)}${(neto>0?` (Neto ${neto} kg)`:``)}`;
-      }
-      return `- ${ln.prodName}: ${qty} ud × ${money(pr)} = ${money(amt)}${(neto>0?` (Neto ${neto} kg)`:``)}`;
-    })
-    .join("\n");
-
-  const footer = [
-    "",
-    `Subtotal: ${money(totals.sub)} €`,
-    inv.shipOn ? `Transporte (${toNum(STATE.settings.shipRate)}%): ${money(totals.ship)} €` : `Transporte: 0,00 €`,
-    inv.vatIncluded ? `IVA: incluido en precios` : `IVA (${toNum(STATE.settings.vatRate)}%): ${money(totals.vat)} €`,
-    `TOTAL: ${money(totals.total)} €`
-  ].join("\n");
-
-  return `${header}\n\n${lines}${footer}`;
-}
-
-async function exportWhatsAppTXT() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("Selecciona una factura");
-  const txt = buildWhatsAppTXT(inv);
-
-  try {
-    await navigator.clipboard.writeText(txt);
-    showToast("Copiado para WhatsApp");
-  } catch {
-    // fallback prompt
-    prompt("Copia el texto:", txt);
-  }
-}
-
-/* =========================
-   29) PDF BUTTON STATE (idb/cloud done in 3C)
-========================= */
-function updatePDFButtons(inv) {
-  const hasLocal = !!inv.pdf?.localIdbKey;
-  const hasCloud = !!inv.pdf?.cloudUrl;
-
-  if (EL.btnOpenPDF) EL.btnOpenPDF.disabled = !(hasLocal || hasCloud);
-  if (EL.btnCopyPDF) EL.btnCopyPDF.disabled = !hasCloud;
-
-  const meta = [];
-  if (hasLocal) meta.push("PDF local ✔");
-  if (hasCloud) meta.push("Cloud ✔");
-  safeSetText(EL.pdfMeta, meta.join(" · "));
-}
-
-/* =========================
-   30) PRODUCT AUTOCOMPLETE (overlay)
-========================= */
-let AC = { mount: null, open: false, items: [], idx: -1, onPick: null, anchor: null };
-
-function ensureACMount() {
-  if (AC.mount) return;
-  const div = document.createElement("div");
-  div.style.position = "fixed";
-  div.style.zIndex = "9999";
-  div.style.background = "#fff";
-  div.style.border = "1px solid var(--border)";
-  div.style.borderRadius = "12px";
-  div.style.boxShadow = "0 12px 30px rgba(0,0,0,.10)";
-  div.style.padding = "6px";
-  div.style.minWidth = "260px";
-  div.style.maxWidth = "520px";
-  div.style.maxHeight = "260px";
-  div.style.overflow = "auto";
-  div.hidden = true;
-  document.body.appendChild(div);
-  AC.mount = div;
-
-  window.addEventListener("scroll", () => { if (AC.open) positionAC(); }, true);
-  window.addEventListener("resize", () => { if (AC.open) positionAC(); });
-  document.addEventListener("click", (e) => {
-    if (!AC.open) return;
-    if (e.target === AC.anchor || AC.mount.contains(e.target)) return;
-    closeAC();
-  });
-}
-
-function attachProductAutocomplete(input, onPick) {
-  ensureACMount();
-  input.addEventListener("input", () => {
-    const q = normStr(input.value);
-    if (!q) return closeAC();
-    const list = suggestProducts(q).slice(0, 10);
-    if (list.length === 0) return closeAC();
-    openAC(input, list, onPick);
-  });
-
-  input.addEventListener("focus", () => {
-    const q = normStr(input.value);
-    if (!q) return;
-    const list = suggestProducts(q).slice(0, 10);
-    if (list.length === 0) return;
-    openAC(input, list, onPick);
-  });
-
-  input.addEventListener("keydown", (e) => {
-    if (!AC.open || AC.anchor !== input) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      AC.idx = Math.min(AC.items.length - 1, AC.idx + 1);
-      paintAC();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      AC.idx = Math.max(0, AC.idx - 1);
-      paintAC();
-    } else if (e.key === "Enter") {
-      if (AC.idx >= 0 && AC.items[AC.idx]) {
-        e.preventDefault();
-        pickAC(AC.items[AC.idx]);
-      }
-    } else if (e.key === "Escape") {
-      closeAC();
-    }
-  });
-}
-
-function suggestProducts(q) {
-  const nq = normKey(q);
-  const scored = [];
-  for (const p of STATE.products) {
-    const name = normKey(p.name);
-    if (!name) continue;
-    let score = 0;
-    if (name.startsWith(nq)) score = 3;
-    else if (name.includes(nq)) score = 2;
-    else continue;
-    scored.push({ p, score });
-  }
-  scored.sort((a,b) => b.score - a.score || a.p.name.localeCompare(b.p.name));
-  return scored.map(x => x.p);
-}
-
-function openAC(anchor, items, onPick) {
-  AC.open = true;
-  AC.anchor = anchor;
-  AC.items = items;
-  AC.idx = 0;
-  AC.onPick = onPick;
-  paintAC();
-  positionAC();
-  AC.mount.hidden = false;
-}
-
-function paintAC() {
-  const div = AC.mount;
-  if (!div) return;
-  div.innerHTML = "";
-  AC.items.forEach((p, i) => {
-    const row = document.createElement("div");
-    row.style.padding = "10px 10px";
-    row.style.borderRadius = "10px";
-    row.style.cursor = "pointer";
-    row.style.fontWeight = "800";
-    row.style.fontSize = "13px";
-    row.style.display = "flex";
-    row.style.justifyContent = "space-between";
-    row.style.alignItems = "center";
-    row.style.gap = "10px";
-    row.style.background = (i === AC.idx) ? "#000" : "transparent";
-    row.style.color = (i === AC.idx) ? "#fff" : "#000";
-
-    const right = [];
-    if (toNum(p.price)) right.push(money(p.price));
-    if (p.unitDefault) right.push(p.unitDefault);
-    row.innerHTML = `<span>${escapeHTML(p.name)}</span><span class="mono" style="font-weight:900">${escapeHTML(right.join(" · "))}</span>`;
-
-    row.addEventListener("mouseenter", () => { AC.idx = i; paintAC(); });
-    row.addEventListener("mousedown", (e) => {
-      e.preventDefault(); // avoid blur
-      pickAC(p);
-    });
-
-    div.appendChild(row);
-  });
-}
-
-function positionAC() {
-  if (!AC.open || !AC.anchor || !AC.mount) return;
-  const r = AC.anchor.getBoundingClientRect();
-  const div = AC.mount;
-
-  const top = Math.min(window.innerHeight - 20, r.bottom + 6);
-  const left = Math.min(window.innerWidth - 20, r.left);
-  div.style.top = `${top}px`;
-  div.style.left = `${left}px`;
-  div.style.width = `${Math.max(280, r.width)}px`;
-}
-
-function pickAC(p) {
-  const cb = AC.onPick;
-  closeAC();
-  if (cb) cb(p);
-}
-
-function closeAC() {
-  if (!AC.mount) return;
-  AC.open = false;
-  AC.items = [];
-  AC.idx = -1;
-  AC.anchor = null;
-  AC.onPick = null;
-  AC.mount.hidden = true;
-  AC.mount.innerHTML = "";
-}
-/* =========================================================
-   app.js (3/3) — Clients/Products/Accounting/Settings/Backup
-                 QR + PDF + IndexedDB + Firebase Cloud + Merge + init()
-   ========================================================= */
-
-/* =========================
-   40) INDEXEDDB (PDF CACHE)
-========================= */
-const IDB = {
-  name: "af_kiwi_db",
-  version: 1,
-  store: "pdfs"
-};
-
-let _dbp = null;
-
-function idbOpen() {
-  if (_dbp) return _dbp;
-  _dbp = new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB.name, IDB.version);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(IDB.store)) {
-        db.createObjectStore(IDB.store, { keyPath: "key" });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-  return _dbp;
-}
-
-async function idbPutPDF(key, blob, meta = {}) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB.store, "readwrite");
-    const st = tx.objectStore(IDB.store);
-    st.put({ key, blob, ts: Date.now(), meta });
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function idbGetPDF(key) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB.store, "readonly");
-    const st = tx.objectStore(IDB.store);
-    const req = st.get(key);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbDeletePDF(key) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB.store, "readwrite");
-    const st = tx.objectStore(IDB.store);
-    st.delete(key);
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function idbClearAllPDFs() {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB.store, "readwrite");
-    const st = tx.objectStore(IDB.store);
-    st.clear();
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-/* =========================
-   41) QR (SCREEN + PDF)
-========================= */
-async function ensureQRLib() {
-  try {
-    await loadScriptOnce(
-      "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js",
-      () => !!window.QRCode
-    );
-    return true;
-  } catch (e) {
-    console.warn("QR lib fail", e);
-    return false;
-  }
-}
-
-function buildQRText(inv) {
-  const tpl = normStr(STATE.settings.qrTpl || DEFAULT_SETTINGS.qrTpl);
-  const nif = normStr(inv.providerSnap?.nif || STATE.provider?.nif || "");
-  const num = normStr(inv.number || "");
-  const fecha = normStr(inv.dateISO || "");
-  const total = money(computeInvoiceTotal(inv).total);
+function buildQrText(inv){
+  const tpl = (DB.settings.qrTemplate || "AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}");
+  const nif = (DB.provider?.nif || DEFAULT_PROVIDER.nif || "").trim();
+  const num = (inv.number || "").trim();
+  const fecha = (inv.dateISO || "").trim();
+  const total = clamp2(n2(inv.totals?.total)).toFixed(2);
   return tpl
     .replaceAll("{NIF}", nif)
     .replaceAll("{NUM}", num)
@@ -2084,1536 +1282,1177 @@ function buildQRText(inv) {
     .replaceAll("{TOTAL}", total);
 }
 
-async function renderQRForActive() {
-  const inv = getActiveInvoice();
-  if (!inv || !EL.qrMount) return;
-  EL.qrMount.innerHTML = "";
+function renderQR(inv){
+  const txt = buildQrText(inv);
+  qrMini.textContent = txt;
 
-  const ok = await ensureQRLib();
-  if (!ok || !window.QRCode) {
-    EL.qrMount.innerHTML = `<div class="muted tiny" style="text-align:center;padding:18px">QR no disponible (sin librería)</div>`;
+  // clear previous
+  qrBox.innerHTML = "";
+
+  if(!window.QRCode){
+    qrBox.innerHTML = `<div class="muted mini" style="padding:12px;text-align:center">QR lib no cargó</div>`;
     return;
   }
 
-  const text = buildQRText(inv);
-  try {
-    new window.QRCode(EL.qrMount, {
-      text,
-      width: 180,
-      height: 180,
+  try{
+    // eslint-disable-next-line no-new
+    new window.QRCode(qrBox, {
+      text: txt,
+      width: 150,
+      height: 150,
       correctLevel: window.QRCode.CorrectLevel.M
     });
-  } catch (e) {
-    console.warn("QR render fail", e);
-    EL.qrMount.innerHTML = `<div class="muted tiny" style="text-align:center;padding:18px">QR error</div>`;
+  }catch(e){
+    qrBox.innerHTML = `<div class="muted mini" style="padding:12px;text-align:center">Error QR</div>`;
   }
-}
-
-async function qrDataURL(text, size = 180) {
-  const ok = await ensureQRLib();
-  if (!ok || !window.QRCode) return null;
-
-  const tmp = document.createElement("div");
-  tmp.style.position = "fixed";
-  tmp.style.left = "-9999px";
-  tmp.style.top = "-9999px";
-  document.body.appendChild(tmp);
-
-  try {
-    tmp.innerHTML = "";
-    new window.QRCode(tmp, { text, width: size, height: size, correctLevel: window.QRCode.CorrectLevel.M });
-
-    // qrcodejs renders sync but image/canvas might appear slightly later; poll quickly
-    const t0 = Date.now();
-    while (Date.now() - t0 < 1000) {
-      const canvas = tmp.querySelector("canvas");
-      if (canvas) {
-        const url = canvas.toDataURL("image/png");
-        document.body.removeChild(tmp);
-        return url;
-      }
-      const img = tmp.querySelector("img");
-      if (img && img.src) {
-        document.body.removeChild(tmp);
-        return img.src;
-      }
-      await new Promise(r => setTimeout(r, 50));
-    }
-  } catch (e) {
-    console.warn("qrDataURL fail", e);
-  }
-
-  document.body.removeChild(tmp);
-  return null;
 }
 
 /* =========================
-   42) PDF (jsPDF + AutoTable) + CACHE LOCAL + (optional) CLOUD UPLOAD
+   Factura: bind UI -> state
 ========================= */
-async function ensurePDFLibs() {
-  try {
-    await loadScriptOnce(
-      "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
-      () => !!(window.jspdf && window.jspdf.jsPDF)
-    );
-    await loadScriptOnce(
-      "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js",
-      () => {
-        // plugin attaches to jsPDF prototype; check existence via doc.autoTable after creating
-        return true;
-      }
-    );
-    return true;
-  } catch (e) {
-    console.warn("PDF libs fail", e);
-    return false;
-  }
-}
+function bindInvoiceMeta(){
+  invNumber.addEventListener("input", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.number = invNumber.value || inv.number;
+    upsertInvoice(inv);
+    renderInvoiceList();
+    renderQR(inv);
+    saveLocal();
+  });
 
-function simpleLogoDataURL() {
-  // Minimal inline “logo” fallback: we will draw text if no image.
-  // Return null to force text-only.
-  return null;
-}
+  invDate.addEventListener("change", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.dateISO = invDate.value || todayISO();
+    upsertInvoice(inv);
+    renderInvoiceList();
+    renderQR(inv);
+    saveLocal();
+  });
 
-async function generatePDFForActiveInvoice() {
-  const inv = getActiveInvoice();
-  if (!inv) return showToast("Selecciona una factura");
+  invTags.addEventListener("input", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.tags = invTags.value || "";
+    upsertInvoice(inv);
+    renderInvoiceList();
+    saveLocal();
+  });
 
-  // Ensure calculations are correct
-  inv.lines.forEach(recalcLine);
-  const totals = computeInvoiceTotal(inv);
+  invNotes.addEventListener("input", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.notes = invNotes.value || "";
+    upsertInvoice(inv);
+    saveLocal();
+  });
 
-  const ok = await ensurePDFLibs();
-  if (!ok) {
-    showToast("No se pudo cargar PDF (offline/CDN).");
-    return;
-  }
-
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-  const margin = 36;
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-
-  // Header
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.text("FACTURA", margin, 54);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.text(`Nº: ${inv.number}`, margin, 72);
-  doc.text(`Fecha: ${inv.dateISO}`, margin, 86);
-
-  // Provider / Client blocks
-  const p = inv.providerSnap || STATE.provider;
-  const c = inv.clientSnap || {};
-
-  const boxY = 102;
-  const boxH = 92;
-  const boxGap = 12;
-  const leftW = (pageW - margin*2 - boxGap) * 0.52;
-  const rightW = (pageW - margin*2 - boxGap) * 0.48;
-
-  // Provider box
-  doc.setDrawColor(0);
-  doc.setLineWidth(0.6);
-  doc.roundedRect(margin, boxY, leftW, boxH, 8, 8);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text("Proveedor", margin + 10, boxY + 16);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  const provLines = [
-    normStr(p.name),
-    normStr(p.nif) ? `NIF: ${normStr(p.nif)}` : "",
-    normStr(p.addr),
-    normStr(p.tel) ? `Tel: ${normStr(p.tel)}` : "",
-    normStr(p.email) ? `Email: ${normStr(p.email)}` : ""
-  ].filter(Boolean);
-  provLines.forEach((t, i) => doc.text(t, margin + 10, boxY + 34 + i*12));
-
-  // Client box
-  const cx = margin + leftW + boxGap;
-  doc.roundedRect(cx, boxY, rightW, boxH, 8, 8);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text("Cliente", cx + 10, boxY + 16);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  const clientName = normStr(c.alias || c.name);
-  const cliLines = [
-    clientName || "—",
-    normStr(c.nif) ? `NIF/CIF: ${normStr(c.nif)}` : "",
-    normStr(c.addr),
-    normStr(c.tel) ? `Tel: ${normStr(c.tel)}` : "",
-    normStr(c.email) ? `Email: ${normStr(c.email)}` : ""
-  ].filter(Boolean);
-  cliLines.forEach((t, i) => doc.text(t, cx + 10, boxY + 34 + i*12));
-
-  // QR (top right, inside client box area)
-  const qrText = buildQRText(inv);
-  const qrUrl = await qrDataURL(qrText, 120);
-  if (qrUrl) {
-    try {
-      doc.addImage(qrUrl, "PNG", cx + rightW - 10 - 86, boxY + 10, 86, 86);
-    } catch (e) {
-      console.warn("addImage QR fail", e);
-    }
-  } else {
-    // small placeholder
-    doc.setFontSize(8);
-    doc.text("QR", cx + rightW - 24, boxY + 20);
-  }
-
-  // Notes / tags (optional)
-  const afterBoxY = boxY + boxH + 14;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  const tags = (inv.tags || []).join(", ");
-  if (tags) doc.text(`Tags: ${tags}`, margin, afterBoxY);
-  if (inv.notes) doc.text(`Notas: ${inv.notes}`, margin, afterBoxY + 14);
-
-  // Table data
-  const head = [[
-    "Producto", "Modo", "Cant.", "Bruto", "Tara", "Neto", "Precio", "Origen", "Importe"
-  ]];
-
-  const body = (inv.lines || [])
-    .filter(ln => normStr(ln.prodName))
-    .map(ln => {
-      const mode = ln.mode || "kg";
-      return [
-        ln.prodName,
-        mode,
-        (mode === "kg") ? "" : String(round2(ln.qty)).replace(".", ","),
-        String(round2(ln.bruto)).replace(".", ","),
-        String(round2(ln.tara)).replace(".", ","),
-        String(round2(ln.neto)).replace(".", ","),
-        String(round2(ln.price)).replace(".", ","),
-        ln.origin || "",
-        money(ln.amt || 0)
-      ];
+  // provider fields update invoice snapshot (y opcionalmente DB.provider en ajustes/guardar)
+  [provName, provNif, provAddr, provPhone, provEmail].forEach((el) => {
+    el.addEventListener("input", () => {
+      const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+      inv.provider = {
+        name: provName.value || "",
+        nif: provNif.value || "",
+        addr: provAddr.value || "",
+        phone: provPhone.value || "",
+        email: provEmail.value || ""
+      };
+      // también actualizamos DB.provider para que sea el default del sistema
+      DB.provider = { ...inv.provider };
+      upsertInvoice(inv);
+      renderQR(inv);
+      saveLocal();
     });
-
-  // AutoTable
-  const startY = afterBoxY + (tags || inv.notes ? 28 : 10);
-
-  doc.autoTable({
-    startY,
-    head,
-    body,
-    styles: { font: "helvetica", fontSize: 8, cellPadding: 4, lineWidth: 0.2, lineColor: 0 },
-    headStyles: { fillColor: [240,240,240], textColor: [0,0,0], fontStyle: "bold" },
-    alternateRowStyles: { fillColor: [250,250,250] },
-    columnStyles: {
-      0: { cellWidth: 140 },
-      1: { cellWidth: 34 },
-      2: { halign: "right", cellWidth: 42 },
-      3: { halign: "right", cellWidth: 44 },
-      4: { halign: "right", cellWidth: 36 },
-      5: { halign: "right", cellWidth: 40 },
-      6: { halign: "right", cellWidth: 46 },
-      7: { cellWidth: 62 },
-      8: { halign: "right", cellWidth: 54 }
-    },
-    didDrawPage: (data) => {
-      // Footer (page numbers + tax note)
-      const page = doc.internal.getNumberOfPages();
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-
-      const taxText = inv.vatIncluded
-        ? "IVA incluido en los precios."
-        : `IVA ${toNum(STATE.settings.vatRate)}% desglosado en la factura.`;
-
-      doc.text(taxText, margin, pageH - 28);
-      doc.text(`Página ${page}`, pageW - margin, pageH - 28, { align: "right" });
-    }
   });
 
-  // Totals block
-  const endY = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 12 : startY + 200;
-  const tX = pageW - margin - 220;
-  const tW = 220;
-  const tH = 78;
+  clientSelect.addEventListener("change", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.clientId = clientSelect.value || "";
+    upsertInvoice(inv);
 
-  doc.roundedRect(tX, endY, tW, tH, 8, 8);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text("Totales", tX + 10, endY + 16);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-
-  const rows = [
-    ["Subtotal", money(totals.sub)],
-    ["Transporte", money(totals.ship)],
-    [inv.vatIncluded ? "IVA" : `IVA (${toNum(STATE.settings.vatRate)}%)`, inv.vatIncluded ? "Incluido" : money(totals.vat)],
-    ["TOTAL", money(totals.total)]
-  ];
-
-  rows.forEach((r, i) => {
-    const y = endY + 34 + i*12;
-    doc.text(r[0], tX + 10, y);
-    doc.text(r[1], tX + tW - 10, y, { align: "right" });
+    const cli = DB.clients.find(c => c.id === inv.clientId) || null;
+    fillClientUI(cli);
+    renderInvoiceList();
+    saveLocal();
   });
 
-  // Output blob
-  const blob = doc.output("blob");
-  const localKey = `pdf_${inv.id}_${Date.now()}`;
+  // cambios en UI cliente NO alteran automáticamente el cliente, solo cuando se pulsa “Guardar cambios cliente”
+  btnSaveClientFromInvoice.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    const c = DB.clients.find(x => x.id === inv.clientId);
+    if(!c) { setMini("#clientsMsg", "Selecciona un cliente"); return; }
 
-  try {
-    await idbPutPDF(localKey, blob, { number: inv.number, dateISO: inv.dateISO, total: totals.total });
-    inv.pdf = inv.pdf || {};
-    // remove older local pdf if exists
-    if (inv.pdf.localIdbKey && inv.pdf.localIdbKey !== localKey) {
-      try { await idbDeletePDF(inv.pdf.localIdbKey); } catch {}
+    c.name = cliName.value || c.name;
+    c.nif = cliNif.value || c.nif;
+    c.phone = cliPhone.value || c.phone;
+    c.addr = cliAddr.value || c.addr;
+    c.email = cliEmail.value || c.email;
+    c.alias = cliAlias.value || c.alias;
+
+    saveLocal();
+    fillClientSelect();
+    renderInvoiceList();
+    setMini("#clientsMsg", "✅ Cliente actualizado desde factura");
+  });
+
+  btnNewClientQuick.addEventListener("click", () => {
+    const id = uid("cli");
+    const c = {
+      id,
+      name: cliName.value || "NUEVO CLIENTE",
+      nif: cliNif.value || "",
+      addr: cliAddr.value || "",
+      phone: cliPhone.value || "",
+      email: cliEmail.value || "",
+      alias: cliAlias.value || "",
+      notes: ""
+    };
+    DB.clients.unshift(c);
+    saveLocal();
+    fillClientSelect();
+    clientSelect.value = id;
+
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.clientId = id;
+    upsertInvoice(inv);
+    renderInvoiceList();
+    setMini("#clientsMsg", "✅ Cliente creado");
+  });
+
+  // switches totals
+  swTrans.addEventListener("change", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.transportEnabled = !!swTrans.checked;
+    inv.transportPct = n2(transPct.value || 0.10);
+    upsertInvoice(inv);
+    renderTotals(inv);
+    renderInvoiceList();
+    saveLocal();
+  });
+
+  transPct.addEventListener("input", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.transportPct = n2(transPct.value || 0.10);
+    upsertInvoice(inv);
+    renderTotals(inv);
+    saveLocal();
+  });
+
+  swIvaIncl.addEventListener("change", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.ivaIncluded = !!swIvaIncl.checked;
+    upsertInvoice(inv);
+    renderTotals(inv);
+    saveLocal();
+  });
+
+  // actions
+  btnNewInvoice.addEventListener("click", createInvoice);
+
+  btnDupInvoice.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId);
+    if(!inv) return;
+    const copy = JSON.parse(JSON.stringify(inv));
+    copy.id = uid("inv");
+    copy.number = `FA-${new Date().getFullYear()}${String(new Date().getMonth()+1).padStart(2,"0")}${String(new Date().getDate()).padStart(2,"0")}${String(new Date().getHours()).padStart(2,"0")}${String(new Date().getMinutes()).padStart(2,"0")}`;
+    copy.createdAt = Date.now();
+    copy.updatedAt = Date.now();
+    copy.pdf = { localUrl:"", cloudUrl:"" };
+    upsertInvoice(copy);
+    currentInvoiceId = copy.id;
+    saveLocal();
+    renderInvoiceList();
+    renderInvoice(copy);
+  });
+
+  btnDelInvoice.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId);
+    if(!inv) return;
+    if(!confirm(`¿Eliminar ${inv.number}?`)) return;
+    DB.invoices = DB.invoices.filter(x => x.id !== inv.id);
+    currentInvoiceId = DB.invoices[0]?.id || null;
+    saveLocal();
+    renderInvoiceList();
+    if(currentInvoiceId) renderInvoice(getInvoiceById(currentInvoiceId));
+    else createInvoice();
+  });
+
+  btnAddLine.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.lines.push(newEmptyLine());
+    upsertInvoice(inv);
+    renderInvoice(inv);
+  });
+
+  btnClearLines.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    if(!confirm("¿Vaciar líneas?")) return;
+    inv.lines = [];
+    for(let i=0;i<5;i++) inv.lines.push(newEmptyLine());
+    upsertInvoice(inv);
+    renderInvoice(inv);
+  });
+
+  btnRegenQR.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    renderQR(inv);
+  });
+
+  // payments
+  btnAddPay.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    const amt = n2(payAmount.value);
+    if(!(amt > 0)){
+      setMini("#payState", "Importe inválido");
+      return;
     }
-    inv.pdf.localIdbKey = localKey;
-    touchEntity(inv);
-    saveAllLocal();
-    updatePDFButtons(inv);
-  } catch (e) {
-    console.warn("IDB save pdf fail", e);
-  }
+    inv.payments = Array.isArray(inv.payments) ? inv.payments : [];
+    inv.payments.unshift({
+      id: uid("pay"),
+      amount: clamp2(amt),
+      method: payMethod.value || "efectivo",
+      ts: Date.now()
+    });
+    payAmount.value = "";
+    upsertInvoice(inv);
+    renderPayments(inv);
+    saveLocal();
+  });
 
-  // Open PDF locally
-  try {
-    const url = URL.createObjectURL(blob);
+  btnClearPays.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    if(!confirm("¿Vaciar pagos?")) return;
+    inv.payments = [];
+    upsertInvoice(inv);
+    renderPayments(inv);
+    saveLocal();
+  });
+
+  // save invoice
+  btnSaveInvoice.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    inv.number = invNumber.value || inv.number;
+    inv.dateISO = invDate.value || inv.dateISO;
+    inv.tags = invTags.value || "";
+    inv.notes = invNotes.value || "";
+    inv.transportEnabled = !!swTrans.checked;
+    inv.transportPct = n2(transPct.value || 0.10);
+    inv.ivaIncluded = !!swIvaIncl.checked;
+
+    // provider snapshot already updated, but ensure:
+    inv.provider = {
+      name: provName.value || "",
+      nif: provNif.value || "",
+      addr: provAddr.value || "",
+      phone: provPhone.value || "",
+      email: provEmail.value || ""
+    };
+
+    // clientId already set
+    computeInvoiceTotals(inv);
+    upsertInvoice(inv);
+
+    saveLocal();
+    renderInvoiceList();
+    renderQR(inv);
+    setMini("#pdfState", "✅ Guardado");
+  });
+
+  // PDF buttons (Parte 2/2 implementa real)
+  btnPDF.addEventListener("click", async () => {
+    setMini("#pdfState", "⏳ PDF… (Parte 5/5)");
+  });
+  btnPDFCloud.addEventListener("click", async () => {
+    setMini("#pdfState", "⏳ PDF + Nube… (Parte 5/5)");
+  });
+  btnOpenPDF.addEventListener("click", () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    const url = inv.pdf?.localUrl || inv.pdf?.cloudUrl;
+    if(!url){ setMini("#pdfState", "No hay PDF"); return; }
     window.open(url, "_blank");
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  } catch {}
-
-  // Upload to cloud if possible
-  if (cloudReadyAndAuthed()) {
-    try {
-      const cloudUrl = await cloudUploadPDF(inv, blob);
-      if (cloudUrl) {
-        inv.pdf.cloudUrl = cloudUrl;
-        touchEntity(inv);
-        saveAllLocal();
-        updatePDFButtons(inv);
-        showToast("PDF subido a Cloud");
-      }
-    } catch (e) {
-      console.warn("cloud upload pdf fail", e);
-      showToast("PDF local OK (Cloud falló)");
-    }
-  } else {
-    showToast("PDF generado (local)");
-  }
-
-  renderQRForActive();
-  maybeAutoSync();
-}
-
-async function openLocalOrCloudPDF() {
-  const inv = getActiveInvoice();
-  if (!inv) return;
-
-  // Local IDB
-  if (inv.pdf?.localIdbKey) {
-    try {
-      const rec = await idbGetPDF(inv.pdf.localIdbKey);
-      if (rec?.blob) {
-        const url = URL.createObjectURL(rec.blob);
-        window.open(url, "_blank");
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return;
-      }
-    } catch (e) {
-      console.warn("open local pdf fail", e);
-    }
-  }
-
-  // Cloud URL fallback
-  if (inv.pdf?.cloudUrl) {
-    window.open(inv.pdf.cloudUrl, "_blank");
-    return;
-  }
-
-  showToast("No hay PDF guardado");
-}
-
-async function copyCloudPDFLink() {
-  const inv = getActiveInvoice();
-  if (!inv?.pdf?.cloudUrl) return showToast("No hay link Cloud");
-  try {
-    await navigator.clipboard.writeText(inv.pdf.cloudUrl);
-    showToast("Link copiado");
-  } catch {
-    prompt("Copia el link:", inv.pdf.cloudUrl);
-  }
-}
-
-/* =========================
-   43) CLIENTS CRUD
-========================= */
-function clientMatches(c, q) {
-  q = normStr(q);
-  if (!q) return true;
-  return (
-    includesAny(c.name, q) ||
-    includesAny(c.alias, q) ||
-    includesAny(c.nif, q) ||
-    includesAny((c.tags || []).join(","), q)
-  );
-}
-
-function renderClients() {
-  if (!EL.clientsList) return;
-
-  const q = EL.clientSearch?.value || "";
-  const list = STATE.clients.filter(c => clientMatches(c, q))
-    .sort((a,b) => (a.alias||a.name||"").localeCompare(b.alias||b.name||""));
-
-  EL.clientsList.innerHTML = "";
-  for (const c of list) {
-    const div = document.createElement("div");
-    div.className = "listItem" + (c.id === STATE.activeClientId ? " active" : "");
-    div.innerHTML = `
-      <div class="liTop">
-        <div class="liNum">${escapeHTML(c.alias || c.name || "—")}</div>
-        <div class="liTotal mono">${escapeHTML(c.nif || "")}</div>
-      </div>
-      <div class="liSub">
-        <span>${escapeHTML(c.name || "")}</span>
-        ${c.vatIncluded ? `<span>•</span><span>IVA incluido</span>` : ``}
-        ${c.shipOn ? `<span>•</span><span>Transporte</span>` : ``}
-      </div>
-    `;
-    div.addEventListener("click", () => {
-      STATE.activeClientId = c.id;
-      fillClientEditor(c);
-      renderClients();
-    });
-    EL.clientsList.appendChild(div);
-  }
-
-  // if none selected, keep editor clean
-  if (STATE.activeClientId) {
-    const cur = STATE.clients.find(x => x.id === STATE.activeClientId);
-    if (cur) fillClientEditor(cur);
-  }
-}
-
-function fillClientEditor(c) {
-  if (!c) return;
-  safeSetValue(EL.c_name, c.name || "");
-  safeSetValue(EL.c_alias, c.alias || "");
-  safeSetValue(EL.c_nif, c.nif || "");
-  safeSetValue(EL.c_tags, (c.tags || []).join(", "));
-  safeSetValue(EL.c_addr, c.addr || "");
-  safeSetValue(EL.c_tel, c.tel || "");
-  safeSetValue(EL.c_email, c.email || "");
-  if (EL.c_vatIncluded) EL.c_vatIncluded.checked = !!c.vatIncluded;
-  if (EL.c_shipOn) EL.c_shipOn.checked = !!c.shipOn;
-}
-
-function newClient() {
-  const c = {
-    id: uid("cli"),
-    name: "",
-    alias: "",
-    nif: "",
-    addr: "",
-    tel: "",
-    email: "",
-    tags: [],
-    vatIncluded: false,
-    shipOn: false
-  };
-  touchEntity(c);
-  STATE.clients.unshift(c);
-  rebuildIndexes();
-  STATE.activeClientId = c.id;
-  saveAllLocal();
-  renderClients();
-  fillClientEditor(c);
-  renderClientSelector(); // update invoice selector
-  showToast("Cliente nuevo");
-  maybeAutoSync();
-}
-
-function saveClientFromUI() {
-  const id = STATE.activeClientId;
-  if (!id) return showToast("Selecciona un cliente");
-  const c = STATE.clients.find(x => x.id === id);
-  if (!c) return;
-
-  c.name = normStr(EL.c_name?.value);
-  c.alias = normStr(EL.c_alias?.value);
-  c.nif = normStr(EL.c_nif?.value);
-  c.addr = normStr(EL.c_addr?.value);
-  c.tel = normStr(EL.c_tel?.value);
-  c.email = normStr(EL.c_email?.value);
-  c.tags = splitTags(EL.c_tags?.value || "");
-  c.vatIncluded = !!EL.c_vatIncluded?.checked;
-  c.shipOn = !!EL.c_shipOn?.checked;
-
-  touchEntity(c);
-  rebuildIndexes();
-  saveAllLocal();
-
-  // Update invoice selector + if active invoice matches this client, refresh snap
-  renderClientSelector();
-  const inv = getActiveInvoice();
-  if (inv && inv.clientId === c.id) applyClientToActiveInvoice(c.id);
-
-  renderClients();
-  showToast("Cliente guardado");
-  maybeAutoSync();
-}
-
-function deleteActiveClient() {
-  const id = STATE.activeClientId;
-  if (!id) return showToast("Selecciona un cliente");
-  const c = STATE.clients.find(x => x.id === id);
-  if (!c) return;
-  if (!confirm(`Eliminar cliente "${c.alias || c.name}"?`)) return;
-
-  STATE.clients = STATE.clients.filter(x => x.id !== id);
-  STATE.activeClientId = null;
-  rebuildIndexes();
-  saveAllLocal();
-  renderClients();
-  renderClientSelector();
-
-  // Remove client link from invoices (keep clientSnap for historical invoices)
-  STATE.invoices.forEach(inv => {
-    if (inv.clientId === id) inv.clientId = "";
   });
-  saveAllLocal();
+  btnCopyPdfLink.addEventListener("click", async () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    const url = inv.pdf?.cloudUrl || inv.pdf?.localUrl;
+    if(!url){ setMini("#pdfState", "No hay link"); return; }
+    try{
+      await navigator.clipboard.writeText(url);
+      setMini("#pdfState", "✅ Link copiado");
+    }catch(e){
+      setMini("#pdfState", "No se pudo copiar");
+    }
+  });
 
-  showToast("Cliente eliminado");
-  maybeAutoSync();
-}
+  // WhatsApp TXT
+  btnWhats.addEventListener("click", async () => {
+    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
+    computeInvoiceTotals(inv);
 
-function exportClientsJSON() {
-  downloadJSON(`clientes_${Date.now()}.json`, STATE.clients);
+    const cli = DB.clients.find(c => c.id === inv.clientId) || {};
+    const lines = inv.lines
+      .filter(l => norm(l.productName).length > 0 && n2(l.amount) > 0)
+      .map(l => {
+        const mode = l.mode;
+        const qty = (mode === "kg") ? `${clamp2(n2(l.net))}kg` : `${clamp2(n2(l.qty))} ${mode}`;
+        return `- ${norm(l.productName)} • ${qty} • ${moneyEUR(l.amount)}`;
+      })
+      .join("\n");
+
+    const txt =
+`${inv.number} • ${inv.dateISO}
+Cliente: ${(cli.alias||cli.name||"—")}
+Total: ${moneyEUR(inv.totals.total)}
+
+${lines}
+
+${inv.pdf?.cloudUrl ? "PDF: "+inv.pdf.cloudUrl : ""}`.trim();
+
+    try{
+      await navigator.clipboard.writeText(txt);
+      setMini("#pdfState", "✅ WhatsApp TXT copiado");
+    }catch(e){
+      alert(txt);
+    }
+  });
+
+  // Prices link modal
+  btnImportPricesLink.addEventListener("click", () => {
+    pricesLinkInput.value = "";
+    setMini("#pricesMsg", "—");
+    showModal(pricesModal);
+  });
+  btnClosePrices.addEventListener("click", () => hideModal(pricesModal));
+  btnDoImportPrices.addEventListener("click", () => {
+    const link = pricesLinkInput.value.trim();
+    const ok = importPricesFromLink(link);
+    setMini("#pricesMsg", ok ? "✅ Precios importados" : "❌ No se pudo importar");
+    renderProductsDatalist();
+    renderInvoiceList();
+    const inv = getInvoiceById(currentInvoiceId);
+    if(inv) renderInvoice(inv);
+  });
+  btnCopyMyPricesEditor.addEventListener("click", async () => {
+    const url = buildPricesEditorUrl();
+    try{
+      await navigator.clipboard.writeText(url);
+      setMini("#pricesMsg", "✅ Link editor copiado");
+    }catch(e){
+      setMini("#pricesMsg", url);
+    }
+  });
+
+  btnMakePricesLink.addEventListener("click", async () => {
+    const url = buildPricesEditorUrl();
+    try{
+      await navigator.clipboard.writeText(url);
+      setMini("#pdfState", "✅ Link editor copiado");
+    }catch(e){
+      setMini("#pdfState", url);
+    }
+    window.open(url, "_blank");
+  });
 }
 
 /* =========================
-   44) PRODUCTS CRUD + PRICE HIST (last 5)
+   Prices editor integration
 ========================= */
-function productMatches(p, q) {
-  q = normStr(q);
-  if (!q) return true;
-  return includesAny(p.name, q);
-}
+function buildPricesPack(){
+  // enviamos catálogo (products) para que el editor liste
+  const products = DB.products
+    .slice()
+    .sort((a,b)=> norm(a.name).localeCompare(norm(b.name)))
+    .map(p => ({
+      id: p.id,
+      name: p.name,
+      unitDefault: p.unitDefault || "kg",
+      kgBox: p.kgBox ?? "",
+      priceKg: p.priceKg ?? "",
+      priceBox: p.priceBox ?? "",
+      priceUnit: p.priceUnit ?? "",
+      history: Array.isArray(p.history) ? p.history.slice(0,5) : []
+    }));
 
-function renderProducts() {
-  if (!EL.productsList) return;
-
-  const q = EL.productSearch?.value || "";
-  const list = STATE.products.filter(p => productMatches(p, q))
-    .sort((a,b) => (a.name||"").localeCompare(b.name||""));
-
-  EL.productsList.innerHTML = "";
-  for (const p of list) {
-    const div = document.createElement("div");
-    div.className = "listItem" + (p.id === STATE.activeProductId ? " active" : "");
-    const right = [];
-    if (toNum(p.price)) right.push(money(p.price));
-    if (p.unitDefault) right.push(p.unitDefault);
-    div.innerHTML = `
-      <div class="liTop">
-        <div class="liNum">${escapeHTML(p.name || "—")}</div>
-        <div class="liTotal mono">${escapeHTML(right.join(" · "))}</div>
-      </div>
-      <div class="liSub">
-        ${toNum(p.kgBox) ? `<span>Kg/caja: ${String(round2(p.kgBox)).replace(".", ",")}</span>` : `<span>—</span>`}
-        ${toNum(p.cost) ? `<span>•</span><span>Coste: ${money(p.cost)}</span>` : ``}
-      </div>
-    `;
-    div.addEventListener("click", () => {
-      STATE.activeProductId = p.id;
-      fillProductEditor(p);
-      renderProducts();
-    });
-    EL.productsList.appendChild(div);
-  }
-
-  if (STATE.activeProductId) {
-    const cur = STATE.products.find(x => x.id === STATE.activeProductId);
-    if (cur) fillProductEditor(cur);
-  }
-}
-
-function fillProductEditor(p) {
-  if (!p) return;
-  safeSetValue(EL.p_name, p.name || "");
-  safeSetValue(EL.p_unit, p.unitDefault || "kg");
-  safeSetValue(EL.p_kgBox, p.kgBox ? String(p.kgBox).replace(".", ",") : "");
-  safeSetValue(EL.p_price, p.price ? String(p.price).replace(".", ",") : "");
-  safeSetValue(EL.p_cost, p.cost ? String(p.cost).replace(".", ",") : "");
-  safeSetValue(EL.p_origin, p.origin || "");
-
-  const hist = Array.isArray(p.priceHist) ? p.priceHist : [];
-  const txt = hist.slice(0,5).map(h => `${new Date(h.ts).toLocaleDateString()} → ${money(h.price)}`).join(" · ");
-  safeSetText(EL.p_hist, txt || "—");
-}
-
-function newProduct() {
-  const p = {
-    id: uid("prd"),
-    name: "",
-    unitDefault: "kg",
-    kgBox: 0,
-    price: 0,
-    cost: 0,
-    origin: "",
-    priceHist: []
+  return {
+    meta: {
+      kind: "arslan_products_pack_v1",
+      createdAt: timeStamp(),
+      source: "arslan_app",
+      mainApp: new URL(location.href).toString()
+    },
+    products
   };
-  touchEntity(p);
-  STATE.products.unshift(p);
-  rebuildIndexes();
-  STATE.activeProductId = p.id;
-  saveAllLocal();
-  renderProducts();
-  fillProductEditor(p);
-  showToast("Producto nuevo");
-  maybeAutoSync();
 }
 
-function pushPriceHist(p, price) {
-  price = round2(toNum(price));
-  if (!isFinite(price)) return;
-  p.priceHist = Array.isArray(p.priceHist) ? p.priceHist : [];
-  p.priceHist.unshift({ ts: Date.now(), price });
-  // dedupe by ts/price lightly and keep 5
-  p.priceHist = p.priceHist
-    .filter((h,i,arr)=> i===arr.findIndex(x=>x.ts===h.ts && x.price===h.price))
-    .slice(0,5);
+function buildPricesEditorUrl(){
+  const pack = buildPricesPack();
+  const comp = lzCompress(pack);
+  const u = new URL(location.href);
+  // ir a prices.html en misma carpeta
+  u.pathname = u.pathname.replace(/\/[^/]*$/, "/prices.html");
+  u.search = "";
+  u.hash = "";
+  u.searchParams.set("pack", comp);
+  return u.toString();
 }
 
-function saveProductFromUI() {
-  const id = STATE.activeProductId;
-  if (!id) return showToast("Selecciona un producto");
-  const p = STATE.products.find(x => x.id === id);
-  if (!p) return;
-
-  const oldPrice = round2(toNum(p.price));
-
-  p.name = normStr(EL.p_name?.value);
-  p.unitDefault = EL.p_unit?.value || "kg";
-  p.kgBox = round2(toNum(EL.p_kgBox?.value));
-  p.cost = round2(toNum(EL.p_cost?.value));
-  p.origin = normStr(EL.p_origin?.value);
-
-  const newPrice = round2(toNum(EL.p_price?.value));
-  p.price = newPrice;
-
-  if (newPrice !== oldPrice) {
-    pushPriceHist(p, oldPrice || newPrice);
-    pushPriceHist(p, newPrice);
-  }
-
-  touchEntity(p);
-  rebuildIndexes();
-  saveAllLocal();
-
-  // refresh hints in invoice editor if open
-  const inv = getActiveInvoice();
-  if (inv) renderLines(inv);
-
-  renderProducts();
-  showToast("Producto guardado");
-  maybeAutoSync();
-}
-
-function deleteActiveProduct() {
-  const id = STATE.activeProductId;
-  if (!id) return showToast("Selecciona un producto");
-  const p = STATE.products.find(x => x.id === id);
-  if (!p) return;
-  if (!confirm(`Eliminar producto "${p.name}"?`)) return;
-
-  STATE.products = STATE.products.filter(x => x.id !== id);
-  STATE.activeProductId = null;
-  rebuildIndexes();
-  saveAllLocal();
-  renderProducts();
-
-  showToast("Producto eliminado");
-  maybeAutoSync();
-}
-
-function exportProductsJSON() {
-  downloadJSON(`productos_${Date.now()}.json`, STATE.products);
-}
-
-/* =========================
-   45) ACCOUNTING (PIN LOCK)
-========================= */
-function openPINModal() {
-  if (!EL.pinModal) return;
-  EL.pinMsg.textContent = "—";
-  EL.pinInput.value = "";
-  EL.pinModal.showModal();
-  setTimeout(()=>EL.pinInput.focus(), 50);
-
-  EL.btnPinOk?.addEventListener("click", onPinOkOnce, { once:true });
-}
-
-function onPinOkOnce(e) {
-  e.preventDefault();
-  const pin = normStr(EL.pinInput?.value);
-  if (pin && pin === normStr(STATE.settings.pin || DEFAULT_SETTINGS.pin)) {
-    STATE.accountingUnlocked = true;
-    EL.pinModal.close();
-    showToast("Contabilidad desbloqueada");
-    renderAccounting();
-  } else {
-    safeSetText(EL.pinMsg, "PIN incorrecto");
-    showToast("PIN incorrecto");
-    // keep modal open
-    EL.pinModal.showModal();
+function extractPricesParamFromLink(link){
+  if(!link) return null;
+  try{
+    const u = new URL(link);
+    const p = u.searchParams.get("prices");
+    if(p) return p;
+    if(u.hash && u.hash.includes("prices=")){
+      return u.hash.split("prices=")[1] || null;
+    }
+    return null;
+  }catch(e){
+    // maybe the user pasted only token
+    if(link.startsWith("prices=")) return link.slice(7);
+    return null;
   }
 }
 
-function invoiceInRange(inv, fromISO, toISO) {
-  const d = inv.dateISO || "";
-  if (fromISO && d < fromISO) return false;
-  if (toISO && d > toISO) return false;
+function importPricesFromPayload(payload){
+  // payload esperado: {meta:{kind:"arslan_prices_updates_v1"}, updates:[{id,name,unitDefault,kgBox,priceKg,priceBox,priceUnit,editedAt}]}
+  if(!payload || typeof payload !== "object") return false;
+  if(!Array.isArray(payload.updates)) return false;
+
+  let changed = 0;
+
+  payload.updates.forEach(up => {
+    const id = up.id;
+    let p = getProductById(id);
+    if(!p && up.name){
+      p = getProductByName(up.name);
+    }
+    if(!p){
+      // si no existe, lo creamos para no perder precios
+      p = {
+        id: id || uid("prd"),
+        name: norm(up.name || "PRODUCTO"),
+        unitDefault: up.unitDefault || "kg",
+        kgBox: up.kgBox || "",
+        priceKg: up.priceKg || "",
+        priceBox: up.priceBox || "",
+        priceUnit: up.priceUnit || "",
+        cost: "",
+        origin: "",
+        history: []
+      };
+      DB.products.unshift(p);
+    }
+
+    // guardar historial (solo si hay cambios reales en precio)
+    const prev = { priceKg: p.priceKg, priceBox: p.priceBox, priceUnit: p.priceUnit };
+    const next = {
+      priceKg: up.priceKg ?? p.priceKg,
+      priceBox: up.priceBox ?? p.priceBox,
+      priceUnit: up.priceUnit ?? p.priceUnit
+    };
+
+    const differs =
+      String(prev.priceKg ?? "") !== String(next.priceKg ?? "") ||
+      String(prev.priceBox ?? "") !== String(next.priceBox ?? "") ||
+      String(prev.priceUnit ?? "") !== String(next.priceUnit ?? "");
+
+    if(differs){
+      pushPriceHistory(p, { ...next });
+      changed++;
+    }
+
+    // aplicar
+    if(up.unitDefault) p.unitDefault = up.unitDefault;
+    if(up.kgBox !== undefined) p.kgBox = up.kgBox;
+    if(up.priceKg !== undefined) p.priceKg = up.priceKg;
+    if(up.priceBox !== undefined) p.priceBox = up.priceBox;
+    if(up.priceUnit !== undefined) p.priceUnit = up.priceUnit;
+  });
+
+  saveLocal();
+  setMini("#prodMsg", `✅ Precios importados (${changed} cambios)`);
   return true;
 }
 
-function computeMarginForInvoice(inv) {
-  let margin = 0;
-  for (const ln of (inv.lines || [])) {
-    if (!normStr(ln.prodName)) continue;
-    const p = ln.prodId ? getProductById(ln.prodId) : findProductByName(ln.prodName);
-    const cost = p ? toNum(p.cost) : 0;
-    if (!cost) continue;
-
-    if (ln.mode === "kg") {
-      margin += (toNum(ln.price) - cost) * toNum(ln.neto);
-    } else if (ln.mode === "caja") {
-      margin += (toNum(ln.price) - cost) * toNum(ln.qty);
-    } else {
-      margin += (toNum(ln.price) - cost) * toNum(ln.qty);
-    }
-  }
-  return round2(margin);
-}
-
-function renderAccounting() {
-  // locked mode
-  if (!STATE.accountingUnlocked) {
-    if (EL.accountingBody) EL.accountingBody.hidden = true;
-    if (EL.lockBox) EL.lockBox.hidden = false;
-
-    safeSetText(EL.kpi_sales, "0,00");
-    safeSetText(EL.kpi_vat, "0,00");
-    safeSetText(EL.kpi_count, "0");
-    safeSetText(EL.kpi_margin, "0,00");
-    if (EL.accTable) EL.accTable.innerHTML = "";
-    return;
-  }
-
-  if (EL.accountingBody) EL.accountingBody.hidden = false;
-  if (EL.lockBox) EL.lockBox.hidden = true;
-
-  // populate client filter
-  if (EL.acc_client) {
-    const prev = EL.acc_client.value;
-    EL.acc_client.innerHTML = `<option value="">— Cliente —</option>`;
-    STATE.clients.forEach(c => {
-      const opt = document.createElement("option");
-      opt.value = c.id;
-      opt.textContent = c.alias ? `${c.alias} — ${c.name}` : (c.name || c.alias || "—");
-      EL.acc_client.appendChild(opt);
-    });
-    EL.acc_client.value = prev || "";
-  }
-
-  const fromISO = EL.acc_from?.value || "";
-  const toISO = EL.acc_to?.value || "";
-  const cid = EL.acc_client?.value || "";
-  const tag = normStr(EL.acc_tag?.value || "");
-
-  const filtered = STATE.invoices.filter(inv => {
-    if (!invoiceInRange(inv, fromISO, toISO)) return false;
-    if (cid) {
-      const id2 = inv.clientId || inv.clientSnap?.id || "";
-      if (id2 !== cid) return false;
-    }
-    if (tag) {
-      if (!hasTag(inv, tag)) return false;
-    }
-    return true;
-  });
-
-  let sumSales = 0;
-  let sumVAT = 0;
-  let sumMargin = 0;
-
-  filtered.forEach(inv => {
-    const t = computeInvoiceTotal(inv);
-    sumSales += t.total;
-    sumVAT += t.vat; // 0 if IVA incluido
-    sumMargin += computeMarginForInvoice(inv);
-  });
-
-  safeSetText(EL.kpi_sales, money(sumSales));
-  safeSetText(EL.kpi_vat, money(sumVAT));
-  safeSetText(EL.kpi_count, String(filtered.length));
-  safeSetText(EL.kpi_margin, money(sumMargin));
-
-  // table
-  if (!EL.accTable) return;
-  EL.accTable.innerHTML = "";
-  filtered
-    .slice()
-    .sort((a,b) => (b.dateISO||"").localeCompare(a.dateISO||""))
-    .forEach(inv => {
-      const t = computeInvoiceTotal(inv);
-      const cn = inv.clientSnap?.alias || inv.clientSnap?.name || "—";
-      const div = document.createElement("div");
-      div.className = "listItem";
-      div.innerHTML = `
-        <div class="liTop">
-          <div class="liNum">${escapeHTML(inv.number || "")}</div>
-          <div class="liTotal mono">${money(t.total)}</div>
-        </div>
-        <div class="liSub">
-          <span>${escapeHTML(inv.dateISO || "")}</span>
-          <span>•</span>
-          <span>${escapeHTML(cn)}</span>
-          ${inv.vatIncluded ? `<span>•</span><span>IVA incluido</span>` : `<span>•</span><span>IVA ${money(t.vat)}</span>`}
-        </div>
-      `;
-      div.addEventListener("click", () => {
-        setView("invoicesView");
-        openInvoice(inv.id);
-      });
-      EL.accTable.appendChild(div);
-    });
+function importPricesFromLink(link){
+  const token = extractPricesParamFromLink(link);
+  if(!token) return false;
+  const payload = lzDecompressParam(token);
+  if(!payload) return false;
+  const ok = importPricesFromPayload(payload);
+  return ok;
 }
 
 /* =========================
-   46) SETTINGS (UI)
+   Export/Import JSON
 ========================= */
-function renderSettings() {
-  safeSetValue(EL.set_vat, String(toNum(STATE.settings.vatRate)).replace(".", ","));
-  safeSetValue(EL.set_ship, String(toNum(STATE.settings.shipRate)).replace(".", ","));
-  if (EL.set_vatIncludedDefault) EL.set_vatIncludedDefault.checked = !!STATE.settings.vatIncludedDefault;
-  safeSetValue(EL.set_qrTpl, STATE.settings.qrTpl || DEFAULT_SETTINGS.qrTpl);
-
-  // cloud config
-  const cfg = STATE.settings.cloud?.config || {};
-  safeSetValue(EL.fb_apiKey, cfg.apiKey || "");
-  safeSetValue(EL.fb_authDomain, cfg.authDomain || "");
-  safeSetValue(EL.fb_databaseURL, cfg.databaseURL || "");
-  safeSetValue(EL.fb_projectId, cfg.projectId || "");
-  safeSetValue(EL.fb_appId, cfg.appId || "");
-  safeSetValue(EL.fb_storageBucket, cfg.storageBucket || "");
-
-  // prices link placeholder (you will host external app later)
-  safeSetText(EL.pricesLinkInfo, "Link externo: crea carpeta /ponerprecios/ (te lo entrego en PARTE 4/4).");
-
-  updateModePill();
-}
-
-function saveSettingsFromUI() {
-  STATE.settings.vatRate = round2(toNum(EL.set_vat?.value));
-  STATE.settings.shipRate = round2(toNum(EL.set_ship?.value));
-  STATE.settings.vatIncludedDefault = !!EL.set_vatIncludedDefault?.checked;
-  STATE.settings.qrTpl = normStr(EL.set_qrTpl?.value) || DEFAULT_SETTINGS.qrTpl;
-
-  saveAllLocal();
-  showToast("Ajustes guardados");
-
-  // Refresh invoice totals
-  const inv = getActiveInvoice();
-  if (inv) {
-    safeSetText(EL.shipPctLabel, `${toNum(STATE.settings.shipRate)}%`);
-    safeSetText(EL.vatModeLabel, inv.vatIncluded ? "IVA incluido" : `${toNum(STATE.settings.vatRate)}%`);
-    recalcAndRenderTotals();
-    renderQRForActive();
-  }
-  maybeAutoSync();
-}
-
-function resetLocal(hard) {
-  const msg = hard
-    ? "RESET TOTAL: borra datos locales + PDFs en cache. Seguro?"
-    : "RESET local: borra datos locales (no nube). Seguro?";
-  if (!confirm(msg)) return;
-
-  localStorage.removeItem(K.provider);
-  localStorage.removeItem(K.clients);
-  localStorage.removeItem(K.products);
-  localStorage.removeItem(K.invoices);
-  localStorage.removeItem(K.settings);
-  localStorage.removeItem(K.pdfIndex);
-
-  if (hard) {
-    idbClearAllPDFs().catch(()=>{});
-  }
-
-  // reload defaults
-  STATE.provider = structuredClone(DEFAULT_PROVIDER);
-  STATE.clients = [];
-  STATE.products = [];
-  STATE.invoices = [];
-  STATE.settings = structuredClone(DEFAULT_SETTINGS);
-  STATE.activeInvoiceId = null;
-
-  ensureDefaults();
-  saveAllLocal();
-
-  renderInvoiceList();
-  clearInvoiceEditor();
-  renderSettings();
-  showToast("Reset OK");
-}
-
-/* =========================
-   47) BACKUP JSON (EXPORT/IMPORT)
-========================= */
-function downloadJSON(filename, obj) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(DB, null, 2)], { type:"application/json" });
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
+  a.href = URL.createObjectURL(blob);
+  a.download = `arslan_kiwi_facturas_db_${todayISO()}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-function exportBackupJSON() {
-  const payload = {
-    exportedAt: Date.now(),
-    provider: STATE.provider,
-    clients: STATE.clients,
-    products: STATE.products,
-    invoices: STATE.invoices,
-    settings: STATE.settings
-  };
-  downloadJSON(`backup_arslan_facturas_${Date.now()}.json`, payload);
-  showToast("Backup exportado");
-}
-
-function importBackupJSONFromFile(e) {
-  const file = e?.target?.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const incoming = JSON.parse(String(reader.result || "{}"));
-      // auto backup current before import
-      const backup = {
-        exportedAt: Date.now(),
-        provider: STATE.provider,
-        clients: STATE.clients,
-        products: STATE.products,
-        invoices: STATE.invoices,
-        settings: STATE.settings
-      };
-      saveJSON(`af_kiwi_autobackup_${Date.now()}`, backup);
-
-      const replace = confirm("Importar REEMPLAZANDO TODO? (Cancelar = MERGE inteligente)");
-      if (replace) {
-        STATE.provider = incoming.provider || structuredClone(DEFAULT_PROVIDER);
-        STATE.clients  = Array.isArray(incoming.clients) ? incoming.clients : [];
-        STATE.products = Array.isArray(incoming.products) ? incoming.products : [];
-        STATE.invoices = Array.isArray(incoming.invoices) ? incoming.invoices : [];
-        STATE.settings = incoming.settings || structuredClone(DEFAULT_SETTINGS);
-        ensureDefaults();
-      } else {
-        // MERGE
-        const merged = mergeDataset(
-          {
-            provider: STATE.provider,
-            clients: STATE.clients,
-            products: STATE.products,
-            invoices: STATE.invoices,
-            settings: STATE.settings
-          },
-          {
-            provider: incoming.provider,
-            clients: incoming.clients,
-            products: incoming.products,
-            invoices: incoming.invoices,
-            settings: incoming.settings
-          }
-        );
-        STATE.provider = merged.provider;
-        STATE.clients = merged.clients;
-        STATE.products = merged.products;
-        STATE.invoices = merged.invoices;
-        STATE.settings = merged.settings;
-        ensureDefaults();
-      }
-
-      saveAllLocal();
-      rebuildIndexes();
-
-      renderClientSelector();
-      renderInvoiceList();
-      renderClients();
-      renderProducts();
-      renderSettings();
-
-      // open latest invoice if exists
-      if (STATE.invoices[0]) openInvoice(STATE.invoices[0].id);
-      showToast("Import OK");
-      maybeAutoSync();
-    } catch (err) {
-      console.error(err);
-      showToast("Import error");
-      alert("JSON inválido o incompatible.");
-    } finally {
-      // reset input
-      if (EL.fileImport) EL.fileImport.value = "";
+function importJSONFile(file){
+  const fr = new FileReader();
+  fr.onload = () => {
+    const data = safeJSONParse(fr.result);
+    if(!data){
+      setMini("#dbState", "❌ JSON inválido");
+      return;
     }
+    DB = Object.assign(defaultDB(), data);
+    DB.settings = Object.assign(defaultSettings(), DB.settings || {});
+    DB.settings.firebase = Object.assign(defaultSettings().firebase, (DB.settings.firebase || {}));
+    DB.provider = Object.assign({ ...DEFAULT_PROVIDER }, DB.provider || {});
+    DB.clients = Array.isArray(DB.clients) ? DB.clients : [];
+    DB.products = Array.isArray(DB.products) ? DB.products : [];
+    DB.invoices = Array.isArray(DB.invoices) ? DB.invoices : [];
+
+    saveLocal();
+    renderAll();
+    setMini("#dbState", "✅ Import OK");
   };
-  reader.readAsText(file);
+  fr.readAsText(file);
 }
 
 /* =========================
-   48) MERGE INTELIGENTE (LOCAL + CLOUD + IMPORT)
+   Clients view
 ========================= */
-function clientKey(c) {
-  return normKey(c?.name || c?.alias || "");
-}
-function productKey(p) {
-  return normKey(p?.name || "");
-}
-function invoiceSig(inv) {
-  const cn = normKey(inv?.clientSnap?.alias || inv?.clientSnap?.name || "");
-  return `${inv?.dateISO || ""}|${inv?.number || ""}|${cn}`;
-}
-
-function pickBetter(a, b) {
-  // choose record with higher updatedAt, else keep a
-  const ua = toNum(a?.updatedAt);
-  const ub = toNum(b?.updatedAt);
-  return (ub > ua) ? b : a;
-}
-
-function mergeDataset(local, incoming) {
-  const out = {
-    provider: structuredClone(local.provider || DEFAULT_PROVIDER),
-    clients:  Array.isArray(local.clients) ? structuredClone(local.clients) : [],
-    products: Array.isArray(local.products) ? structuredClone(local.products) : [],
-    invoices: Array.isArray(local.invoices) ? structuredClone(local.invoices) : [],
-    settings: deepMerge(structuredClone(local.settings || DEFAULT_SETTINGS), incoming.settings || {})
-  };
-
-  // Provider: prefer incoming if has name/nif/etc and local empty
-  if (incoming.provider && (normStr(incoming.provider.name) || normStr(incoming.provider.nif))) {
-    out.provider = deepMerge(out.provider, incoming.provider);
-  }
-
-  // Clients merge (id + name)
-  const incClients = Array.isArray(incoming.clients) ? incoming.clients : [];
-  const byId = new Map();
-  const byName = new Map();
-  const remap = new Map(); // oldId -> newId
-
-  // seed local
-  out.clients.forEach(c => {
-    if (!c.id) c.id = uid("cli");
-    byId.set(c.id, c);
-    const k = clientKey(c);
-    if (k) byName.set(k, c.id);
-  });
-
-  // merge incoming
-  incClients.forEach(c0 => {
-    if (!c0) return;
-    const c = structuredClone(c0);
-    if (!c.id) c.id = uid("cli");
-    const k = clientKey(c);
-
-    if (byId.has(c.id)) {
-      const cur = byId.get(c.id);
-      const better = pickBetter(cur, c);
-      byId.set(c.id, better);
-      return;
-    }
-
-    if (k && byName.has(k)) {
-      const keepId = byName.get(k);
-      const cur = byId.get(keepId);
-      const better = pickBetter(cur, c);
-      // keep keepId as canonical id
-      better.id = keepId;
-      byId.set(keepId, better);
-      remap.set(c.id, keepId);
-      return;
-    }
-
-    // new client
-    byId.set(c.id, c);
-    if (k) byName.set(k, c.id);
-  });
-
-  out.clients = Array.from(byId.values());
-
-  // Products merge (id + name)
-  const incProducts = Array.isArray(incoming.products) ? incoming.products : [];
-  const pById = new Map();
-  const pByName = new Map();
-
-  out.products.forEach(p => {
-    if (!p.id) p.id = uid("prd");
-    if (!Array.isArray(p.priceHist)) p.priceHist = [];
-    pById.set(p.id, p);
-    const k = productKey(p);
-    if (k) pByName.set(k, p.id);
-  });
-
-  incProducts.forEach(p0 => {
-    if (!p0) return;
-    const p = structuredClone(p0);
-    if (!p.id) p.id = uid("prd");
-    if (!Array.isArray(p.priceHist)) p.priceHist = [];
-    const k = productKey(p);
-
-    if (pById.has(p.id)) {
-      const cur = pById.get(p.id);
-      const better = pickBetter(cur, p);
-      // merge priceHist
-      const hist = [...(cur.priceHist||[]), ...(p.priceHist||[])];
-      better.priceHist = hist
-        .filter(Boolean)
-        .sort((a,b)=>toNum(b.ts)-toNum(a.ts))
-        .filter((h,i,arr)=> i===arr.findIndex(x=>x.ts===h.ts && x.price===h.price))
-        .slice(0,5);
-      pById.set(p.id, better);
-      return;
-    }
-
-    if (k && pByName.has(k)) {
-      const keepId = pByName.get(k);
-      const cur = pById.get(keepId);
-      const better = pickBetter(cur, p);
-      better.id = keepId;
-      const hist = [...(cur.priceHist||[]), ...(p.priceHist||[])];
-      better.priceHist = hist
-        .filter(Boolean)
-        .sort((a,b)=>toNum(b.ts)-toNum(a.ts))
-        .filter((h,i,arr)=> i===arr.findIndex(x=>x.ts===h.ts && x.price===h.price))
-        .slice(0,5);
-      pById.set(keepId, better);
-      return;
-    }
-
-    pById.set(p.id, p);
-    if (k) pByName.set(k, p.id);
-  });
-
-  out.products = Array.from(pById.values());
-
-  // Invoices merge (id + signature)
-  const incInvoices = Array.isArray(incoming.invoices) ? incoming.invoices : [];
-  const invById = new Map();
-  const invBySig = new Map();
-
-  out.invoices.forEach(inv => {
-    sanitizeInvoice(inv);
-    invById.set(inv.id, inv);
-    invBySig.set(invoiceSig(inv), inv.id);
-  });
-
-  incInvoices.forEach(inv0 => {
-    if (!inv0) return;
-    const inv = structuredClone(inv0);
-    sanitizeInvoice(inv);
-
-    // remap clientId if needed
-    if (inv.clientId && remap.has(inv.clientId)) {
-      inv.clientId = remap.get(inv.clientId);
-      if (inv.clientSnap) inv.clientSnap.id = inv.clientId;
-    }
-
-    if (invById.has(inv.id)) {
-      const cur = invById.get(inv.id);
-      const better = pickBetter(cur, inv);
-      // keep pdf best
-      better.pdf = better.pdf || { localIdbKey:"", cloudUrl:"" };
-      if (!better.pdf.cloudUrl && (cur.pdf?.cloudUrl || inv.pdf?.cloudUrl)) {
-        better.pdf.cloudUrl = cur.pdf?.cloudUrl || inv.pdf?.cloudUrl || "";
-      }
-      if (!better.pdf.localIdbKey && (cur.pdf?.localIdbKey || inv.pdf?.localIdbKey)) {
-        better.pdf.localIdbKey = cur.pdf?.localIdbKey || inv.pdf?.localIdbKey || "";
-      }
-      invById.set(inv.id, better);
-      invBySig.set(invoiceSig(better), better.id);
-      return;
-    }
-
-    const sig = invoiceSig(inv);
-    if (invBySig.has(sig)) {
-      const keepId = invBySig.get(sig);
-      const cur = invById.get(keepId);
-      const better = pickBetter(cur, inv);
-      better.id = keepId;
-      // keep best pdf url
-      better.pdf = better.pdf || { localIdbKey:"", cloudUrl:"" };
-      better.pdf.cloudUrl = better.pdf.cloudUrl || cur.pdf?.cloudUrl || inv.pdf?.cloudUrl || "";
-      better.pdf.localIdbKey = better.pdf.localIdbKey || cur.pdf?.localIdbKey || inv.pdf?.localIdbKey || "";
-      invById.set(keepId, better);
-      return;
-    }
-
-    invById.set(inv.id, inv);
-    invBySig.set(sig, inv.id);
-  });
-
-  out.invoices = Array.from(invById.values())
-    .sort((a,b)=> (b.dateISO||"").localeCompare(a.dateISO||"") || (toNum(b.updatedAt)-toNum(a.updatedAt)));
-
-  return out;
-}
-
-/* =========================
-   49) CLOUD (FIREBASE OPTIONAL)
-========================= */
-const CLOUD = {
-  ready: false,
-  app: null,
-  auth: null,
-  db: null,
-  storage: null,
-
-  // modules
-  mApp: null,
-  mAuth: null,
-  mDB: null,
-  mStore: null
-};
-
-function cloudConfigLooksValid(cfg) {
-  if (!cfg) return false;
-  const must = ["apiKey","authDomain","databaseURL","projectId","appId","storageBucket"];
-  return must.every(k => normStr(cfg[k]));
-}
-
-function cloudReadyAndAuthed() {
-  return CLOUD.ready && !!STATE.settings.cloud?.user?.uid;
-}
-
-function updateModePill() {
-  const user = STATE.settings.cloud?.user;
-  if (CLOUD.ready && user?.uid) {
-    setPill(EL.modePill, "Cloud", "ok");
-  } else if (CLOUD.ready) {
-    setPill(EL.modePill, "Cloud (sin login)", "normal");
-  } else {
-    setPill(EL.modePill, "Modo local", "normal");
-  }
-}
-
-async function loadFirebaseModules() {
-  // modular SDK ES modules
-  const v = "12.7.0";
-  const base = `https://www.gstatic.com/firebasejs/${v}/`;
-  const [mApp, mAuth, mDB, mStore] = await Promise.all([
-    import(base + "firebase-app.js"),
-    import(base + "firebase-auth.js"),
-    import(base + "firebase-database.js"),
-    import(base + "firebase-storage.js")
-  ]);
-  CLOUD.mApp = mApp;
-  CLOUD.mAuth = mAuth;
-  CLOUD.mDB = mDB;
-  CLOUD.mStore = mStore;
-}
-
-async function initCloudIfPossible() {
-  try {
-    const cfg = STATE.settings.cloud?.config;
-    if (!cloudConfigLooksValid(cfg)) {
-      CLOUD.ready = false;
-      updateModePill();
-      return false;
-    }
-
-    if (!CLOUD.mApp) await loadFirebaseModules();
-
-    CLOUD.app = CLOUD.mApp.initializeApp(cfg);
-    CLOUD.auth = CLOUD.mAuth.getAuth(CLOUD.app);
-    CLOUD.db = CLOUD.mDB.getDatabase(CLOUD.app);
-    CLOUD.storage = CLOUD.mStore.getStorage(CLOUD.app);
-
-    CLOUD.ready = true;
-    STATE.settings.cloud.enabled = true;
-    saveAllLocal();
-
-    CLOUD.mAuth.onAuthStateChanged(CLOUD.auth, (user) => {
-      if (user) {
-        STATE.settings.cloud.user = { uid: user.uid, email: user.email || "" };
-      } else {
-        STATE.settings.cloud.user = null;
-      }
-      saveAllLocal();
-      updateAuthUI();
-      updateModePill();
-      if (user) syncNow(); // pull+merge+push
+function renderClientsList(){
+  const q = norm(cliSearch2.value || "");
+  const list = DB.clients
+    .slice()
+    .sort((a,b)=> norm(a.alias||a.name).localeCompare(norm(b.alias||b.name)))
+    .filter(c => {
+      if(!q) return true;
+      const hay = `${c.name} ${c.alias||""} ${c.nif||""} ${c.addr||""}`.toUpperCase();
+      return hay.includes(q);
     });
 
-    updateModePill();
-    return true;
-  } catch (e) {
-    console.warn("initCloud fail", e);
-    CLOUD.ready = false;
-    STATE.settings.cloud.enabled = false;
-    saveAllLocal();
-    updateModePill();
-    safeSetText(EL.cloudHint, "Cloud falló: se mantiene modo local.");
-    return false;
-  }
+  clientsList.innerHTML = "";
+  list.forEach(c => {
+    const item = document.createElement("div");
+    item.className = "list-item" + (c.id === currentClientId ? " active" : "");
+    item.innerHTML = `
+      <div class="t">
+        <div class="name">${c.alias || c.name}</div>
+        <div class="badge">${c.nif || "—"}</div>
+      </div>
+      <div class="meta">
+        ${c.name ? `<span>${c.name}</span>` : ``}
+        ${c.addr ? `<span>•</span><span>${c.addr}</span>` : ``}
+      </div>
+    `;
+    item.addEventListener("click", () => {
+      currentClientId = c.id;
+      renderClientsList();
+      fillClientEditor(c);
+    });
+    clientsList.appendChild(item);
+  });
 }
 
-function cloudBasePath() {
-  const uid = STATE.settings.cloud?.user?.uid;
-  return uid ? `users/${uid}` : "";
+function fillClientEditor(c){
+  cName.value = c?.name || "";
+  cNif.value = c?.nif || "";
+  cAlias.value = c?.alias || "";
+  cAddr.value = c?.addr || "";
+  cPhone.value = c?.phone || "";
+  cEmail.value = c?.email || "";
+  cNotes.value = c?.notes || "";
 }
 
-async function cloudGet(path) {
-  const r = CLOUD.mDB.ref(CLOUD.db, path);
-  const snap = await CLOUD.mDB.get(r);
-  return snap.exists() ? snap.val() : null;
-}
-
-async function cloudSet(path, value) {
-  const r = CLOUD.mDB.ref(CLOUD.db, path);
-  await CLOUD.mDB.set(r, value);
-}
-
-async function cloudUploadPDF(inv, blob) {
-  const uid = STATE.settings.cloud?.user?.uid;
-  if (!uid) return null;
-  const safeName = `${inv.number || inv.id}`.replaceAll("/", "-");
-  const fullPath = `pdfs/${uid}/${safeName}.pdf`;
-  const ref = CLOUD.mStore.ref(CLOUD.storage, fullPath);
-  await CLOUD.mStore.uploadBytes(ref, blob, { contentType: "application/pdf" });
-  const url = await CLOUD.mStore.getDownloadURL(ref);
-  return url;
-}
-
-async function syncNow() {
-  if (!CLOUD.ready) {
-    showToast("Cloud no inicializado");
+function saveClientEditor(){
+  if(!currentClientId){
+    setMini("#clientsMsg", "Selecciona un cliente");
     return;
   }
-  if (!STATE.settings.cloud?.user?.uid) {
-    showToast("Cloud: haz login");
+  const c = DB.clients.find(x => x.id === currentClientId);
+  if(!c){
+    setMini("#clientsMsg", "Cliente no encontrado");
+    return;
+  }
+  c.name = cName.value || "";
+  c.nif = cNif.value || "";
+  c.alias = cAlias.value || "";
+  c.addr = cAddr.value || "";
+  c.phone = cPhone.value || "";
+  c.email = cEmail.value || "";
+  c.notes = cNotes.value || "";
+
+  saveLocal();
+  renderClientsList();
+  fillClientSelect();
+  setMini("#clientsMsg", "✅ Guardado");
+}
+
+function deleteClientEditor(){
+  if(!currentClientId) return;
+  const c = DB.clients.find(x => x.id === currentClientId);
+  if(!c) return;
+  if(!confirm(`¿Eliminar cliente ${c.alias||c.name}?`)) return;
+
+  // re-map en facturas a vacío
+  DB.invoices.forEach(inv => {
+    if(inv.clientId === c.id) inv.clientId = "";
+  });
+
+  DB.clients = DB.clients.filter(x => x.id !== c.id);
+  currentClientId = DB.clients[0]?.id || null;
+
+  saveLocal();
+  renderClientsList();
+  fillClientSelect();
+  setMini("#clientsMsg", "✅ Eliminado");
+}
+
+/* =========================
+   Products view
+========================= */
+function renderProdList(){
+  const q = norm(prodSearch.value || "");
+  const list = DB.products
+    .slice()
+    .sort((a,b)=> norm(a.name).localeCompare(norm(b.name)))
+    .filter(p => !q || norm(p.name).includes(q));
+
+  prodList.innerHTML = "";
+  list.forEach(p => {
+    const item = document.createElement("div");
+    item.className = "list-item" + (p.id === currentProdId ? " active" : "");
+    const priceMain = (p.unitDefault === "caja") ? p.priceBox : (p.unitDefault === "unidad" ? p.priceUnit : p.priceKg);
+    item.innerHTML = `
+      <div class="t">
+        <div class="name">${p.name}</div>
+        <div class="badge">${priceMain ? `${priceMain}€` : "—"}</div>
+      </div>
+      <div class="meta">
+        <span>Def: ${p.unitDefault || "kg"}</span>
+        ${p.kgBox ? `<span>•</span><span>Kg/caja ${p.kgBox}</span>` : ``}
+        ${(p.origin||"") ? `<span>•</span><span>${p.origin}</span>` : ``}
+      </div>
+    `;
+    item.addEventListener("click", () => {
+      currentProdId = p.id;
+      renderProdList();
+      fillProdEditor(p);
+    });
+    prodList.appendChild(item);
+  });
+}
+
+function fillProdEditor(p){
+  pName.value = p?.name || "";
+  pUnit.value = p?.unitDefault || "kg";
+  pKgBox.value = p?.kgBox ?? "";
+  pPriceKg.value = p?.priceKg ?? "";
+  pPriceBox.value = p?.priceBox ?? "";
+  pPriceUnit.value = p?.priceUnit ?? "";
+  pCost.value = p?.cost ?? "";
+  pOrigin.value = p?.origin ?? "";
+  renderProdHist(p);
+}
+
+function renderProdHist(p){
+  pHist.innerHTML = "";
+  const hist = Array.isArray(p?.history) ? p.history : [];
+  if(hist.length === 0){
+    pHist.innerHTML = `<div class="hist-item"><span class="muted">Sin historial</span></div>`;
+    return;
+  }
+  hist.slice(0,5).forEach(h => {
+    const when = h.ts ? new Date(h.ts).toLocaleString("es-ES") : "";
+    const parts = [];
+    if(h.priceKg) parts.push(`€/kg ${h.priceKg}`);
+    if(h.priceBox) parts.push(`€/caja ${h.priceBox}`);
+    if(h.priceUnit) parts.push(`€/ud ${h.priceUnit}`);
+    const item = document.createElement("div");
+    item.className = "hist-item";
+    item.innerHTML = `<span>${parts.join(" • ")}</span><span class="muted mini">${when}</span>`;
+    pHist.appendChild(item);
+  });
+}
+
+function saveProdEditor(){
+  // si no hay seleccionado, crear
+  let p = currentProdId ? DB.products.find(x => x.id === currentProdId) : null;
+  const name = norm(pName.value || "");
+  if(!name){
+    setMini("#prodMsg", "Nombre inválido");
     return;
   }
 
-  const base = cloudBasePath();
-  const dataPath = `${base}/data`;
+  // no duplicar por nombre
+  const existing = DB.products.find(x => norm(x.name) === name && (!p || x.id !== p.id));
+  if(existing){
+    setMini("#prodMsg", "Ya existe ese producto (mismo nombre)");
+    return;
+  }
 
-  try {
-    showToast("Sync…");
-    const cloudData = await cloudGet(dataPath);
+  const patch = {
+    name,
+    unitDefault: pUnit.value || "kg",
+    kgBox: pKgBox.value ?? "",
+    priceKg: pPriceKg.value ?? "",
+    priceBox: pPriceBox.value ?? "",
+    priceUnit: pPriceUnit.value ?? "",
+    cost: pCost.value ?? "",
+    origin: pOrigin.value ?? ""
+  };
 
-    const localData = {
-      provider: STATE.provider,
-      clients: STATE.clients,
-      products: STATE.products,
-      invoices: STATE.invoices,
-      settings: STATE.settings
+  if(!p){
+    p = {
+      id: uid("prd"),
+      history: []
     };
+    DB.products.unshift(p);
+    currentProdId = p.id;
+  }
 
-    let merged;
-    if (!cloudData) {
-      merged = localData; // push local as first seed
-    } else {
-      merged = mergeDataset(localData, cloudData);
-    }
+  // historial: si cambian precios, push snapshot
+  const prev = { priceKg: p.priceKg ?? "", priceBox: p.priceBox ?? "", priceUnit: p.priceUnit ?? "" };
+  const next = { priceKg: patch.priceKg ?? "", priceBox: patch.priceBox ?? "", priceUnit: patch.priceUnit ?? "" };
+  const differs =
+    String(prev.priceKg) !== String(next.priceKg) ||
+    String(prev.priceBox) !== String(next.priceBox) ||
+    String(prev.priceUnit) !== String(next.priceUnit);
 
-    // Update local from merged
-    STATE.provider = merged.provider;
-    STATE.clients = merged.clients;
-    STATE.products = merged.products;
-    STATE.invoices = merged.invoices;
-    STATE.settings = merged.settings;
-    ensureDefaults();
-    saveAllLocal();
-    rebuildIndexes();
+  Object.assign(p, patch);
+  ensureProductHistory(p);
+  if(differs){
+    pushPriceHistory(p, next);
+  }
 
-    // Push merged back to cloud
-    await cloudSet(dataPath, {
-      provider: STATE.provider,
-      clients: STATE.clients,
-      products: STATE.products,
-      invoices: STATE.invoices,
-      settings: STATE.settings,
-      updatedAt: Date.now()
+  saveLocal();
+  renderProdList();
+  renderProductsDatalist();
+  // refrescar factura para aplicar cambios en hints/precios futuros
+  const inv = getInvoiceById(currentInvoiceId);
+  if(inv) renderInvoice(inv);
+
+  setMini("#prodMsg", "✅ Guardado");
+}
+
+function deleteProdEditor(){
+  if(!currentProdId) return;
+  const p = DB.products.find(x => x.id === currentProdId);
+  if(!p) return;
+  if(!confirm(`¿Eliminar producto ${p.name}?`)) return;
+
+  // no romper facturas: dejamos nombre en líneas, y quitamos productId si coincide
+  DB.invoices.forEach(inv => {
+    inv.lines.forEach(ln => {
+      if(ln.productId === p.id) ln.productId = "";
     });
+  });
 
-    STATE.settings.cloud.lastSyncAt = Date.now();
-    saveAllLocal();
+  DB.products = DB.products.filter(x => x.id !== p.id);
+  currentProdId = DB.products[0]?.id || null;
 
-    // refresh UI
-    renderClientSelector();
-    renderInvoiceList();
-    renderClients();
-    renderProducts();
-    renderSettings();
-    const inv = getActiveInvoice();
-    if (inv) {
-      renderLines(inv);
-      recalcAndRenderTotals();
-      updatePDFButtons(inv);
-      renderQRForActive();
+  saveLocal();
+  renderProdList();
+  renderProductsDatalist();
+  setMini("#prodMsg", "✅ Eliminado");
+}
+
+function seedVocab(){
+  const vocab = DEFAULT_VOCAB_TEXT
+    .split("\n")
+    .map(s => norm(s))
+    .filter(Boolean);
+
+  let added = 0;
+  vocab.forEach(name => {
+    if(!DB.products.find(p => norm(p.name) === name)){
+      DB.products.push({
+        id: uid("prd"),
+        name,
+        unitDefault: "kg",
+        kgBox: "",
+        priceKg: "",
+        priceBox: "",
+        priceUnit: "",
+        cost: "",
+        origin: "",
+        history: []
+      });
+      added++;
     }
+  });
 
-    showToast("Sync OK");
-  } catch (e) {
-    console.warn("syncNow error", e);
-    // permission denied -> keep local
-    showToast("Sync falló (modo local)");
-  }
-}
-
-let _autoSyncTimer = null;
-function maybeAutoSync() {
-  if (!STATE.settings.cloud?.autoSync) return;
-  if (!cloudReadyAndAuthed()) return;
-  clearTimeout(_autoSyncTimer);
-  _autoSyncTimer = setTimeout(() => syncNow(), 1500);
+  saveLocal();
+  renderProdList();
+  renderProductsDatalist();
+  setMini("#prodMsg", `✅ Vocab cargado (+${added})`);
 }
 
 /* =========================
-   50) AUTH UI / ACTIONS
+   Contabilidad (PIN)
 ========================= */
-function updateAuthUI() {
-  const u = STATE.settings.cloud?.user;
-  if (EL.authMsg) {
-    EL.authMsg.textContent = u?.uid ? `Conectado: ${u.email || u.uid}` : "No conectado";
-  }
-  if (EL.btnLogout) EL.btnLogout.disabled = !u?.uid;
+function isAccUnlocked(){
+  return localStorage.getItem(LS_ACC_UNLOCK) === "1";
+}
+function setAccUnlocked(v){
+  localStorage.setItem(LS_ACC_UNLOCK, v ? "1" : "0");
+  accStatus.textContent = v ? "Desbloqueado" : "Bloqueado";
+  accStatus.style.borderColor = v ? "#0b0d10" : "#d7dbe2";
 }
 
-async function cloudLogin() {
-  if (!CLOUD.ready) {
-    await initCloudIfPossible();
-    if (!CLOUD.ready) return showToast("Cloud no disponible");
-  }
-  const email = normStr(EL.auth_email?.value);
-  const pass = normStr(EL.auth_pass?.value);
-  if (!email || !pass) return showToast("Email/Password");
-
-  try {
-    await CLOUD.mAuth.signInWithEmailAndPassword(CLOUD.auth, email, pass);
-    showToast("Login OK");
-  } catch (e) {
-    console.warn(e);
-    showToast("Login fallo");
-    safeSetText(EL.authMsg, `Error: ${e.code || e.message}`);
-  }
+function renderAccClientSelect(){
+  accClient.innerHTML = `<option value="">(Todos)</option>` + DB.clients
+    .slice()
+    .sort((a,b)=> norm(a.alias||a.name).localeCompare(norm(b.alias||b.name)))
+    .map(c => `<option value="${c.id}">${c.alias||c.name}</option>`)
+    .join("");
 }
 
-async function cloudSignup() {
-  if (!CLOUD.ready) {
-    await initCloudIfPossible();
-    if (!CLOUD.ready) return showToast("Cloud no disponible");
-  }
-  const email = normStr(EL.auth_email?.value);
-  const pass = normStr(EL.auth_pass?.value);
-  if (!email || !pass) return showToast("Email/Password");
-
-  try {
-    await CLOUD.mAuth.createUserWithEmailAndPassword(CLOUD.auth, email, pass);
-    showToast("Signup OK");
-  } catch (e) {
-    console.warn(e);
-    showToast("Signup fallo");
-    safeSetText(EL.authMsg, `Error: ${e.code || e.message}`);
-  }
+function clearAccUI(){
+  kSales.textContent = "0,00 €";
+  kIva.textContent = "0,00 €";
+  kN.textContent = "0";
+  kMargin.textContent = "0,00 €";
+  accTable.innerHTML = "";
 }
 
-async function cloudLogout() {
-  if (!CLOUD.ready) return;
-  try {
-    await CLOUD.mAuth.signOut(CLOUD.auth);
-    showToast("Logout OK");
-  } catch (e) {
-    console.warn(e);
-    showToast("Logout fallo");
+function runAccounting(){
+  if(!isAccUnlocked()){
+    clearAccUI();
+    return;
   }
+
+  const from = accFrom.value || "0000-01-01";
+  const to = accTo.value || "9999-12-31";
+  const cliId = accClient.value || "";
+  const tagQ = norm(accTag.value || "");
+
+  const invs = DB.invoices.filter(inv => {
+    const d = inv.dateISO || "";
+    if(d < from || d > to) return false;
+    if(cliId && inv.clientId !== cliId) return false;
+    if(tagQ && !norm(inv.tags||"").includes(tagQ)) return false;
+    return true;
+  });
+
+  let sales = 0;
+  let iva = 0;
+  let margin = 0;
+
+  accTable.innerHTML = "";
+  invs.forEach(inv => {
+    computeInvoiceTotals(inv);
+    sales += n2(inv.totals.total);
+    iva += n2(inv.totals.iva);
+
+    // margen estimado: (precio - coste)*neto en kg, y qty*(precio-coste) en unidad/caja si coste se usa
+    let invMargin = 0;
+    inv.lines.forEach(ln => {
+      const p = ln.productId ? getProductById(ln.productId) : getProductByName(ln.productName);
+      if(!p) return;
+      const cost = n2(p.cost);
+      const price = n2(ln.price);
+
+      if(ln.mode === "kg"){
+        invMargin += (price - cost) * n2(ln.net);
+      }else{
+        invMargin += (price - cost) * n2(ln.qty);
+      }
+    });
+    margin += invMargin;
+
+    const cli = DB.clients.find(c => c.id === inv.clientId) || {};
+    const row = document.createElement("div");
+    row.className = "trow";
+    row.innerHTML = `
+      <div>${inv.dateISO || ""}</div>
+      <div>${inv.number || ""}</div>
+      <div>${(cli.alias||cli.name||"—")}</div>
+      <div class="right">${moneyEUR(inv.totals.total)}</div>
+      <div>${inv.tags || ""}</div>
+    `;
+    accTable.appendChild(row);
+  });
+
+  kSales.textContent = moneyEUR(sales);
+  kIva.textContent = moneyEUR(iva);
+  kN.textContent = String(invs.length);
+  kMargin.textContent = moneyEUR(margin);
 }
 
-function saveCloudConfigFromUI() {
-  STATE.settings.cloud = STATE.settings.cloud || structuredClone(DEFAULT_SETTINGS.cloud);
-  STATE.settings.cloud.config = {
-    apiKey: normStr(EL.fb_apiKey?.value),
-    authDomain: normStr(EL.fb_authDomain?.value),
-    databaseURL: normStr(EL.fb_databaseURL?.value),
-    projectId: normStr(EL.fb_projectId?.value),
-    appId: normStr(EL.fb_appId?.value),
-    storageBucket: normStr(EL.fb_storageBucket?.value)
+/* =========================
+   Ajustes
+========================= */
+function renderSettings(){
+  setTax.value = String(DB.settings.taxRate ?? 0.04);
+  setQrTpl.value = DB.settings.qrTemplate || "";
+  setLogoSvg.value = DB.settings.logoSvg || "";
+
+  fbApiKey.value = DB.settings.firebase.apiKey || "";
+  fbAuthDomain.value = DB.settings.firebase.authDomain || "";
+  fbDbUrl.value = DB.settings.firebase.databaseURL || "";
+  fbProjectId.value = DB.settings.firebase.projectId || "";
+  fbAppId.value = DB.settings.firebase.appId || "";
+  fbBucket.value = DB.settings.firebase.storageBucket || "";
+}
+
+function saveSettings(){
+  DB.settings.taxRate = n2(setTax.value || 0.04) || 0.04;
+  DB.settings.qrTemplate = setQrTpl.value || DB.settings.qrTemplate;
+  DB.settings.logoSvg = setLogoSvg.value || DB.settings.logoSvg;
+  saveLocal();
+
+  const inv = getInvoiceById(currentInvoiceId);
+  if(inv) { inv.taxRate = DB.settings.taxRate; upsertInvoice(inv); renderInvoice(inv); }
+
+  setMini("#setMsg", "✅ Ajustes guardados");
+}
+
+function saveFirebaseSettings(){
+  DB.settings.firebase = {
+    apiKey: fbApiKey.value || "",
+    authDomain: fbAuthDomain.value || "",
+    databaseURL: fbDbUrl.value || "",
+    projectId: fbProjectId.value || "",
+    appId: fbAppId.value || "",
+    storageBucket: fbBucket.value || ""
   };
-  saveAllLocal();
-  showToast("Config Cloud guardada");
-  initCloudIfPossible();
-}
-
-async function testCloud() {
-  const ok = await initCloudIfPossible();
-  if (!ok) return showToast("Cloud no inicializa");
-  showToast("Cloud OK (config)");
-  safeSetText(EL.cloudHint, "Cloud inicializado. Haz login para sincronizar.");
+  saveLocal();
+  setMini("#fbMsg", "✅ Firebase guardado (Cloud en Parte 5/5)");
 }
 
 /* =========================
-   51) OPEN FIRST INVOICE OR EMPTY
+   Login modal (Cloud Parte 2/2)
 ========================= */
-function openFirstOrEmpty() {
-  renderInvoiceList();
-  renderClientSelector();
-  if (STATE.invoices.length > 0) {
-    openInvoice(STATE.invoices[0].id);
-  } else {
-    clearInvoiceEditor();
+function bindCloudUI(){
+  btnLogin.addEventListener("click", () => showModal(loginModal));
+  btnCloseLogin.addEventListener("click", () => hideModal(loginModal));
+
+  btnDoLogin.addEventListener("click", () => {
+    setMini("#loginMsg", "Cloud se completa en PARTE 5/5 (sync + merge + storage)");
+  });
+  btnDoSignup.addEventListener("click", () => {
+    setMini("#loginMsg", "Cloud se completa en PARTE 5/5 (signup/login)");
+  });
+  btnDoLogout.addEventListener("click", () => {
+    setMini("#loginMsg", "Cloud se completa en PARTE 5/5 (logout)");
+  });
+
+  btnSync.addEventListener("click", () => {
+    setMini("#dbState", "Sync nube en PARTE 5/5");
+  });
+}
+
+/* =========================
+   Prices page open (Ajustes)
+========================= */
+function bindPricesPageButton(){
+  btnOpenPricesPage.addEventListener("click", () => {
+    const url = buildPricesEditorUrl();
+    window.open(url, "_blank");
+  });
+}
+
+/* =========================
+   Bind other UI
+========================= */
+function bindClientsUI(){
+  cliSearch2.addEventListener("input", renderClientsList);
+
+  btnNewClient.addEventListener("click", () => {
+    const c = {
+      id: uid("cli"),
+      name: "NUEVO CLIENTE",
+      nif: "",
+      addr: "",
+      phone: "",
+      email: "",
+      alias: "",
+      notes: ""
+    };
+    DB.clients.unshift(c);
+    currentClientId = c.id;
+    saveLocal();
+    renderClientsList();
+    fillClientEditor(c);
+    fillClientSelect();
+    setMini("#clientsMsg", "✅ Cliente creado");
+  });
+
+  btnSaveClient.addEventListener("click", saveClientEditor);
+  btnDelClient.addEventListener("click", deleteClientEditor);
+}
+
+function bindProductsUI(){
+  prodSearch.addEventListener("input", renderProdList);
+  btnSeedVocab.addEventListener("click", seedVocab);
+
+  btnNewProd.addEventListener("click", () => {
+    const p = {
+      id: uid("prd"),
+      name: "NUEVO PRODUCTO",
+      unitDefault: "kg",
+      kgBox: "",
+      priceKg: "",
+      priceBox: "",
+      priceUnit: "",
+      cost: "",
+      origin: "",
+      history: []
+    };
+    DB.products.unshift(p);
+    currentProdId = p.id;
+    saveLocal();
+    renderProdList();
+    fillProdEditor(p);
+    renderProductsDatalist();
+    setMini("#prodMsg", "✅ Producto creado");
+  });
+
+  btnSaveProd.addEventListener("click", saveProdEditor);
+  btnDelProd.addEventListener("click", deleteProdEditor);
+}
+
+function bindAccountingUI(){
+  setAccUnlocked(isAccUnlocked());
+
+  btnUnlockAcc.addEventListener("click", () => {
+    pinInput.value = "";
+    pinMsg.textContent = "—";
+    showModal(pinModal);
+    setTimeout(() => pinInput.focus(), 50);
+  });
+  btnLockAcc.addEventListener("click", () => {
+    setAccUnlocked(false);
+    clearAccUI();
+  });
+
+  btnClosePin.addEventListener("click", () => hideModal(pinModal));
+  btnPinCancel.addEventListener("click", () => hideModal(pinModal));
+
+  btnPinOk.addEventListener("click", () => {
+    const pin = (pinInput.value || "").trim();
+    if(pin === (DB.settings.adminPin || "7392")){
+      setAccUnlocked(true);
+      hideModal(pinModal);
+      pinMsg.textContent = "✅ OK";
+    }else{
+      pinMsg.textContent = "❌ PIN incorrecto";
+    }
+  });
+
+  btnRunAcc.addEventListener("click", runAccounting);
+}
+
+function bindSettingsUI(){
+  btnSaveSettings.addEventListener("click", saveSettings);
+  btnSaveFirebase.addEventListener("click", saveFirebaseSettings);
+
+  btnResetLocal.addEventListener("click", () => {
+    if(!confirm("¿Reset local? (borra base local)")) return;
+    localStorage.removeItem(LS_KEY);
+    localStorage.removeItem(LS_ACC_UNLOCK);
+    loadLocal();
+    saveLocal();
+    renderAll();
+  });
+}
+
+function bindJsonUI(){
+  btnExportJson.addEventListener("click", exportJSON);
+  btnImportJson.addEventListener("click", () => fileImportJson.click());
+  fileImportJson.addEventListener("change", (e) => {
+    const f = e.target.files?.[0];
+    if(f) importJSONFile(f);
+    e.target.value = "";
+  });
+}
+
+/* =========================
+   URL Auto-import: prices param
+========================= */
+function autoImportPricesFromUrl(){
+  const u = new URL(location.href);
+  let token = u.searchParams.get("prices");
+  if(!token && u.hash && u.hash.includes("prices=")){
+    token = u.hash.split("prices=")[1] || "";
+  }
+  if(token){
+    const payload = lzDecompressParam(token);
+    if(payload){
+      const ok = importPricesFromPayload(payload);
+      setMini("#pricesMsg", ok ? "✅ Precios aplicados desde link" : "❌ Precios link inválido");
+      // limpiar hash para que no reimporte
+      try{
+        u.searchParams.delete("prices");
+        history.replaceState(null, "", u.pathname + u.search);
+      }catch(e){}
+    }
   }
 }
 
 /* =========================
-   52) INIT
+   Render all
 ========================= */
-async function init() {
-  bindElements();
-  loadAllLocal();
-  ensureDefaults();
+function renderAll(){
+  renderProductsDatalist();
 
-  await registerSW();
-  wireBaseEvents();
+  // clientes
+  currentClientId = DB.clients[0]?.id || null;
+  renderClientsList();
+  if(currentClientId){
+    fillClientEditor(DB.clients.find(c => c.id === currentClientId));
+  }
 
-  // First render
-  setView("invoicesView");
-  openFirstOrEmpty();
+  // productos
+  currentProdId = DB.products[0]?.id || null;
+  renderProdList();
+  if(currentProdId){
+    fillProdEditor(DB.products.find(p => p.id === currentProdId));
+  }
+
+  // contabilidad
+  renderAccClientSelect();
+  clearAccUI();
+
+  // ajustes
   renderSettings();
 
-  // Try cloud if config exists
-  await initCloudIfPossible();
+  // facturas
+  if(DB.invoices.length === 0){
+    const inv = newInvoiceSkeleton();
+    upsertInvoice(inv);
+  }
+  currentInvoiceId = DB.invoices[0]?.id || null;
+  renderInvoiceList();
+  if(currentInvoiceId){
+    renderInvoice(getInvoiceById(currentInvoiceId));
+  }
 
-  // If cloud is ready, keep pill updated
-  updateModePill();
-
-  // Minor: if active invoice exists, ensure QR
-  if (getActiveInvoice()) renderQRForActive();
-
-  showToast("Listo (offline)");
+  // Mode pill
+  elPillMode.textContent = "Modo local";
+  setMini("#dbState", `Local OK • ${DB.invoices.length} facturas • ${DB.clients.length} clientes • ${DB.products.length} productos`);
 }
 
-// GO
-init().catch(e => console.error("init crash", e));
+/* =========================
+   INIT
+========================= */
+(function init(){
+  loadLocal();
+  // si no hay productos, dejamos vacío; el usuario puede “Cargar vocabulario”
+  saveLocal();
+
+  bindInvoiceMeta();
+  bindClientsUI();
+  bindProductsUI();
+  bindAccountingUI();
+  bindSettingsUI();
+  bindCloudUI();
+  bindJsonUI();
+  bindPricesPageButton();
+
+  invSearch.addEventListener("input", renderInvoiceList);
+
+  autoImportPricesFromUrl();
+  renderAll();
+})();
