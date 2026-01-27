@@ -1,55 +1,91 @@
-// Nombre del caché (puedes cambiar la versión si haces cambios grandes)
-const CACHE_NAME = 'arslan-fruit-v1';
+/* =========================================================
+   ARSLAN • FACTURAS — KIWI EDITION
+   Service Worker (PWA Offline Cache)
+   ========================================================= */
 
-// Archivos que se guardarán para funcionar sin conexión
-// 👇 Usamos rutas relativas (sin "/" al inicio) para que GitHub Pages no falle
-const CACHE_ASSETS = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  './supabaseClient.js' // opcional, solo si existe en tu carpeta
+const SW_VERSION = "af-kiwi-v1";
+const CACHE_STATIC = `static-${SW_VERSION}`;
+const CACHE_RUNTIME = `runtime-${SW_VERSION}`;
+
+// Archivos locales a precache (ajusta si cambias nombres)
+const PRECACHE_URLS = [
+  "./",
+  "./index.html",
+  "./style.css",
+  "./app.js",
+  "./manifest.json"
 ];
 
-// Cuando se instala el Service Worker
-self.addEventListener('install', event => {
-  console.log('Service Worker instalado');
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => {
-        return cache.addAll(CACHE_ASSETS);
+// Util: responde con cache primero y luego red
+async function cacheFirst(req) {
+  const cache = await caches.open(CACHE_STATIC);
+  const cached = await cache.match(req, { ignoreSearch: true });
+  if (cached) return cached;
+  const res = await fetch(req);
+  cache.put(req, res.clone());
+  return res;
+}
+
+// Util: red primero y fallback cache (bueno para APIs/CDN)
+async function networkFirst(req) {
+  const cache = await caches.open(CACHE_RUNTIME);
+  try {
+    const res = await fetch(req);
+    // cachea incluso opaque (CDN) para offline
+    cache.put(req, res.clone());
+    return res;
+  } catch {
+    const cached = await cache.match(req, { ignoreSearch: true });
+    if (cached) return cached;
+    // fallback: si es navegación, intenta index
+    if (req.mode === "navigate") {
+      const staticCache = await caches.open(CACHE_STATIC);
+      const index = await staticCache.match("./index.html");
+      if (index) return index;
+    }
+    throw new Error("offline");
+  }
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_STATIC);
+    await cache.addAll(PRECACHE_URLS);
+    self.skipWaiting();
+  })());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys.map((k) => {
+        if (![CACHE_STATIC, CACHE_RUNTIME].includes(k)) return caches.delete(k);
       })
-      .catch(err => console.warn('⚠️ Error guardando en caché:', err))
-  );
+    );
+    self.clients.claim();
+  })());
 });
 
-// Cuando se activa el nuevo SW (limpia versiones viejas)
-self.addEventListener('activate', event => {
-  console.log('Service Worker activado');
-  event.waitUntil(
-    caches.keys().then(keys => {
-      return Promise.all(
-        keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
-      );
-    })
-  );
-});
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
 
-// Intercepta las peticiones y sirve desde caché si está disponible
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(response => {
-      // Si está en caché → úsalo
-      if (response) return response;
-      // Si no, pide a la red y guarda una copia
-      return fetch(event.request).then(fetchRes => {
-        return caches.open(CACHE_NAME).then(cache => {
-          cache.put(event.request, fetchRes.clone());
-          return fetchRes;
-        });
-      }).catch(err => {
-        console.warn('❌ Error en fetch:', err);
-      });
-    })
-  );
+  // Navegación: index.html como fallback
+  if (req.mode === "navigate") {
+    event.respondWith(networkFirst(req));
+    return;
+  }
+
+  // Solo GET
+  if (req.method !== "GET") return;
+
+  // Archivos locales -> cache-first
+  if (url.origin === self.location.origin) {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
+
+  // CDNs/externos -> network-first con cache runtime (offline friendly)
+  event.respondWith(networkFirst(req));
 });
