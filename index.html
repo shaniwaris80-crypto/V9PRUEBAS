@@ -3,143 +3,185 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>ARSLAN • FACTURAS — KIWI Edition</title>
+  <title>ARSLAN • FACTURAS — KIWI Edition (B/W PRO)</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="./style.css" />
-
   <!-- PDF -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
   <!-- QR -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+  <script defer src="app.js"></script>
 </head>
 
 <body class="bw-pro">
-  <div class="app">
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <div class="title">ARSLAN • FACTURAS</div>
+        <div class="subtitle">KIWI Edition · B/W · Offline + Cloud opcional</div>
+      </div>
+    </div>
 
-    <header class="topbar">
-      <div class="brand">
-        <span class="dot"></span>
-        <div class="brand-text">
-          <div class="title">ARSLAN • FACTURAS</div>
-          <div class="subtitle">KIWI Edition · B/W · Offline + Cloud (opcional)</div>
+    <div class="actions">
+      <div class="pill" id="pillMode">Modo local</div>
+
+      <button class="btn" id="btnSync" title="Sincronizar nube (si está configurada)">Sync</button>
+      <button class="btn" id="btnLogin" title="Login nube (opcional)">Cloud</button>
+
+      <button class="btn" id="btnExport">Export</button>
+      <button class="btn" id="btnImport">Import</button>
+      <input id="fileImport" type="file" accept="application/json" hidden />
+    </div>
+  </header>
+
+  <!-- TABS -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="factura">Factura</button>
+    <button class="tab" data-tab="facturas">Facturas</button>
+    <button class="tab" data-tab="clientes">Clientes</button>
+    <button class="tab" data-tab="productos">Productos</button>
+    <button class="tab" data-tab="contabilidad">Contabilidad 🔒</button>
+    <button class="tab" data-tab="ajustes">Ajustes</button>
+  </nav>
+
+  <main class="container">
+
+    <!-- =======================================================
+         TAB: FACTURA (pantalla principal)
+    ======================================================== -->
+    <section id="tab-factura" class="tabpage show">
+
+      <div class="invoice-head">
+        <!-- Proveedor -->
+        <div class="card">
+          <div class="card-title">Proveedor</div>
+          <div class="form">
+            <label>Nombre</label>
+            <input id="provName" type="text" placeholder="Proveedor" />
+
+            <label>NIF</label>
+            <input id="provNif" type="text" placeholder="NIF" />
+
+            <label>Dirección</label>
+            <input id="provAddr" type="text" placeholder="Dirección" />
+
+            <label>Teléfono</label>
+            <input id="provPhone" type="text" placeholder="Teléfono" />
+
+            <label>Email</label>
+            <input id="provEmail" type="text" placeholder="Email" />
+
+            <button class="btn primary" id="btnSaveProvider">Guardar proveedor</button>
+          </div>
+        </div>
+
+        <!-- QR -->
+        <div class="card qrCard">
+          <div class="card-title">QR AEAT</div>
+          <div class="qrWrap">
+            <div id="qrBox" class="qrBox"></div>
+          </div>
+          <div class="hint" id="qrHint">Se genera con NIF + Nº factura + fecha + total.</div>
+          <div class="row2">
+            <button class="btn" id="btnRegenQR">Regenerar QR</button>
+            <button class="btn" id="btnCopyQR">Copiar texto QR</button>
+          </div>
+        </div>
+
+        <!-- Cliente -->
+        <div class="card">
+          <div class="card-title">Cliente</div>
+          <div class="form">
+            <label>Seleccionar cliente</label>
+            <select id="invClient"></select>
+
+            <label>Nombre fiscal / comercial</label>
+            <input id="cliName" type="text" placeholder="Nombre cliente" />
+
+            <label>NIF/CIF</label>
+            <input id="cliNif" type="text" placeholder="NIF/CIF" />
+
+            <label>Dirección</label>
+            <input id="cliAddr" type="text" placeholder="Dirección" />
+
+            <label>Teléfono</label>
+            <input id="cliPhone" type="text" placeholder="Teléfono" />
+
+            <label>Email</label>
+            <input id="cliEmail" type="text" placeholder="Email" />
+
+            <div class="row2">
+              <button class="btn" id="btnNewClientInline">Nuevo cliente</button>
+              <button class="btn" id="btnSaveClientInline">Guardar cliente</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="top-actions">
-        <div class="pill" id="cloudPill">Modo local</div>
-        <button class="btn" id="btnLogin">Cloud</button>
-        <button class="btn" id="btnSync" title="Sincronizar (si Cloud está configurado)">Sync</button>
-        <button class="btn" id="btnExport">Export</button>
-        <button class="btn" id="btnImport">Import</button>
-        <input type="file" id="fileImport" accept="application/json" hidden />
-      </div>
-    </header>
+      <!-- Meta factura -->
+      <div class="card">
+        <div class="metaGrid">
+          <div>
+            <div class="label">Nº factura</div>
+            <input id="invNumber" type="text" />
+          </div>
 
-    <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="viewFactura">Factura</button>
-      <button class="tab" data-view="viewFacturas">Facturas</button>
-      <button class="tab" data-view="viewClientes">Clientes</button>
-      <button class="tab" data-view="viewProductos">Productos</button>
-      <button class="tab" data-view="viewContabilidad">Contabilidad 🔒</button>
-      <button class="tab" data-view="viewAjustes">Ajustes</button>
-    </nav>
+          <div>
+            <div class="label">Fecha</div>
+            <input id="invDate" type="date" />
+          </div>
 
-    <main class="main">
+          <div>
+            <div class="label">Tags (opcional)</div>
+            <input id="invTags" type="text" placeholder="Ej: Braseros Centro, Riviera..." />
+          </div>
 
-      <!-- =========================
-           FACTURA (PRO)
-      ========================== -->
-      <section id="viewFactura" class="view active">
-        <div class="view-head">
-          <h2>Factura</h2>
-          <div class="head-actions">
+          <div>
+            <div class="label">Notas (internas)</div>
+            <input id="invNotes" type="text" placeholder="Observaciones internas / pago / etc." />
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="left">
             <button class="btn" id="btnNewInvoice">+ Nueva</button>
-            <button class="btn" id="btnDuplicateInvoice">Duplicar</button>
-            <button class="btn danger" id="btnDeleteInvoice">Eliminar</button>
+            <button class="btn" id="btnDupInvoice">Duplicar</button>
+            <button class="btn danger" id="btnDelInvoice">Eliminar</button>
+          </div>
+
+          <div class="right">
+            <button class="btn primary" id="btnSaveInvoice">Guardar</button>
+            <button class="btn" id="btnPDF">Generar PDF</button>
+            <button class="btn" id="btnPDFCloud" title="Subir PDF a nube (si hay login)">PDF + Nube</button>
+            <button class="btn" id="btnWhats">WhatsApp</button>
           </div>
         </div>
+      </div>
 
-        <!-- 3 bloques: Proveedor / QR / Cliente -->
-        <div class="grid3 top-cards">
-          <div class="card">
-            <div class="card-title">Proveedor</div>
-            <div class="form-col">
-              <input id="provName" placeholder="Nombre" />
-              <input id="provNif" placeholder="NIF" />
-              <input id="provAddr" placeholder="Dirección" />
-              <input id="provPhone" placeholder="Teléfono" />
-              <input id="provEmail" placeholder="Email" />
-            </div>
+      <!-- Cuadro de cálculo -->
+      <div class="card">
+        <div class="card-title-row">
+          <div>
+            <div class="card-title">Cuadro de cálculo</div>
+            <div class="hint">GRID PRO · 1 fila por producto · sin scroll horizontal (PC)</div>
           </div>
-
-          <div class="card center-card">
-            <div class="card-title">QR AEAT</div>
-            <div class="qrWrap">
-              <div class="qrBox" id="qrBox"></div>
-            </div>
-            <div class="mini muted" id="qrMiniText">—</div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Cliente</div>
-            <div class="form-col">
-              <select id="invClient"></select>
-              <input id="cliName" placeholder="Nombre fiscal / cliente" />
-              <input id="cliNif" placeholder="NIF/CIF" />
-              <input id="cliAddr" placeholder="Dirección" />
-              <input id="cliPhone" placeholder="Teléfono" />
-              <input id="cliEmail" placeholder="Email" />
-            </div>
-          </div>
-        </div>
-
-        <!-- Datos factura -->
-        <div class="card">
           <div class="row2">
-            <div>
-              <label class="lbl">Nº factura</label>
-              <input id="invNumber" />
-            </div>
-            <div>
-              <label class="lbl">Fecha</label>
-              <input id="invDate" type="date" />
-            </div>
-          </div>
-
-          <div class="row2">
-            <div>
-              <label class="lbl">Tags (opcional)</label>
-              <input id="invTags" placeholder="Ej: Braseros Centro, Riviera, ..." />
-              <div class="mini muted">Se guardan para reportes y búsqueda.</div>
-            </div>
-            <div>
-              <label class="lbl">Notas</label>
-              <input id="invNotes" placeholder="Observaciones internas / pago / etc." />
-              <div class="mini muted">Solo interno (y opcional en PDF).</div>
-            </div>
+            <button class="btn primary" id="btnAddLine">+ Añadir línea</button>
+            <button class="btn" id="btnClearLines">Vaciar</button>
           </div>
         </div>
 
-        <!-- Cuadro de cálculo -->
-        <div class="card">
-          <div class="card-head">
-            <div>
-              <div class="card-title">Cuadro de cálculo</div>
-              <div class="mini muted">Autocomplete sin sustituir. Enter → siguiente. Flechas ↑↓ en sugerencias.</div>
-            </div>
-            <div class="card-actions">
-              <button class="btn" id="btnAddLine">+ Añadir línea</button>
-              <button class="btn" id="btnClearLines">Vaciar</button>
-            </div>
-          </div>
-
-          <div class="calc-head">
+        <div class="gridTable">
+          <div class="gridHead">
             <div>Producto</div>
             <div>Modo</div>
             <div>Cant.</div>
@@ -152,402 +194,421 @@
             <div></div>
           </div>
 
-          <div id="linesWrap" class="calc-body"></div>
-
-          <datalist id="dlProducts"></datalist>
-
-          <div class="divider"></div>
-
-          <div class="grid3 bottom-cards">
-            <!-- Totales -->
-            <div class="card soft">
-              <div class="card-title">Totales factura</div>
-
-              <div class="check-row">
-                <label class="chk">
-                  <input type="checkbox" id="invTransportOn" />
-                  <span>Añadir transporte <span class="muted" id="transportRateLabel">10%</span></span>
-                </label>
-
-                <label class="chk">
-                  <input type="checkbox" id="invTaxIncluded" />
-                  <span>IVA 4% incluido (sin desglose)</span>
-                </label>
-              </div>
-
-              <div class="totals">
-                <div class="trow"><span>Subtotal</span><strong id="tSubtotal">0,00 €</strong></div>
-                <div class="trow"><span>Transporte</span><strong id="tTransport">0,00 €</strong></div>
-                <div class="trow"><span>IVA (4%)</span><strong id="tIva">0,00 €</strong></div>
-                <div class="trow big"><span>TOTAL</span><strong id="tTotal">0,00 €</strong></div>
-              </div>
-
-              <div class="mini muted" id="taxNote">—</div>
-            </div>
-
-            <!-- Pagos -->
-            <div class="card soft">
-              <div class="card-title">Pagos</div>
-
-              <div class="form-col">
-                <div class="row2">
-                  <input id="payAmount" type="number" inputmode="decimal" placeholder="Importe parcial" />
-                  <button class="btn" id="btnAddPay">+ Añadir pago</button>
-                </div>
-
-                <div class="mini muted">Pagos parciales:</div>
-                <div id="payList" class="payList"></div>
-
-                <label class="lbl">Pagado manual</label>
-                <input id="payManual" type="number" inputmode="decimal" placeholder="0" />
-
-                <div class="row2">
-                  <div>
-                    <label class="lbl">Estado</label>
-                    <select id="invStatus">
-                      <option value="impagada">Impagada</option>
-                      <option value="parcial">Parcial</option>
-                      <option value="pagada">Pagada</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="lbl">Método</label>
-                    <select id="invMethod">
-                      <option value="efectivo">Efectivo</option>
-                      <option value="transferencia">Transferencia</option>
-                      <option value="tarjeta">Tarjeta</option>
-                      <option value="otros">Otros</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div class="trow big">
-                  <span>Pendiente</span>
-                  <strong id="tPending">0,00 €</strong>
-                </div>
-              </div>
-            </div>
-
-            <!-- Observaciones -->
-            <div class="card soft">
-              <div class="card-title">Observaciones</div>
-              <textarea id="invObs" rows="9" placeholder="Notas / condiciones / etc."></textarea>
-            </div>
-          </div>
-
-          <div class="footer-actions">
-            <button class="btn primary" id="btnSaveInvoice">💾 Guardar</button>
-            <button class="btn primary" id="btnPDF">🧾 Generar PDF</button>
-            <button class="btn" id="btnPDFCloud" title="Si Cloud está activo, sube el PDF y guarda el link">PDF + Cloud</button>
-            <button class="btn" id="btnWhats">WhatsApp</button>
-
-            <div class="right-mini">
-              <div class="mini muted" id="pdfState">—</div>
-              <button class="btn" id="btnOpenPdf" disabled>Abrir PDF</button>
-              <button class="btn" id="btnCopyPdf" disabled>Copiar link</button>
-            </div>
+          <div id="linesBody" class="gridBody">
+            <!-- filas dinámicas -->
           </div>
         </div>
-      </section>
 
-      <!-- =========================
-           FACTURAS (LISTADO)
-      ========================== -->
-      <section id="viewFacturas" class="view">
-        <div class="view-head">
-          <h2>Facturas</h2>
-          <div class="head-actions">
-            <input id="invSearch" class="search" placeholder="Buscar por nº / cliente / tag..." />
-            <button class="btn" id="btnInvClearSearch">Limpiar</button>
+        <div class="hint" id="priceHintGlobal">
+          Nota: “Últimos precios” solo se muestran en pantalla (no se imprimen en factura ni PDF).
+        </div>
+      </div>
+
+      <!-- Totales / Pagos / Observaciones -->
+      <div class="bottom3">
+        <div class="card">
+          <div class="card-title">Totales factura</div>
+
+          <label class="checkline">
+            <input id="chkTransport" type="checkbox" />
+            <span>Añadir transporte 10%</span>
+          </label>
+
+          <label class="checkline">
+            <input id="chkIvaIncluido" type="checkbox" />
+            <span>IVA 4% incluido (sin desglose)</span>
+          </label>
+
+          <div class="totals">
+            <div class="row"><span>Subtotal</span><strong id="tSubtotal">0,00 €</strong></div>
+            <div class="row"><span>Transporte</span><strong id="tTransport">0,00 €</strong></div>
+            <div class="row"><span>IVA (4%)</span><strong id="tIva">0,00 €</strong></div>
+            <div class="row big"><span>TOTAL</span><strong id="tTotal">0,00 €</strong></div>
+          </div>
+
+          <button class="btn" id="btnAddIvaToTotal">+ Añadir 4% IVA al total</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Pagos</div>
+
+          <label>Importe parcial</label>
+          <input id="payAmount" type="number" inputmode="decimal" placeholder="0.00" />
+          <button class="btn primary" id="btnAddPay">+ Añadir pago</button>
+
+          <div class="hint" id="payListHint">Sin pagos parciales.</div>
+          <div id="payList" class="payList"></div>
+
+          <label>Pagado manual (opcional)</label>
+          <input id="payManual" type="number" inputmode="decimal" placeholder="0.00" />
+
+          <label>Estado</label>
+          <select id="payStatus">
+            <option value="impagada">Impagada</option>
+            <option value="parcial">Parcial</option>
+            <option value="pagada">Pagada</option>
+          </select>
+
+          <label>Método</label>
+          <select id="payMethod">
+            <option value="efectivo">Efectivo</option>
+            <option value="transferencia">Transferencia</option>
+            <option value="tarjeta">Tarjeta</option>
+          </select>
+
+          <div class="row big">
+            <span>Pendiente:</span>
+            <strong id="tPending">0,00 €</strong>
           </div>
         </div>
 
         <div class="card">
-          <div id="invList" class="list"></div>
+          <div class="card-title">Observaciones</div>
+          <textarea id="invObs" rows="10" placeholder="Notas, condiciones, etc."></textarea>
         </div>
-      </section>
+      </div>
 
-      <!-- =========================
-           CLIENTES
-      ========================== -->
-      <section id="viewClientes" class="view">
-        <div class="view-head">
-          <h2>Clientes</h2>
-          <div class="head-actions">
-            <input id="cliSearch" class="search" placeholder="Buscar cliente..." />
-            <button class="btn" id="btnAddClient">+ Añadir</button>
+      <!-- Vista previa “Factura final” -->
+      <div class="card previewCard">
+        <div class="card-title-row">
+          <div>
+            <div class="card-title">Factura final (vista previa)</div>
+            <div class="hint">Lo que ves aquí se refleja en el PDF.</div>
           </div>
-        </div>
-
-        <div class="grid2">
-          <div class="card">
-            <div class="card-title">Listado</div>
-            <div id="cliList" class="list"></div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Editar cliente</div>
-            <div class="form-col">
-              <input id="editCliName" placeholder="Nombre fiscal / cliente" />
-              <input id="editCliNif" placeholder="NIF/CIF" />
-              <input id="editCliAddr" placeholder="Dirección" />
-              <input id="editCliPhone" placeholder="Teléfono" />
-              <input id="editCliEmail" placeholder="Email" />
-              <input id="editCliTags" placeholder="Tags (opcional)" />
-              <div class="row2">
-                <button class="btn primary" id="btnSaveClient">Guardar</button>
-                <button class="btn danger" id="btnDeleteClient">Eliminar</button>
-              </div>
-              <div class="mini muted" id="cliEditMsg">—</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- =========================
-           PRODUCTOS
-      ========================== -->
-      <section id="viewProductos" class="view">
-        <div class="view-head">
-          <h2>Productos</h2>
-          <div class="head-actions">
-            <input id="prdSearch" class="search" placeholder="Buscar producto..." />
-          </div>
-        </div>
-
-        <div class="grid2">
-          <div class="card">
-            <div class="card-title">Listado (vocabulario)</div>
-            <div id="prdList" class="list"></div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Editar producto</div>
-            <div class="form-col">
-              <input id="editPrdName" placeholder="Producto" disabled />
-              <div class="row2">
-                <div>
-                  <label class="lbl">Unidad por defecto</label>
-                  <select id="editPrdUnit">
-                    <option value="kg">kg</option>
-                    <option value="caja">caja</option>
-                    <option value="ud">ud</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="lbl">Kg por caja (si aplica)</label>
-                  <input id="editPrdKgBox" type="number" inputmode="decimal" placeholder="0" />
-                </div>
-              </div>
-
-              <div class="row2">
-                <div>
-                  <label class="lbl">Precio actual</label>
-                  <input id="editPrdPrice" type="number" inputmode="decimal" placeholder="0" />
-                </div>
-                <div>
-                  <label class="lbl">Coste (margen)</label>
-                  <input id="editPrdCost" type="number" inputmode="decimal" placeholder="0" />
-                </div>
-              </div>
-
-              <label class="lbl">Origen por defecto (opcional)</label>
-              <input id="editPrdOrigin" placeholder="Origen" />
-
-              <div class="row2">
-                <button class="btn primary" id="btnSaveProduct">Guardar</button>
-                <button class="btn" id="btnResetProduct">Reset</button>
-              </div>
-
-              <div class="mini muted">Historial (últimas 5):</div>
-              <div id="prdHistory" class="history"></div>
-
-              <div class="mini muted" id="prdEditMsg">—</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- =========================
-           CONTABILIDAD (PIN)
-      ========================== -->
-      <section id="viewContabilidad" class="view">
-        <div class="view-head">
-          <h2>Contabilidad</h2>
-          <div class="head-actions">
-            <button class="btn" id="btnUnlockAcc">Desbloquear</button>
-            <button class="btn" id="btnLockAcc">Bloquear</button>
-            <div class="pill" id="accStatus">Bloqueado</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="grid3">
-            <div>
-              <label class="lbl">Desde</label>
-              <input id="accFrom" type="date" />
-            </div>
-            <div>
-              <label class="lbl">Hasta</label>
-              <input id="accTo" type="date" />
-            </div>
-            <div>
-              <label class="lbl">Cliente</label>
-              <select id="accClient"></select>
-            </div>
-          </div>
-
           <div class="row2">
+            <button class="btn" id="btnOpenPDF">Abrir PDF</button>
+            <button class="btn" id="btnCopyPDF">Copiar link PDF (si nube)</button>
+            <div class="pill" id="pdfState">—</div>
+          </div>
+        </div>
+
+        <div id="invoicePreview" class="invoicePreview">
+          <!-- render dinámico -->
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================
+         TAB: FACTURAS (listado)
+    ======================================================== -->
+    <section id="tab-facturas" class="tabpage">
+      <div class="card">
+        <div class="card-title-row">
+          <div>
+            <div class="card-title">Listado de facturas</div>
+            <div class="hint">Click para abrir en “Factura”.</div>
+          </div>
+          <div class="row2">
+            <input id="invSearch" type="text" placeholder="Buscar por nº, cliente, tag..." />
+            <button class="btn" id="btnClearInvSearch">Limpiar</button>
+          </div>
+        </div>
+
+        <div id="invoiceList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- =======================================================
+         TAB: CLIENTES
+    ======================================================== -->
+    <section id="tab-clientes" class="tabpage">
+      <div class="twoCols">
+        <div class="card">
+          <div class="card-title-row">
             <div>
-              <label class="lbl">Tag (opcional)</label>
-              <input id="accTag" placeholder="Filtrar por tag..." />
+              <div class="card-title">Clientes</div>
+              <div class="hint">Alta / edición / búsqueda.</div>
             </div>
+            <div class="row2">
+              <input id="cliSearch" type="text" placeholder="Buscar cliente..." />
+              <button class="btn" id="btnNewClient">+ Nuevo</button>
+            </div>
+          </div>
+          <div id="clientList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Editar cliente</div>
+          <div class="form">
+            <input id="cliId" type="text" hidden />
+
+            <label>Nombre fiscal</label>
+            <input id="cliEditName" type="text" />
+
+            <label>Alias / Comercial (opcional)</label>
+            <input id="cliEditAlias" type="text" />
+
+            <label>NIF/CIF</label>
+            <input id="cliEditNif" type="text" />
+
+            <label>Dirección</label>
+            <input id="cliEditAddr" type="text" />
+
+            <label>Teléfono</label>
+            <input id="cliEditPhone" type="text" />
+
+            <label>Email</label>
+            <input id="cliEditEmail" type="text" />
+
+            <label>Notas</label>
+            <textarea id="cliEditNotes" rows="5"></textarea>
+
+            <div class="toolbar">
+              <div class="left">
+                <button class="btn danger" id="btnDelClient">Eliminar</button>
+              </div>
+              <div class="right">
+                <button class="btn primary" id="btnSaveClient">Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================
+         TAB: PRODUCTOS
+    ======================================================== -->
+    <section id="tab-productos" class="tabpage">
+      <div class="twoCols">
+        <div class="card">
+          <div class="card-title-row">
+            <div>
+              <div class="card-title">Productos</div>
+              <div class="hint">Precios + kg/caja + historial (últimas 5).</div>
+            </div>
+            <div class="row2">
+              <input id="prodSearch" type="text" placeholder="Buscar producto..." />
+              <button class="btn" id="btnNewProd">+ Nuevo</button>
+            </div>
+          </div>
+          <div id="productList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Editar producto</div>
+          <div class="form">
+            <input id="prodKey" type="text" hidden />
+
+            <label>Nombre</label>
+            <input id="prodName" type="text" />
+
+            <label>Modo por defecto</label>
+            <select id="prodMode">
+              <option value="kg">kg</option>
+              <option value="caja">caja</option>
+              <option value="ud">ud</option>
+            </select>
+
+            <label>Kg por caja (si aplica)</label>
+            <input id="prodKgBox" type="number" inputmode="decimal" placeholder="Ej: 22" />
+
+            <label>Precio €/kg</label>
+            <input id="prodPriceKg" type="number" inputmode="decimal" placeholder="0.00" />
+
+            <label>Precio €/caja</label>
+            <input id="prodPriceBox" type="number" inputmode="decimal" placeholder="0.00" />
+
+            <label>Precio €/ud</label>
+            <input id="prodPriceUd" type="number" inputmode="decimal" placeholder="0.00" />
+
+            <label>Coste (opcional, para margen) €/kg o €/ud</label>
+            <input id="prodCost" type="number" inputmode="decimal" placeholder="0.00" />
+
+            <label>Origen por defecto (opcional)</label>
+            <input id="prodOrigin" type="text" placeholder="Ej: España, Marruecos..." />
+
+            <div class="historyBox">
+              <div class="card-title mini">Historial (últimas 5)</div>
+              <div id="prodHistory" class="history"></div>
+              <div class="hint">El historial solo se muestra en pantalla (no se imprime).</div>
+            </div>
+
+            <div class="toolbar">
+              <div class="left">
+                <button class="btn danger" id="btnDelProd">Eliminar</button>
+              </div>
+              <div class="right">
+                <button class="btn primary" id="btnSaveProd">Guardar</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================
+         TAB: CONTABILIDAD (PIN)
+    ======================================================== -->
+    <section id="tab-contabilidad" class="tabpage">
+      <div class="card">
+        <div class="card-title-row">
+          <div>
+            <div class="card-title">Contabilidad</div>
+            <div class="hint">Bloqueada por PIN. Facturas siempre libre.</div>
+          </div>
+          <div class="row2">
+            <div class="pill" id="accStatus">Bloqueado</div>
+            <button class="btn" id="btnUnlock">Desbloquear</button>
+            <button class="btn" id="btnLock">Bloquear</button>
+          </div>
+        </div>
+
+        <div class="metaGrid">
+          <div>
+            <div class="label">Desde</div>
+            <input id="accFrom" type="date" />
+          </div>
+          <div>
+            <div class="label">Hasta</div>
+            <input id="accTo" type="date" />
+          </div>
+          <div>
+            <div class="label">Cliente</div>
+            <select id="accClient"></select>
+          </div>
+          <div>
+            <div class="label">Tag</div>
+            <input id="accTag" type="text" placeholder="Ej: Riviera" />
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="left"></div>
+          <div class="right">
+            <button class="btn primary" id="btnAccRun">Calcular</button>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi"><div class="k">Ventas</div><div class="v" id="accSales">0,00 €</div></div>
+          <div class="kpi"><div class="k">IVA</div><div class="v" id="accIva">0,00 €</div></div>
+          <div class="kpi"><div class="k">Facturas</div><div class="v" id="accN">0</div></div>
+          <div class="kpi"><div class="k">Margen</div><div class="v" id="accMargin">0,00 €</div></div>
+        </div>
+
+        <div class="tableWrap">
+          <table class="table" id="accTable">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Nº</th>
+                <th>Cliente</th>
+                <th>Total</th>
+                <th>Tags</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="5" class="muted">Contabilidad bloqueada. Pulsa “Desbloquear”.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================
+         TAB: AJUSTES
+    ======================================================== -->
+    <section id="tab-ajustes" class="tabpage">
+      <div class="twoCols">
+        <div class="card">
+          <div class="card-title">Ajustes generales</div>
+
+          <label>PIN contabilidad (admin)</label>
+          <input id="setPin" type="password" placeholder="Ej: 7392" />
+
+          <label>IVA (%)</label>
+          <input id="setTax" type="number" inputmode="decimal" placeholder="4" />
+
+          <label>Transporte (%)</label>
+          <input id="setTransport" type="number" inputmode="decimal" placeholder="10" />
+
+          <label>Plantilla QR AEAT</label>
+          <input id="setQrBase" type="text" />
+
+          <div class="toolbar">
+            <div class="left"></div>
             <div class="right">
-              <button class="btn primary" id="btnRunAcc">Calcular</button>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="grid4 kpis">
-            <div class="kpi"><div class="mini muted">Ventas</div><div class="kpiVal" id="kSales">0,00 €</div></div>
-            <div class="kpi"><div class="mini muted">IVA</div><div class="kpiVal" id="kIva">0,00 €</div></div>
-            <div class="kpi"><div class="mini muted">Facturas</div><div class="kpiVal" id="kCount">0</div></div>
-            <div class="kpi"><div class="mini muted">Margen est.</div><div class="kpiVal" id="kMargin">0,00 €</div></div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="tableWrap">
-            <table class="table" id="accTable">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Nº</th>
-                  <th>Cliente</th>
-                  <th>Total</th>
-                  <th>Tags</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="5" class="muted">Contabilidad bloqueada. Pulsa “Desbloquear”.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- =========================
-           AJUSTES
-      ========================== -->
-      <section id="viewAjustes" class="view">
-        <div class="view-head">
-          <h2>Ajustes</h2>
-        </div>
-
-        <div class="grid2">
-          <div class="card">
-            <div class="card-title">Impuestos y transporte</div>
-            <div class="form-col">
-              <div class="row2">
-                <div>
-                  <label class="lbl">IVA (por defecto)</label>
-                  <input id="setTaxRate" type="number" inputmode="decimal" placeholder="0.04" />
-                </div>
-                <div>
-                  <label class="lbl">Transporte %</label>
-                  <input id="setTransportRate" type="number" inputmode="decimal" placeholder="0.10" />
-                </div>
-              </div>
-
-              <label class="lbl">QR AEAT (plantilla)</label>
-              <input id="setQrTemplate" placeholder="AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}" />
-
-              <label class="lbl">PIN (Contabilidad)</label>
-              <input id="setPin" placeholder="7392" />
-
-              <div class="row2">
-                <button class="btn primary" id="btnSaveSettings">Guardar ajustes</button>
-                <button class="btn" id="btnResetSettings">Reset</button>
-              </div>
-
-              <div class="mini muted" id="setMsg">—</div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Cloud (Firebase) — opcional</div>
-            <div class="mini muted">
-              Si NO lo configuras, todo sigue en modo local sin errores.
-            </div>
-
-            <div class="form-col">
-              <input id="fbApiKey" placeholder="apiKey" />
-              <input id="fbAuthDomain" placeholder="authDomain" />
-              <input id="fbDbUrl" placeholder="databaseURL" />
-              <input id="fbProjectId" placeholder="projectId" />
-              <input id="fbAppId" placeholder="appId" />
-              <input id="fbStorageBucket" placeholder="storageBucket" />
-
-              <div class="row2">
-                <button class="btn primary" id="btnSaveFirebase">Guardar Firebase</button>
-                <button class="btn" id="btnDisableFirebase">Desactivar Cloud</button>
-              </div>
-
-              <div class="mini muted" id="fbMsg">—</div>
+              <button class="btn primary" id="btnSaveSettings">Guardar ajustes</button>
             </div>
           </div>
         </div>
-      </section>
 
-    </main>
+        <div class="card">
+          <div class="card-title">Cloud (Firebase) — opcional</div>
+          <div class="hint">Si no lo rellenas, todo funciona en modo local. 0 errores.</div>
 
-    <!-- =========================
-         MODAL CLOUD LOGIN
-    ========================== -->
-    <div class="modal" id="loginModal" style="display:none;">
-      <div class="modal-card">
-        <div class="modal-head">
-          <div class="modal-title">Cloud</div>
+          <label>apiKey</label>
+          <input id="fbApiKey" type="text" />
+
+          <label>authDomain</label>
+          <input id="fbAuthDomain" type="text" />
+
+          <label>databaseURL</label>
+          <input id="fbDbURL" type="text" />
+
+          <label>projectId</label>
+          <input id="fbProjectId" type="text" />
+
+          <label>appId</label>
+          <input id="fbAppId" type="text" />
+
+          <label>storageBucket</label>
+          <input id="fbBucket" type="text" />
+
+          <div class="toolbar">
+            <div class="left"></div>
+            <div class="right">
+              <button class="btn primary" id="btnSaveFirebase">Guardar Firebase</button>
+            </div>
+          </div>
+
+          <div class="hint" id="cloudMsg">—</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- LOGIN MODAL -->
+  <div class="modal" id="loginModal" style="display:none;">
+    <div class="modalCard">
+      <div class="modalTitle">Cloud Login (opcional)</div>
+
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="email" />
+
+      <label>Password</label>
+      <input id="loginPass" type="password" placeholder="password" />
+
+      <div class="toolbar">
+        <div class="left">
           <button class="btn" id="btnLoginClose">Cerrar</button>
         </div>
-
-        <div class="form-col">
-          <input id="loginEmail" placeholder="Email" />
-          <input id="loginPass" type="password" placeholder="Password" />
-          <div class="row2">
-            <button class="btn primary" id="btnDoLogin">Entrar</button>
-            <button class="btn" id="btnDoSignup">Crear cuenta</button>
-          </div>
-          <button class="btn" id="btnLogout" style="display:none;">Cerrar sesión</button>
-          <div class="mini muted" id="loginMsg">—</div>
+        <div class="right">
+          <button class="btn" id="btnSignupDo">Crear cuenta</button>
+          <button class="btn primary" id="btnLoginDo">Entrar</button>
+          <button class="btn" id="btnLogout">Salir</button>
         </div>
       </div>
+
+      <div class="hint" id="loginMsg">—</div>
     </div>
-
-    <!-- =========================
-         MODAL PIN
-    ========================== -->
-    <div class="modal" id="pinModal" style="display:none;">
-      <div class="modal-card">
-        <div class="modal-head">
-          <div class="modal-title">PIN Contabilidad</div>
-          <button class="btn" id="btnPinClose">Cerrar</button>
-        </div>
-
-        <div class="form-col">
-          <input id="pinInput" type="password" placeholder="PIN" />
-          <div class="row2">
-            <button class="btn primary" id="btnPinOk">OK</button>
-            <button class="btn" id="btnPinCancel">Cancelar</button>
-          </div>
-          <div class="mini muted" id="pinMsg">—</div>
-        </div>
-      </div>
-    </div>
-
   </div>
 
-  <script type="module" src="./app.js"></script>
+  <!-- PIN MODAL -->
+  <div class="modal" id="pinModal" style="display:none;">
+    <div class="modalCard">
+      <div class="modalTitle">PIN Contabilidad</div>
+      <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN" />
+      <div class="toolbar">
+        <div class="left"><button class="btn" id="btnPinCancel">Cancelar</button></div>
+        <div class="right"><button class="btn primary" id="btnPinOk">OK</button></div>
+      </div>
+      <div class="hint" id="pinMsg">—</div>
+    </div>
+  </div>
+
 </body>
 </html>
