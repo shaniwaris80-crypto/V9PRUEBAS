@@ -2,707 +2,636 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
   <title>ARSLAN • FACTURAS — KIWI EDITION</title>
 
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json" />
+
+  <!-- Font (simple, pro) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="./style.css" />
-
-  <!-- Optional libs (si no cargan, el sistema sigue funcionando en modo local sin PDF/QR) -->
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-
-  <script type="module" src="./app.js"></script>
 </head>
 
 <body>
-  <div class="app">
-
-    <!-- TOPBAR -->
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand__mark">KIWI</div>
-        <div class="brand__text">
-          <div class="brand__title">ARSLAN • FACTURAS</div>
-          <div class="brand__sub">KIWI EDITION — B/W • Offline-first • Cloud opcional</div>
-        </div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div class="brand-txt">
+        <div class="brand-title">ARSLAN • FACTURAS</div>
+        <div class="brand-sub">KIWI EDITION — B/W • Offline-first • Cloud opcional</div>
       </div>
+    </div>
 
-      <div class="topbar__right">
-        <div class="chip" id="chipMode">Modo local</div>
-        <button class="btn btn--ghost" id="btnSyncNow" title="Sync ahora (si hay login)">Sync ahora</button>
-        <button class="btn" id="btnNewInvoice">+ Nueva factura</button>
-      </div>
-    </header>
+    <div class="top-actions">
+      <div class="pill status" id="modePill">Modo local</div>
+      <button class="btn btn-ghost" id="btnSync" title="Sync ahora (si Cloud activo)">Sync ahora</button>
+      <button class="btn btn-ghost" id="btnAuth" title="Login/Logout">Cloud</button>
+    </div>
+  </header>
 
-    <!-- NAV -->
-    <nav class="tabs" role="tablist" aria-label="Secciones">
-      <button class="tab is-active" data-tab="invoices">Facturas</button>
-      <button class="tab" data-tab="clients">Clientes</button>
-      <button class="tab" data-tab="products">Productos</button>
-      <button class="tab" data-tab="accounting">Contabilidad</button>
-      <button class="tab" data-tab="settings">Ajustes</button>
-    </nav>
+  <nav class="tabs" aria-label="Secciones">
+    <button class="tab active" data-view="invoicesView">Facturas</button>
+    <button class="tab" data-view="clientsView">Clientes</button>
+    <button class="tab" data-view="productsView">Productos</button>
+    <button class="tab" data-view="accountingView">Contabilidad</button>
+    <button class="tab" data-view="settingsView">Ajustes</button>
+  </nav>
 
-    <!-- CONTENT -->
-    <main class="content">
-
-      <!-- ROUTE: PRICE MODE (link externo dentro del mismo archivo) -->
-      <section class="page hidden" id="pagePrices">
-        <div class="page__head">
-          <div>
-            <h2>Precios externos</h2>
-            <p class="muted">Cuadrícula rápida para móvil. Guarda y exporta precios para importar en la app principal.</p>
-          </div>
-          <div class="page__headRight">
-            <button class="btn btn--ghost" id="btnPricesBack">← Volver</button>
-            <button class="btn" id="btnPricesExport">Exportar precios (link/JSON)</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card__row">
-            <div class="field">
-              <label>Buscar producto</label>
-              <input id="pricesSearch" type="text" placeholder="Escribe para filtrar..." />
-            </div>
-            <div class="field">
-              <label>Modo</label>
-              <select id="pricesMode">
-                <option value="all">Todos</option>
-                <option value="kg">Kg</option>
-                <option value="caja">Caja</option>
-                <option value="ud">Unidad</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Atajo</label>
-              <div class="hint">Enter = siguiente precio</div>
-            </div>
-          </div>
-
-          <div class="tableWrap">
-            <table class="table" id="pricesTable">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th class="w120">Unidad</th>
-                  <th class="w140">Kg/Caja</th>
-                  <th class="w160">Precio</th>
-                  <th class="w120">Coste</th>
-                  <th class="w160">Origen</th>
-                </tr>
-              </thead>
-              <tbody id="pricesTbody"></tbody>
-            </table>
-          </div>
-
-          <div class="footNote">
-            <span class="muted">Nota: Esto actualiza el catálogo de productos (precio/coste/origen). No toca facturas ya cerradas.</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- INVOICES -->
-      <section class="page" id="pageInvoices">
-        <div class="split">
-
-          <!-- LIST -->
-          <aside class="panel panel--list">
-            <div class="panel__head">
+  <main class="app">
+    <!-- =========================
+         FACTURAS
+    ========================== -->
+    <section class="view active" id="invoicesView">
+      <div class="split">
+        <!-- LISTA -->
+        <aside class="panel listPanel">
+          <div class="panelHead">
+            <div class="hgroup">
               <h2>Facturas</h2>
-              <div class="panel__actions">
-                <button class="btn btn--ghost" id="btnExportWhatsAppAll" title="Exportar listado filtrado (texto)">WhatsApp</button>
-                <button class="btn btn--ghost" id="btnBackup">Export JSON</button>
-                <label class="btn btn--ghost fileBtn">
-                  Import JSON
-                  <input type="file" id="fileImport" accept="application/json" />
-                </label>
+              <p class="muted">Buscar, crear, duplicar, PDF, WhatsApp.</p>
+            </div>
+            <button class="btn" id="btnNewInvoice">+ Nueva</button>
+          </div>
+
+          <div class="row gap">
+            <input id="invoiceSearch" class="input" placeholder="Buscar: Nº / cliente / tag" autocomplete="off" />
+            <button class="btn btn-ghost" id="btnExportJSON" title="Exportar backup JSON">Export</button>
+            <button class="btn btn-ghost" id="btnImportJSON" title="Importar JSON">Import</button>
+            <input type="file" id="fileImport" accept="application/json" hidden />
+          </div>
+
+          <div class="listMeta" id="invoiceListMeta">0 facturas</div>
+
+          <div class="list" id="invoiceList" aria-label="Listado de facturas">
+            <!-- items render -->
+          </div>
+
+          <div class="footnote">
+            <span class="kbd">Ctrl+S</span> Guardar · <span class="kbd">Ctrl+P</span> PDF · <span class="kbd">/</span> Buscar
+          </div>
+        </aside>
+
+        <!-- EDITOR -->
+        <section class="panel editorPanel">
+          <div class="panelHead sticky">
+            <div class="hgroup">
+              <h2 id="editorTitle">Editor de factura</h2>
+              <p class="muted" id="editorSubtitle">Selecciona una factura o crea una nueva.</p>
+            </div>
+
+            <div class="row actionsRight">
+              <button class="btn btn-ghost" id="btnDuplicate">Duplicar</button>
+              <button class="btn btn-ghost" id="btnDelete">Eliminar</button>
+              <button class="btn" id="btnSave">Guardar</button>
+            </div>
+          </div>
+
+          <!-- CABECERA PRO -->
+          <div class="invoiceHeader">
+            <div class="card">
+              <div class="cardTitle">Proveedor</div>
+              <div class="grid2">
+                <input class="input" id="prov_name" placeholder="Nombre" />
+                <input class="input" id="prov_nif" placeholder="NIF" />
+                <input class="input" id="prov_addr" placeholder="Dirección" />
+                <input class="input" id="prov_tel" placeholder="Teléfono" />
+                <input class="input" id="prov_email" placeholder="Email" />
+                <div class="hint">Editable. Se guarda en Ajustes.</div>
               </div>
             </div>
 
-            <div class="panel__filters">
-              <input id="invSearch" type="text" placeholder="Buscar: número / cliente / tag..." />
-              <select id="invStatus">
-                <option value="all">Todos</option>
-                <option value="unpaid">Impagada</option>
-                <option value="partial">Parcial</option>
-                <option value="paid">Pagada</option>
-                <option value="draft">Borrador</option>
-                <option value="closed">Cerrada</option>
-                <option value="void">Anulada</option>
-              </select>
-            </div>
-
-            <div class="list" id="invList"></div>
-          </aside>
-
-          <!-- EDITOR -->
-          <section class="panel panel--editor">
-            <div class="editorHead">
-              <div class="editorHead__left">
-                <h2 id="editorTitle">Editor</h2>
-                <div class="muted" id="editorSub">Selecciona una factura o crea una nueva.</div>
-              </div>
-              <div class="editorHead__right">
-                <button class="btn btn--ghost" id="btnDuplicate">Duplicar</button>
-                <button class="btn btn--ghost" id="btnDelete">Eliminar</button>
-                <button class="btn" id="btnSaveInvoice">Guardar</button>
+            <div class="card centerCard">
+              <div class="cardTitle">QR AEAT</div>
+              <div class="qrBox">
+                <div id="qrMount" class="qrMount" aria-label="QR factura"></div>
+                <div class="hint" id="qrHint">Si falla la librería QR, la factura sigue funcionando.</div>
               </div>
             </div>
 
             <div class="card">
-              <div class="invoiceHeader">
-                <div class="box">
-                  <div class="box__title">Proveedor</div>
-                  <div class="grid2">
-                    <div class="field">
-                      <label>Nombre</label>
-                      <input id="provName" type="text" />
-                    </div>
-                    <div class="field">
-                      <label>NIF</label>
-                      <input id="provNif" type="text" />
-                    </div>
-                    <div class="field">
-                      <label>Dirección</label>
-                      <input id="provAddr" type="text" />
-                    </div>
-                    <div class="field">
-                      <label>Teléfono</label>
-                      <input id="provPhone" type="text" />
-                    </div>
-                    <div class="field span2">
-                      <label>Email</label>
-                      <input id="provEmail" type="email" />
-                    </div>
-                  </div>
-                </div>
+              <div class="cardTitle">Cliente</div>
+              <div class="grid2">
+                <select class="input" id="client_select">
+                  <option value="">— Seleccionar cliente —</option>
+                </select>
+                <button class="btn btn-ghost" id="btnOpenClient">Abrir</button>
 
-                <div class="qrBox">
-                  <div class="box__title center">QR AEAT</div>
-                  <div id="qrWrap" class="qrWrap">
-                    <div class="qrFallback muted">QR no disponible (librería no cargada)</div>
-                  </div>
-                  <div class="mini muted" id="qrTextMini"></div>
-                </div>
+                <input class="input" id="cli_name" placeholder="Nombre fiscal / Alias" />
+                <input class="input" id="cli_nif" placeholder="NIF/CIF" />
+                <input class="input" id="cli_addr" placeholder="Dirección" />
+                <input class="input" id="cli_tel" placeholder="Teléfono" />
+                <input class="input" id="cli_email" placeholder="Email" />
+                <div class="hint">Se rellena al elegir cliente. Puedes editar en la factura.</div>
+              </div>
+            </div>
+          </div>
 
-                <div class="box">
-                  <div class="box__title">Cliente</div>
+          <!-- META -->
+          <div class="metaRow">
+            <div class="metaCard">
+              <label class="lbl">Nº factura</label>
+              <input class="input mono" id="inv_number" placeholder="FA-YYYYMMDDHHMM" readonly />
+              <div class="hint">Auto. Puedes duplicar y se regenera.</div>
+            </div>
+            <div class="metaCard">
+              <label class="lbl">Fecha</label>
+              <input type="date" class="input" id="inv_date" />
+              <div class="hint">Afecta listados y contabilidad.</div>
+            </div>
+            <div class="metaCard">
+              <label class="lbl">Tags</label>
+              <input class="input" id="inv_tags" placeholder="Ej: RIVIERA, CENTRO, ENERO" />
+              <div class="hint">Separados por coma.</div>
+            </div>
+            <div class="metaCard">
+              <label class="lbl">Notas</label>
+              <input class="input" id="inv_notes" placeholder="Notas internas / pie opcional" />
+              <div class="hint">Se guarda en BD.</div>
+            </div>
+          </div>
 
-                  <div class="grid2">
-                    <div class="field span2">
-                      <label>Seleccionar</label>
-                      <select id="invClient"></select>
-                    </div>
+          <!-- GRID PRO -->
+          <div class="gridWrap">
+            <div class="gridTop">
+              <div class="gridTitle">Cuadro de cálculo</div>
+              <div class="row gap">
+                <button class="btn btn-ghost" id="btnAddLine">+ Añadir línea</button>
+                <button class="btn btn-ghost" id="btnClearLines">Vaciar</button>
+                <button class="btn btn-ghost" id="btnWhats">WhatsApp TXT</button>
+                <button class="btn" id="btnPDF">PDF</button>
+              </div>
+            </div>
 
-                    <div class="field">
-                      <label>Nombre fiscal</label>
-                      <input id="cliFiscal" type="text" readonly />
-                    </div>
-                    <div class="field">
-                      <label>Alias</label>
-                      <input id="cliAlias" type="text" readonly />
-                    </div>
-
-                    <div class="field">
-                      <label>NIF/CIF</label>
-                      <input id="cliNif" type="text" readonly />
-                    </div>
-                    <div class="field">
-                      <label>Teléfono</label>
-                      <input id="cliPhone" type="text" readonly />
-                    </div>
-
-                    <div class="field span2">
-                      <label>Dirección</label>
-                      <input id="cliAddr" type="text" readonly />
-                    </div>
-
-                    <div class="field span2">
-                      <label>Email</label>
-                      <input id="cliEmail" type="email" readonly />
-                    </div>
-                  </div>
-
-                </div>
+            <div class="table" role="table" aria-label="Líneas de factura">
+              <div class="tr th" role="row">
+                <div class="td col-prod">Producto</div>
+                <div class="td col-mode">Modo</div>
+                <div class="td col-qty">Cant.</div>
+                <div class="td col-bruto">Kg/Bruto</div>
+                <div class="td col-tara">Tara</div>
+                <div class="td col-neto">Neto</div>
+                <div class="td col-price">Precio</div>
+                <div class="td col-origin">Origen</div>
+                <div class="td col-amt">Importe</div>
+                <div class="td col-x">X</div>
               </div>
 
-              <div class="invoiceMeta">
-                <div class="field">
-                  <label>Nº factura</label>
-                  <input id="invNumber" type="text" readonly />
+              <div id="linesBody" class="tbody" role="rowgroup">
+                <!-- rows render -->
+              </div>
+            </div>
+
+            <template id="rowTpl">
+              <div class="tr" role="row">
+                <div class="td col-prod">
+                  <input class="input prodInput" placeholder="Producto…" autocomplete="off" />
+                  <div class="hint tiny hintPrice"></div>
                 </div>
-                <div class="field">
-                  <label>Fecha</label>
-                  <input id="invDate" type="date" />
-                </div>
-                <div class="field">
-                  <label>Tags</label>
-                  <input id="invTags" type="text" placeholder="ej: Centro, Restaurante, ..." />
-                </div>
-                <div class="field">
-                  <label>Estado</label>
-                  <select id="invLifeState">
-                    <option value="draft">Borrador</option>
-                    <option value="closed">Cerrada</option>
-                    <option value="void">Anulada</option>
+                <div class="td col-mode">
+                  <select class="input modeSel">
+                    <option value="kg">kg</option>
+                    <option value="caja">caja</option>
+                    <option value="ud">unidad</option>
                   </select>
                 </div>
-              </div>
-
-              <div class="invoiceMeta2">
-                <div class="field">
-                  <label>Método</label>
-                  <select id="invMethod">
-                    <option value="Efectivo">Efectivo</option>
-                    <option value="Transferencia">Transferencia</option>
-                    <option value="Tarjeta">Tarjeta</option>
-                  </select>
+                <div class="td col-qty">
+                  <input class="input num qty" inputmode="decimal" placeholder="0" />
                 </div>
-
-                <div class="field">
-                  <label>IVA</label>
-                  <select id="invVatMode">
-                    <option value="split">Desglosado</option>
-                    <option value="included">Incluido en precios</option>
-                  </select>
+                <div class="td col-bruto">
+                  <input class="input num bruto" inputmode="decimal" placeholder="0" />
                 </div>
-
-                <div class="field">
-                  <label>IVA %</label>
-                  <input id="invVatRate" type="number" step="0.01" min="0" />
+                <div class="td col-tara">
+                  <input class="input num tara" inputmode="decimal" placeholder="0" />
                 </div>
-
-                <div class="field">
-                  <label>Transporte %</label>
-                  <input id="invTransportPct" type="number" step="0.01" min="0" />
+                <div class="td col-neto">
+                  <input class="input num neto" inputmode="decimal" placeholder="0" readonly />
                 </div>
-
-                <div class="field">
-                  <label>PDF</label>
-                  <div class="rowBtns">
-                    <button class="btn btn--ghost" id="btnPdf">Generar</button>
-                    <button class="btn btn--ghost" id="btnOpenPdf">Abrir</button>
-                    <button class="btn btn--ghost" id="btnCopyPdf">Copiar link</button>
-                  </div>
+                <div class="td col-price">
+                  <input class="input num price" inputmode="decimal" placeholder="0" />
                 </div>
-
-                <div class="field">
-                  <label>WhatsApp</label>
-                  <div class="rowBtns">
-                    <button class="btn btn--ghost" id="btnWhatsApp">Texto</button>
-                    <button class="btn btn--ghost" id="btnCopyWhatsApp">Copiar</button>
-                  </div>
+                <div class="td col-origin">
+                  <input class="input origin" placeholder="Origen" />
+                </div>
+                <div class="td col-amt">
+                  <div class="amt mono">0,00</div>
+                </div>
+                <div class="td col-x">
+                  <button class="btn btn-ghost btnX" title="Borrar línea">×</button>
                 </div>
               </div>
+            </template>
+          </div>
 
-              <div class="gridTools">
-                <div class="gridTools__left">
-                  <button class="btn btn--ghost" id="btnAddLine">+ Añadir línea</button>
-                  <button class="btn btn--ghost" id="btnClearLines">Vaciar</button>
+          <!-- TOTALES / PAGOS -->
+          <div class="bottomGrid">
+            <div class="card">
+              <div class="cardTitle">Totales</div>
+
+              <div class="totRow">
+                <div class="totLbl">Subtotal</div>
+                <div class="totVal mono" id="tot_sub">0,00</div>
+              </div>
+
+              <div class="totRow">
+                <div class="totLbl">
+                  Transporte
+                  <span class="muted tiny" id="shipPctLabel">0%</span>
                 </div>
-                <div class="gridTools__right muted mini">
-                  Enter → siguiente campo · Al final: crea/salta a la siguiente línea · Hint precios solo pantalla
+                <div class="totVal mono" id="tot_ship">0,00</div>
+              </div>
+
+              <div class="totRow">
+                <div class="totLbl">
+                  IVA
+                  <span class="muted tiny" id="vatModeLabel">4%</span>
                 </div>
+                <div class="totVal mono" id="tot_vat">0,00</div>
               </div>
 
-              <div class="tableWrap">
-                <table class="table table--grid" id="linesTable">
-                  <thead>
-                    <tr>
-                      <th>Producto</th>
-                      <th class="w110">Modo</th>
-                      <th class="w90">Cant</th>
-                      <th class="w90">Bruto</th>
-                      <th class="w90">Tara</th>
-                      <th class="w90">Neto</th>
-                      <th class="w110">Precio</th>
-                      <th class="w120">Origen</th>
-                      <th class="w110 right">Importe</th>
-                      <th class="w60 center">X</th>
-                    </tr>
-                  </thead>
-                  <tbody id="linesTbody"></tbody>
-                </table>
+              <div class="totRow strong">
+                <div class="totLbl">TOTAL</div>
+                <div class="totVal mono" id="tot_all">0,00</div>
               </div>
 
-              <!-- Totals + Payments + Notes -->
-              <div class="below">
-
-                <div class="card miniCard">
-                  <div class="card__title">Totales</div>
-                  <div class="kpis">
-                    <div class="kpi">
-                      <div class="kpi__label">Subtotal</div>
-                      <div class="kpi__value" id="kSubtotal">0,00 €</div>
-                    </div>
-                    <div class="kpi">
-                      <div class="kpi__label">Transporte</div>
-                      <div class="kpi__value" id="kTransport">0,00 €</div>
-                    </div>
-                    <div class="kpi">
-                      <div class="kpi__label">IVA</div>
-                      <div class="kpi__value" id="kVat">0,00 €</div>
-                    </div>
-                    <div class="kpi">
-                      <div class="kpi__label">Total</div>
-                      <div class="kpi__value" id="kTotal">0,00 €</div>
-                    </div>
-                    <div class="kpi">
-                      <div class="kpi__label">Pagado</div>
-                      <div class="kpi__value" id="kPaid">0,00 €</div>
-                    </div>
-                    <div class="kpi">
-                      <div class="kpi__label">Pendiente</div>
-                      <div class="kpi__value" id="kDue">0,00 €</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="card miniCard">
-                  <div class="card__title">Pagos</div>
-                  <div class="payRow">
-                    <input id="payAmount" type="number" step="0.01" min="0" placeholder="Importe" />
-                    <button class="btn btn--ghost" id="btnAddPayment">Añadir pago</button>
-                    <button class="btn btn--ghost" id="btnMarkPaid">Marcar pagada</button>
-                  </div>
-                  <div class="listSmall" id="payList"></div>
-                </div>
-
-                <div class="card miniCard">
-                  <div class="card__title">Notas</div>
-                  <textarea id="invNotes" rows="6" placeholder="Observaciones..."></textarea>
-                </div>
-
+              <div class="row gap mt">
+                <label class="chk">
+                  <input type="checkbox" id="chkShip" />
+                  Transporte
+                </label>
+                <label class="chk">
+                  <input type="checkbox" id="chkVatIncluded" />
+                  IVA incluido en precios
+                </label>
+                <label class="chk">
+                  <input type="checkbox" id="chkAutoSync" />
+                  Auto-sync (Cloud)
+                </label>
               </div>
 
-              <div class="footNote">
-                <span class="muted" id="pdfHint">PDF/QR dependen de librerías externas. Si no cargan, el sistema sigue funcionando.</span>
+              <div class="hint mt">
+                Últimos precios solo como “hint” en pantalla. Nunca se imprimen.
               </div>
             </div>
-          </section>
 
-        </div>
-      </section>
+            <div class="card">
+              <div class="cardTitle">Pagos</div>
 
-      <!-- CLIENTS -->
-      <section class="page hidden" id="pageClients">
-        <div class="page__head">
-          <div>
-            <h2>Clientes</h2>
-            <p class="muted">Alta / edición / borrado. Selector automático en facturas.</p>
-          </div>
-          <div class="page__headRight">
-            <input id="cliSearch" type="text" placeholder="Buscar cliente..." />
-            <button class="btn" id="btnAddClient">+ Nuevo cliente</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="tableWrap">
-            <table class="table" id="clientsTable">
-              <thead>
-                <tr>
-                  <th>Fiscal</th>
-                  <th>Alias</th>
-                  <th>NIF/CIF</th>
-                  <th>Teléfono</th>
-                  <th>Email</th>
-                  <th>IVA</th>
-                  <th class="w220">Tags</th>
-                  <th class="w160">Acciones</th>
-                </tr>
-              </thead>
-              <tbody id="clientsTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- PRODUCTS -->
-      <section class="page hidden" id="pageProducts">
-        <div class="page__head">
-          <div>
-            <h2>Productos</h2>
-            <p class="muted">Catálogo + precios + historial (solo pantalla). Autocomplete en facturas.</p>
-          </div>
-          <div class="page__headRight">
-            <input id="prodSearch" type="text" placeholder="Buscar producto..." />
-            <button class="btn btn--ghost" id="btnOpenPricesMode">Abrir “poner precios”</button>
-            <button class="btn" id="btnAddProduct">+ Nuevo producto</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="tableWrap">
-            <table class="table" id="productsTable">
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th class="w120">Unidad</th>
-                  <th class="w120">Kg/Caja</th>
-                  <th class="w120">Precio</th>
-                  <th class="w120">Coste</th>
-                  <th class="w180">Origen</th>
-                  <th class="w220">Historial (últimos 5)</th>
-                  <th class="w160">Acciones</th>
-                </tr>
-              </thead>
-              <tbody id="productsTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- ACCOUNTING -->
-      <section class="page hidden" id="pageAccounting">
-        <div class="page__head">
-          <div>
-            <h2>Contabilidad</h2>
-            <p class="muted">Protegida con PIN. Filtros, KPIs, detalle y export CSV.</p>
-          </div>
-          <div class="page__headRight">
-            <button class="btn btn--ghost" id="btnLockAccounting">Bloquear</button>
-            <button class="btn" id="btnExportCSV">Export CSV</button>
-          </div>
-        </div>
-
-        <div class="card" id="accLockCard">
-          <div class="lock">
-            <div class="lock__title">Bloqueado</div>
-            <div class="lock__sub muted">Introduce el PIN para ver contabilidad.</div>
-            <div class="lock__row">
-              <input id="accPin" type="password" inputmode="numeric" placeholder="PIN" />
-              <button class="btn" id="btnUnlockAccounting">Desbloquear</button>
-            </div>
-            <div class="muted mini">PIN por defecto: 7392 (cámbialo en Ajustes).</div>
-          </div>
-        </div>
-
-        <div class="card hidden" id="accMainCard">
-          <div class="card__row">
-            <div class="field">
-              <label>Desde</label>
-              <input id="accFrom" type="date" />
-            </div>
-            <div class="field">
-              <label>Hasta</label>
-              <input id="accTo" type="date" />
-            </div>
-            <div class="field">
-              <label>Cliente</label>
-              <select id="accClient"></select>
-            </div>
-            <div class="field">
-              <label>Tag</label>
-              <input id="accTag" type="text" placeholder="ej: Centro" />
-            </div>
-            <div class="field">
-              <label>Aplicar</label>
-              <button class="btn btn--ghost" id="btnAccApply">Filtrar</button>
-            </div>
-          </div>
-
-          <div class="kpis kpis--big">
-            <div class="kpi">
-              <div class="kpi__label">Ventas</div>
-              <div class="kpi__value" id="aSales">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpi__label">IVA</div>
-              <div class="kpi__value" id="aVat">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpi__label">Nº facturas</div>
-              <div class="kpi__value" id="aCount">0</div>
-            </div>
-            <div class="kpi">
-              <div class="kpi__label">Margen estimado</div>
-              <div class="kpi__value" id="aMargin">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpi__label">Pendiente</div>
-              <div class="kpi__value" id="aDue">0,00 €</div>
-            </div>
-          </div>
-
-          <div class="tableWrap">
-            <table class="table" id="accTable">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Nº</th>
-                  <th>Cliente</th>
-                  <th>Tags</th>
-                  <th class="right">Total</th>
-                  <th>Estado</th>
-                  <th class="right">Pendiente</th>
-                </tr>
-              </thead>
-              <tbody id="accTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- SETTINGS -->
-      <section class="page hidden" id="pageSettings">
-        <div class="page__head">
-          <div>
-            <h2>Ajustes</h2>
-            <p class="muted">Proveedor, IVA, transporte, QR, PIN, nube y herramientas.</p>
-          </div>
-          <div class="page__headRight">
-            <button class="btn btn--ghost" id="btnReset" title="Borra datos locales (con confirmación)">Reset</button>
-            <button class="btn" id="btnSaveSettings">Guardar ajustes</button>
-          </div>
-        </div>
-
-        <div class="grid2col">
-
-          <div class="card">
-            <div class="card__title">Proveedor por defecto</div>
-            <div class="grid2">
-              <div class="field">
-                <label>Nombre</label>
-                <input id="sProvName" type="text" />
-              </div>
-              <div class="field">
-                <label>NIF</label>
-                <input id="sProvNif" type="text" />
-              </div>
-              <div class="field span2">
-                <label>Dirección</label>
-                <input id="sProvAddr" type="text" />
-              </div>
-              <div class="field">
-                <label>Teléfono</label>
-                <input id="sProvPhone" type="text" />
-              </div>
-              <div class="field">
-                <label>Email</label>
-                <input id="sProvEmail" type="email" />
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card__title">Impuestos / Transporte / QR</div>
-            <div class="grid2">
-              <div class="field">
-                <label>IVA %</label>
-                <input id="sVatRate" type="number" step="0.01" min="0" />
-              </div>
-              <div class="field">
-                <label>IVA modo</label>
-                <select id="sVatMode">
-                  <option value="split">Desglosado</option>
-                  <option value="included">Incluido</option>
+              <div class="row gap">
+                <select class="input" id="pay_method">
+                  <option value="efectivo">Efectivo</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="tarjeta">Tarjeta</option>
                 </select>
-              </div>
-              <div class="field">
-                <label>Transporte %</label>
-                <input id="sTransportPct" type="number" step="0.01" min="0" />
-              </div>
-              <div class="field">
-                <label>PIN contabilidad</label>
-                <input id="sAccPin" type="password" inputmode="numeric" />
+                <input class="input num" id="pay_amount" inputmode="decimal" placeholder="Importe" />
+                <button class="btn btn-ghost" id="btnAddPay">+ Añadir</button>
               </div>
 
-              <div class="field span2">
-                <label>Plantilla QR (tokens: {NIF} {NUM} {FECHA} {TOTAL})</label>
-                <input id="sQrTpl" type="text" />
-                <div class="mini muted">Ej: AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}</div>
+              <div class="payList" id="payList">
+                <!-- render -->
               </div>
+
+              <div class="totRow">
+                <div class="totLbl">Pagado</div>
+                <div class="totVal mono" id="paid_total">0,00</div>
+              </div>
+
+              <div class="totRow strong">
+                <div class="totLbl">Pendiente</div>
+                <div class="totVal mono" id="due_total">0,00</div>
+              </div>
+
+              <div class="row gap mt">
+                <div class="pill" id="invStatusPill">Impagada</div>
+                <label class="chk">
+                  <input type="checkbox" id="chkClosed" />
+                  Cerrada (no reescribir precios)
+                </label>
+              </div>
+
+              <div class="hint mt">
+                Estado: Impagada / Parcial / Pagada (auto según pagos).
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="cardTitle">PDF / Links</div>
+
+              <div class="row gap">
+                <button class="btn btn-ghost" id="btnOpenPDF" disabled>Abrir PDF</button>
+                <button class="btn btn-ghost" id="btnCopyPDF" disabled>Copiar link</button>
+              </div>
+
+              <div class="hint mt">
+                PDF se guarda en local (IndexedDB) y, si Cloud activo, también en Storage.
+              </div>
+
+              <div class="mono tiny mt" id="pdfMeta"></div>
             </div>
           </div>
-
-          <div class="card">
-            <div class="card__title">Nube Firebase (opcional)</div>
-            <div class="grid2">
-              <div class="field span2">
-                <label>Root key (ruta base DB)</label>
-                <input id="sCloudRoot" type="text" placeholder="arslan_facturas_kiwi" />
-              </div>
-              <div class="field span2">
-                <label>firebaseConfig (JSON)</label>
-                <textarea id="sFirebaseConfig" rows="6" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"...","projectId":"...","storageBucket":"...","appId":"..."}'></textarea>
-              </div>
-
-              <div class="field">
-                <label>Auto-sync</label>
-                <select id="sAutoSync">
-                  <option value="off">Off</option>
-                  <option value="on">On</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label>Precios: importar al sync</label>
-                <select id="sSyncPrices">
-                  <option value="on">On</option>
-                  <option value="off">Off</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="card__row">
-              <div class="field">
-                <label>Email</label>
-                <input id="authEmail" type="email" placeholder="email" />
-              </div>
-              <div class="field">
-                <label>Password</label>
-                <input id="authPass" type="password" placeholder="password" />
-              </div>
-              <div class="field">
-                <label>Acción</label>
-                <div class="rowBtns">
-                  <button class="btn btn--ghost" id="btnSignup">Signup</button>
-                  <button class="btn btn--ghost" id="btnLogin">Login</button>
-                  <button class="btn btn--ghost" id="btnLogout">Logout</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="muted mini" id="cloudStatus">Cloud: no configurado</div>
-          </div>
-
-          <div class="card">
-            <div class="card__title">Herramientas</div>
-            <div class="tools">
-              <button class="btn btn--ghost" id="btnImportPrices">Importar precios (link/JSON)</button>
-              <button class="btn btn--ghost" id="btnGenPricesLink">Generar link “poner precios”</button>
-              <button class="btn btn--ghost" id="btnRebuildIndexes">Reparar datos</button>
-            </div>
-            <div class="mini muted" style="margin-top:10px">
-              “Poner precios” se abre en este mismo archivo con <code>?mode=prices</code>. Puedes compartir ese link.
-            </div>
-          </div>
-
-        </div>
-      </section>
-
-    </main>
-
-    <!-- AUTOCOMPLETE BOX -->
-    <div id="acBox" class="ac hidden"></div>
-
-    <!-- MODAL -->
-    <div class="modal hidden" id="modal">
-      <div class="modal__panel">
-        <div class="modal__title" id="modalTitle">Título</div>
-        <div class="modal__body" id="modalBody">Contenido</div>
-        <div class="modal__actions" id="modalActions"></div>
+        </section>
       </div>
-    </div>
+    </section>
 
-  </div>
+    <!-- =========================
+         CLIENTES
+    ========================== -->
+    <section class="view" id="clientsView">
+      <div class="panel">
+        <div class="panelHead">
+          <div class="hgroup">
+            <h2>Clientes</h2>
+            <p class="muted">Alta/edición/borrado, tags, búsqueda.</p>
+          </div>
+          <button class="btn" id="btnNewClient">+ Nuevo cliente</button>
+        </div>
+
+        <div class="row gap">
+          <input id="clientSearch" class="input" placeholder="Buscar cliente…" autocomplete="off" />
+          <button class="btn btn-ghost" id="btnClientsExport">Export</button>
+        </div>
+
+        <div class="clientsGrid">
+          <div class="list" id="clientsList"></div>
+
+          <div class="card" id="clientEditor">
+            <div class="cardTitle">Editor</div>
+            <div class="grid2">
+              <input class="input" id="c_name" placeholder="Nombre fiscal" />
+              <input class="input" id="c_alias" placeholder="Alias (opcional)" />
+              <input class="input" id="c_nif" placeholder="NIF/CIF" />
+              <input class="input" id="c_tags" placeholder="Tags (coma)" />
+              <input class="input" id="c_addr" placeholder="Dirección" />
+              <input class="input" id="c_tel" placeholder="Teléfono" />
+              <input class="input" id="c_email" placeholder="Email" />
+
+              <label class="chk">
+                <input type="checkbox" id="c_vatIncluded" />
+                IVA incluido en precios (este cliente)
+              </label>
+
+              <label class="chk">
+                <input type="checkbox" id="c_shipOn" />
+                Transporte por defecto (este cliente)
+              </label>
+            </div>
+
+            <div class="row gap mt">
+              <button class="btn" id="btnClientSave">Guardar</button>
+              <button class="btn btn-ghost" id="btnClientDelete">Eliminar</button>
+              <div class="hint">El selector de factura se rellena automáticamente.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================
+         PRODUCTOS
+    ========================== -->
+    <section class="view" id="productsView">
+      <div class="panel">
+        <div class="panelHead">
+          <div class="hgroup">
+            <h2>Productos</h2>
+            <p class="muted">Catálogo + unidad por defecto + kg/caja + precio + coste + historial.</p>
+          </div>
+          <button class="btn" id="btnNewProduct">+ Nuevo producto</button>
+        </div>
+
+        <div class="row gap">
+          <input id="productSearch" class="input" placeholder="Buscar producto…" autocomplete="off" />
+          <button class="btn btn-ghost" id="btnProductsExport">Export</button>
+        </div>
+
+        <div class="productsGrid">
+          <div class="list" id="productsList"></div>
+
+          <div class="card" id="productEditor">
+            <div class="cardTitle">Editor</div>
+            <div class="grid2">
+              <input class="input" id="p_name" placeholder="Nombre producto" />
+              <select class="input" id="p_unit">
+                <option value="kg">kg</option>
+                <option value="caja">caja</option>
+                <option value="ud">unidad</option>
+              </select>
+              <input class="input num" id="p_kgBox" inputmode="decimal" placeholder="Kg por caja (si aplica)" />
+              <input class="input num" id="p_price" inputmode="decimal" placeholder="Precio actual" />
+              <input class="input num" id="p_cost" inputmode="decimal" placeholder="Coste (margen)" />
+              <input class="input" id="p_origin" placeholder="Origen por defecto (opcional)" />
+            </div>
+
+            <div class="historyBox">
+              <div class="muted tiny">Historial (últimas 5) — solo pantalla</div>
+              <div class="mono tiny" id="p_hist">—</div>
+            </div>
+
+            <div class="row gap mt">
+              <button class="btn" id="btnProductSave">Guardar</button>
+              <button class="btn btn-ghost" id="btnProductDelete">Eliminar</button>
+              <div class="hint">Cambiar precio añade una entrada al historial (con fecha).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================
+         CONTABILIDAD (PIN)
+    ========================== -->
+    <section class="view" id="accountingView">
+      <div class="panel">
+        <div class="panelHead">
+          <div class="hgroup">
+            <h2>Contabilidad</h2>
+            <p class="muted">Protegida con PIN. KPIs + filtros + tabla detalle.</p>
+          </div>
+          <button class="btn" id="btnUnlock">Desbloquear</button>
+        </div>
+
+        <div class="lockBox" id="lockBox">
+          <div class="muted">Bloqueado. Introduce PIN para ver datos.</div>
+        </div>
+
+        <div class="accountingBody" id="accountingBody" hidden>
+          <div class="row gap">
+            <label class="lbl">Desde <input type="date" class="input" id="acc_from" /></label>
+            <label class="lbl">Hasta <input type="date" class="input" id="acc_to" /></label>
+            <select class="input" id="acc_client"><option value="">— Cliente —</option></select>
+            <input class="input" id="acc_tag" placeholder="Tag (opcional)" />
+            <button class="btn btn-ghost" id="btnAccApply">Aplicar</button>
+          </div>
+
+          <div class="kpiGrid">
+            <div class="kpi">
+              <div class="muted tiny">Ventas</div>
+              <div class="mono big" id="kpi_sales">0,00</div>
+            </div>
+            <div class="kpi">
+              <div class="muted tiny">IVA</div>
+              <div class="mono big" id="kpi_vat">0,00</div>
+            </div>
+            <div class="kpi">
+              <div class="muted tiny">Nº facturas</div>
+              <div class="mono big" id="kpi_count">0</div>
+            </div>
+            <div class="kpi">
+              <div class="muted tiny">Margen estimado</div>
+              <div class="mono big" id="kpi_margin">0,00</div>
+            </div>
+          </div>
+
+          <div class="list" id="accTable"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================
+         AJUSTES
+    ========================== -->
+    <section class="view" id="settingsView">
+      <div class="panel">
+        <div class="panelHead">
+          <div class="hgroup">
+            <h2>Ajustes</h2>
+            <p class="muted">Proveedor por defecto, IVA, transporte, QR, Firebase, reset.</p>
+          </div>
+        </div>
+
+        <div class="settingsGrid">
+          <div class="card">
+            <div class="cardTitle">IVA / Transporte</div>
+            <div class="grid2">
+              <label class="lbl">IVA % <input class="input num" id="set_vat" inputmode="decimal" placeholder="4" /></label>
+              <label class="lbl">Transporte % <input class="input num" id="set_ship" inputmode="decimal" placeholder="10" /></label>
+              <label class="chk">
+                <input type="checkbox" id="set_vatIncludedDefault" />
+                IVA incluido por defecto
+              </label>
+            </div>
+            <div class="row gap mt">
+              <button class="btn" id="btnSettingsSave">Guardar ajustes</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">QR AEAT</div>
+            <label class="lbl">Plantilla QR</label>
+            <textarea class="input mono" id="set_qrTpl" rows="5"
+              placeholder="AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}"></textarea>
+            <div class="hint">
+              Variables: {NIF} {NUM} {FECHA} {TOTAL}
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Cloud (Firebase opcional)</div>
+            <div class="grid2">
+              <input class="input mono" id="fb_apiKey" placeholder="apiKey" />
+              <input class="input mono" id="fb_authDomain" placeholder="authDomain" />
+              <input class="input mono" id="fb_databaseURL" placeholder="databaseURL" />
+              <input class="input mono" id="fb_projectId" placeholder="projectId" />
+              <input class="input mono" id="fb_appId" placeholder="appId" />
+              <input class="input mono" id="fb_storageBucket" placeholder="storageBucket" />
+            </div>
+            <div class="row gap mt">
+              <button class="btn btn-ghost" id="btnTestCloud">Probar Cloud</button>
+              <button class="btn" id="btnSaveCloud">Guardar Cloud</button>
+            </div>
+            <div class="hint mt" id="cloudHint">
+              Si falla (PERMISSION_DENIED) → modo local sin romper.
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Link externo “Poner precios”</div>
+            <div class="hint">
+              Te entregaré un segundo mini-proyecto (otra carpeta) para que otra persona ponga precios desde móvil.
+            </div>
+            <div class="mono tiny mt" id="pricesLinkInfo">—</div>
+          </div>
+
+          <div class="card danger">
+            <div class="cardTitle">Reset</div>
+            <div class="hint">
+              Limpia datos locales (no borra nube). Requiere confirmación.
+            </div>
+            <div class="row gap mt">
+              <button class="btn btn-ghost" id="btnResetLocal">Reset local</button>
+              <button class="btn btn-ghost" id="btnHardReset">Reset TOTAL</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- =========================
+       MODAL: AUTH (CLOUD)
+  ========================== -->
+  <dialog class="modal" id="authModal">
+    <form method="dialog" class="modalCard">
+      <div class="modalHead">
+        <div>
+          <div class="modalTitle">Cloud</div>
+          <div class="muted tiny">Login/Signup (Email/Password) — opcional</div>
+        </div>
+        <button class="btn btn-ghost" value="cancel">×</button>
+      </div>
+
+      <div class="grid2">
+        <input class="input" id="auth_email" type="email" placeholder="Email" />
+        <input class="input" id="auth_pass" type="password" placeholder="Password" />
+      </div>
+
+      <div class="row gap mt">
+        <button class="btn" id="btnLogin" value="default">Login</button>
+        <button class="btn btn-ghost" id="btnSignup" value="default">Signup</button>
+        <button class="btn btn-ghost" id="btnLogout" value="default">Logout</button>
+      </div>
+
+      <div class="hint mt" id="authMsg">—</div>
+    </form>
+  </dialog>
+
+  <!-- =========================
+       MODAL: PIN (CONTABILIDAD)
+  ========================== -->
+  <dialog class="modal" id="pinModal">
+    <form method="dialog" class="modalCard">
+      <div class="modalHead">
+        <div>
+          <div class="modalTitle">PIN Contabilidad</div>
+          <div class="muted tiny">Acceso protegido</div>
+        </div>
+        <button class="btn btn-ghost" value="cancel">×</button>
+      </div>
+
+      <input class="input mono" id="pinInput" inputmode="numeric" type="password" placeholder="PIN" />
+
+      <div class="row gap mt">
+        <button class="btn" id="btnPinOk" value="default">Entrar</button>
+        <button class="btn btn-ghost" value="cancel">Cancelar</button>
+      </div>
+
+      <div class="hint mt" id="pinMsg">—</div>
+    </form>
+  </dialog>
+
+  <!-- TOAST -->
+  <div class="toast" id="toast" hidden></div>
+
+  <noscript>
+    <div style="padding:16px;font-family:system-ui">
+      Necesitas activar JavaScript para usar ARSLAN • FACTURAS.
+    </div>
+  </noscript>
+
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
