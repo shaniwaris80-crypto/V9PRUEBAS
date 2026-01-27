@@ -1,112 +1,685 @@
 /* =========================================================
-   ARSLAN • FACTURAS — KIWI Edition (PRO B/W)
-   app.js — REHECHO COMPLETO
-   PARTE 1/2
-
-   ✅ Offline-first (LocalStorage)
-   ✅ Facturas (grid pro 1 línea, 5 filas por defecto, + añadir)
-   ✅ Proveedor izq + QR centro + Cliente der
-   ✅ Clientes CRUD
-   ✅ Productos CRUD + Historial (últimas 5) SOLO pantalla
-   ✅ Import/Export JSON
-   ✅ Import precios por link (desde prices.html ?prices= / #prices=)
-   ✅ Crear pack de precios (abre prices.html con ?pack=)
-   ✅ Contabilidad (PIN) - bloque real
-   ✅ Ajustes (IVA, QR template, Logo SVG, Firebase config)
-
-   ⏭️ PARTE 2/2 añade:
-   - PDF PRO (logo + tabla + QR + totales)
-   - Cloud Firebase opcional (login, sync, merge, pdfUrl)
+   ARSLAN • FACTURAS — KIWI Edition (B/W PRO)
+   app.js (1/3) — BASE + ESTADO + LOCAL + UI GENERAL
+   - Offline first (localStorage)
+   - Cloud opcional (Firebase compat, lazy-load) -> parte 3/3
+   - Factura PRO + Grid + Productos + Clientes + PDF + QR -> partes 2/3 y 3/3
 ========================================================= */
-
-const $ = (q) => document.querySelector(q);
-const $$ = (q) => Array.from(document.querySelectorAll(q));
+'use strict';
 
 /* =========================
-   Storage keys
+   0) Helpers DOM
 ========================= */
-const LS_KEY = "arslan_kiwi_facturas_v3_db";
-const LS_ACC_UNLOCK = "arslan_kiwi_facturas_v3_acc_unlocked";
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+function on(el, ev, fn){
+  if(!el) return;
+  el.addEventListener(ev, fn);
+}
+function escHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[m]));
+}
+function clampNum(n, min=0, max=Number.POSITIVE_INFINITY){
+  n = Number(n);
+  if(Number.isNaN(n)) n = 0;
+  return Math.min(max, Math.max(min, n));
+}
+function uid(prefix='id'){
+  return `${prefix}_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+}
 
 /* =========================
-   Defaults (Proveedor + Clientes conocidos)
+   1) Formatos
 ========================= */
-const DEFAULT_PROVIDER = {
-  name: "Mohammad Arslan Waris",
-  nif: "X6389988J",
-  addr: "Calle San Pablo 17, Burgos",
-  phone: "631667893",
-  email: "shaniwaris80@gmail.com"
+function toISODate(d){
+  const dt = (d instanceof Date) ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth()+1).padStart(2,'0');
+  const da = String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${da}`;
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
+function invoiceNumberFromDate(d){
+  const dt = (d instanceof Date) ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = pad2(dt.getMonth()+1);
+  const da = pad2(dt.getDate());
+  const hh = pad2(dt.getHours());
+  const mm = pad2(dt.getMinutes());
+  return `FA-${y}${m}${da}${hh}${mm}`;
+}
+function fmtEUR(n){
+  n = Number(n);
+  if(Number.isNaN(n)) n = 0;
+  return n.toLocaleString('es-ES',{minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+}
+function fmt2(n){
+  n = Number(n);
+  if(Number.isNaN(n)) n = 0;
+  return n.toLocaleString('es-ES',{minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function parseNum(v){
+  if(v === '' || v == null) return 0;
+  const s = String(v).replace(/\./g,'').replace(',','.');
+  const n = Number(s);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/* =========================
+   2) LocalStorage Keys
+========================= */
+const LS_KEY = 'ARSLAN_FACTURAS_KIWI_BW_V3';
+const LS_ACC_UNLOCK = 'ARSLAN_FACTURAS_KIWI_ACC_UNLOCK';
+
+/* =========================
+   3) Defaults (Proveedor/Clientes/Ajustes)
+========================= */
+function defaultProvider(){
+  return {
+    name: 'Mohammad Arslan Waris',
+    nif: 'X6389988J',
+    addr: 'Calle San Pablo 17, 09003 Burgos',
+    phone: '631 667 893',
+    email: 'shaniwaris80@gmail.com',
+  };
+}
+
+function defaultClients(){
+  // Clientes principales de tu negocio (puedes editar/añadir)
+  return [
+    {
+      id: 'cli_riviera',
+      name: 'RIVIERA (CONOR ESY SLU)',
+      fiscalName: 'CONOR ESY SLU',
+      nif: 'B16794893',
+      addr: 'Paseo del Espolón, 09003 Burgos',
+      phone: '',
+      email: '',
+      alias: 'RIVIERA',
+      notes: '',
+    },
+    {
+      id: 'cli_golden_garden',
+      name: 'GOLDEN GARDEN',
+      fiscalName: 'David Herrera Estalayo',
+      nif: '71281665L',
+      addr: 'Trinidad, 12, 09003, Burgos',
+      phone: '',
+      email: '',
+      alias: 'GOLDEN GARDEN',
+      notes: 'IVA incluido en precios (sin desglose).',
+      ivaIncluidoDefault: true
+    },
+    {
+      id: 'cli_consentidos',
+      name: 'CON/SENTIDOS',
+      fiscalName: 'Cuevas Palacios Restauración S.L.',
+      nif: 'B10694792',
+      addr: 'C/ San Lesmes, 1 - 09004 Burgos',
+      phone: '947 20 35 51',
+      email: '',
+      alias: 'CON/SENTIDOS',
+      notes: '',
+    },
+    {
+      id: 'cli_al_pan_pan',
+      name: 'AL PAN PAN (BERTIZ)',
+      fiscalName: 'Al Pan Pan Burgos, S.L.',
+      nif: 'B09569344',
+      addr: 'C/ Miranda, 17 Bajo, 09002 Burgos',
+      phone: '947277977',
+      email: 'bertiz.miranda@gmail.com',
+      alias: 'AL PAN PAN',
+      notes: '',
+    },
+    {
+      id: 'cli_alesal_pan',
+      name: 'ALESAL PAN / CAFÉ DE CALLE SAN LESMES',
+      fiscalName: 'Alesal Pan y Café S.L',
+      nif: 'B09582420',
+      addr: 'Calle San Lesmes 1',
+      phone: '',
+      email: '',
+      alias: 'ALESAL PAN',
+      notes: 'Alias equivalente: CAFÉ DE CALLE SAN LESMES',
+    },
+    {
+      id: 'cli_nuovo',
+      name: 'CAFE BAR NUOVO',
+      fiscalName: 'EINY MERCEDES OLIVO JIMENEZ',
+      nif: '120221393',
+      addr: 'C/ San Juan de Ortega 14, 09007 Burgos',
+      phone: '',
+      email: '',
+      alias: 'NUOVO',
+      notes: '',
+    }
+  ];
+}
+
+function defaultSettings(){
+  return {
+    version: '3.0',
+    pin: '7392',
+    taxRate: 4,            // IVA 4%
+    transportPct: 10,      // Transporte 10%
+    qrTemplate: 'AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}',
+    firebase: {
+      apiKey: '',
+      authDomain: '',
+      databaseURL: '',
+      projectId: '',
+      appId: '',
+      storageBucket: ''
+    }
+  };
+}
+
+/* =========================
+   4) Estado principal
+========================= */
+const state = {
+  provider: defaultProvider(),
+  clients: defaultClients(),
+  products: {},          // se llena en Parte 2/3 (vocabulario + estructura)
+  invoices: [],
+  settings: defaultSettings(),
+
+  currentInvoiceId: null,
+  tempPdfUrl: null,      // última url pdf en memoria (blob o cloud)
+  unlockedAccounting: false,
+
+  cloud: {
+    enabled: false,
+    ready: false,
+    user: null,
+    firebase: null
+  }
 };
 
-const DEFAULT_CLIENTS = [
-  {
-    id: "cli_golden_garden",
-    name: "David Herrera Estalayo",
-    nif: "71281665L",
-    addr: "Trinidad, 12, 09003, Burgos",
-    phone: "",
-    email: "",
-    alias: "GOLDEN GARDEN",
-    notes: "IVA incluido en precios (sin desglose)"
-  },
-  {
-    id: "cli_cons_sentidos",
-    name: "Cuevas Palacios Restauración S.L.",
-    nif: "B10694792",
-    addr: "C/ San Lesmes, 1 - 09004 Burgos",
-    phone: "947203551",
-    email: "",
-    alias: "CON/SENTIDOS",
-    notes: ""
-  },
-  {
-    id: "cli_alpanpan",
-    name: "Al Pan Pan Burgos, S.L.",
-    nif: "B09569344",
-    addr: "C/ Miranda, 17 Bajo, 09002 Burgos",
-    phone: "947277977",
-    email: "bertiz.miranda@gmail.com",
-    alias: "AL PAN PAN",
-    notes: ""
-  },
-  {
-    id: "cli_alesalpan",
-    name: "Alesal Pan y Café S.L",
-    nif: "B09582420",
-    addr: "Calle San Lesmes 1",
-    phone: "",
-    email: "",
-    alias: "ALESAL PAN / CAFÉ DE CALLE SAN LESMES",
-    notes: ""
-  },
-  {
-    id: "cli_riviera",
-    name: "CONOR ESY SLU",
-    nif: "B16794893",
-    addr: "Paseo del Espolón, 09003 Burgos",
-    phone: "",
-    email: "",
-    alias: "RIVIERA",
-    notes: ""
-  },
-  {
-    id: "cli_nuovo",
-    name: "CAFE BAR NUOVO",
-    nif: "120221393",
-    addr: "C/ San Juan de Ortega 14, 09007 Burgos",
-    phone: "",
-    email: "",
-    alias: "NUOVO",
-    notes: ""
+/* =========================
+   5) Persistencia Local
+========================= */
+function loadLocal(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return false;
+    const data = JSON.parse(raw);
+
+    // Merge seguro (no rompe si faltan campos)
+    if(data.provider) state.provider = { ...defaultProvider(), ...data.provider };
+    if(Array.isArray(data.clients)) state.clients = data.clients;
+    if(data.products && typeof data.products === 'object') state.products = data.products;
+    if(Array.isArray(data.invoices)) state.invoices = data.invoices;
+    if(data.settings) state.settings = { ...defaultSettings(), ...data.settings };
+
+    // desbloqueo contabilidad (por sesión) opcional
+    state.unlockedAccounting = (sessionStorage.getItem(LS_ACC_UNLOCK) === '1');
+
+    return true;
+  }catch(e){
+    console.warn('Error loadLocal:', e);
+    return false;
   }
-];
+}
+
+function saveLocal(){
+  try{
+    const payload = {
+      ts: Date.now(),
+      provider: state.provider,
+      clients: state.clients,
+      products: state.products,
+      invoices: state.invoices,
+      settings: state.settings
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    return true;
+  }catch(e){
+    console.warn('Error saveLocal:', e);
+    return false;
+  }
+}
+
+function exportJSON(){
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: 'ARSLAN_FACTURAS_KIWI_BW',
+    version: state.settings?.version || '3.0',
+    provider: state.provider,
+    clients: state.clients,
+    products: state.products,
+    invoices: state.invoices,
+    settings: state.settings
+  };
+  const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ARSLAN_FACTURAS_BACKUP_${toISODate(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1500);
+}
+
+function importJSONFile(file){
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>{
+      try{
+        const data = JSON.parse(fr.result);
+
+        // Merge defensivo (no borramos si no viene)
+        if(data.provider) state.provider = { ...state.provider, ...data.provider };
+        if(Array.isArray(data.clients)) state.clients = data.clients;
+        if(data.products && typeof data.products === 'object') state.products = data.products;
+        if(Array.isArray(data.invoices)) state.invoices = data.invoices;
+        if(data.settings) state.settings = { ...state.settings, ...data.settings };
+
+        saveLocal();
+        resolve(true);
+      }catch(e){ reject(e); }
+    };
+    fr.onerror = reject;
+    fr.readAsText(file);
+  });
+}
 
 /* =========================
-   Vocabulario (Productos)
-   (lista tuya — se normaliza a MAYÚSCULAS)
+   6) UI: Tabs
 ========================= */
-const DEFAULT_VOCAB_TEXT = `
+function showTab(name){
+  $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  $$('.tabpage').forEach(s => s.classList.remove('show'));
+  const el = $(`#tab-${name}`);
+  if(el) el.classList.add('show');
+}
+
+function bindTabs(){
+  $$('.tab').forEach(btn=>{
+    on(btn,'click', ()=>{
+      showTab(btn.dataset.tab);
+      if(btn.dataset.tab === 'facturas') renderInvoiceList();
+      if(btn.dataset.tab === 'clientes') renderClientList();
+      if(btn.dataset.tab === 'productos') renderProductList();
+      if(btn.dataset.tab === 'contabilidad') renderAccountingLockedState();
+      if(btn.dataset.tab === 'ajustes') renderSettingsUI();
+    });
+  });
+}
+
+/* =========================
+   7) UI: Proveedor / Ajustes UI
+========================= */
+function renderProviderUI(){
+  $('#provName').value = state.provider?.name || '';
+  $('#provNif').value = state.provider?.nif || '';
+  $('#provAddr').value = state.provider?.addr || '';
+  $('#provPhone').value = state.provider?.phone || '';
+  $('#provEmail').value = state.provider?.email || '';
+}
+
+function saveProviderFromUI(){
+  state.provider = {
+    name: ($('#provName').value || '').trim(),
+    nif: ($('#provNif').value || '').trim(),
+    addr: ($('#provAddr').value || '').trim(),
+    phone: ($('#provPhone').value || '').trim(),
+    email: ($('#provEmail').value || '').trim(),
+  };
+  saveLocal();
+  toast('Proveedor guardado');
+  regenQRBoth();
+  renderInvoicePreview();
+}
+
+function renderSettingsUI(){
+  $('#setPin').value = state.settings.pin || '';
+  $('#setTax').value = String(state.settings.taxRate ?? 4);
+  $('#setTransport').value = String(state.settings.transportPct ?? 10);
+  $('#setQrBase').value = state.settings.qrTemplate || '';
+
+  // Firebase config
+  const fb = state.settings.firebase || {};
+  $('#fbApiKey').value = fb.apiKey || '';
+  $('#fbAuthDomain').value = fb.authDomain || '';
+  $('#fbDbURL').value = fb.databaseURL || '';
+  $('#fbProjectId').value = fb.projectId || '';
+  $('#fbAppId').value = fb.appId || '';
+  $('#fbBucket').value = fb.storageBucket || '';
+
+  // mensaje cloud
+  const cloudMsg = $('#cloudMsg');
+  if(cloudMsg){
+    const ok = isFirebaseConfigured();
+    cloudMsg.textContent = ok ? 'Firebase configurado (opcional). Puedes usar Cloud.' : 'Firebase NO configurado. Todo funciona en local.';
+  }
+}
+
+function saveSettingsFromUI(){
+  state.settings.pin = ($('#setPin').value || '').trim() || '7392';
+  state.settings.taxRate = clampNum(parseNum($('#setTax').value), 0, 100);
+  state.settings.transportPct = clampNum(parseNum($('#setTransport').value), 0, 100);
+  state.settings.qrTemplate = ($('#setQrBase').value || '').trim() || defaultSettings().qrTemplate;
+  saveLocal();
+  toast('Ajustes guardados');
+  regenQRBoth();
+  renderInvoicePreview();
+}
+
+function saveFirebaseFromUI(){
+  state.settings.firebase = {
+    apiKey: ($('#fbApiKey').value || '').trim(),
+    authDomain: ($('#fbAuthDomain').value || '').trim(),
+    databaseURL: ($('#fbDbURL').value || '').trim(),
+    projectId: ($('#fbProjectId').value || '').trim(),
+    appId: ($('#fbAppId').value || '').trim(),
+    storageBucket: ($('#fbBucket').value || '').trim()
+  };
+  saveLocal();
+  renderSettingsUI();
+  toast('Firebase guardado');
+}
+
+/* =========================
+   8) UI: Toast simple
+========================= */
+let __toastTimer = null;
+function toast(msg){
+  // Toast minimal sin CSS extra: usamos pillMode temporal
+  const pill = $('#pillMode');
+  if(!pill) return;
+  const old = pill.textContent;
+  pill.textContent = msg;
+  clearTimeout(__toastTimer);
+  __toastTimer = setTimeout(()=>{ pill.textContent = old; }, 1400);
+}
+
+/* =========================
+   9) Factura: Esqueleto (render real en Parte 2/3)
+========================= */
+function ensureCurrentInvoice(){
+  if(state.currentInvoiceId && state.invoices.find(x=>x.id===state.currentInvoiceId)) return;
+  // si no hay, crear nueva
+  const inv = createEmptyInvoice();
+  state.invoices.unshift(inv);
+  state.currentInvoiceId = inv.id;
+  saveLocal();
+}
+
+function createEmptyInvoice(){
+  const now = new Date();
+  const id = uid('inv');
+  const num = invoiceNumberFromDate(now);
+  const dISO = toISODate(now);
+
+  // cliente por defecto (primero)
+  const cli0 = state.clients?.[0] || null;
+
+  return {
+    id,
+    number: num,
+    dateISO: dISO,
+    clientId: cli0 ? cli0.id : '',
+    clientNameCache: cli0 ? cli0.name : '',
+    tags: '',
+    notes: '',
+    obs: '',
+    lines: [],          // se inicializa a 5 líneas en Parte 2/3
+    transportEnabled: false,
+    ivaIncluido: !!(cli0 && cli0.ivaIncluidoDefault),
+
+    payments: [],
+    payManual: 0,
+    payStatus: 'impagada',
+    payMethod: 'efectivo',
+
+    pdfUrl: ''          // si se sube a nube
+  };
+}
+
+function getCurrentInvoice(){
+  return state.invoices.find(x=>x.id===state.currentInvoiceId) || null;
+}
+
+/* =========================
+   10) UI: Modales (Login / PIN)
+========================= */
+function openModal(id){
+  const m = $(id);
+  if(m) m.style.display = 'flex';
+}
+function closeModal(id){
+  const m = $(id);
+  if(m) m.style.display = 'none';
+}
+
+/* =========================
+   11) UI: Bind botones generales
+========================= */
+function bindGeneralButtons(){
+  on($('#btnExport'),'click', exportJSON);
+
+  on($('#btnImport'),'click', ()=> $('#fileImport').click());
+  on($('#fileImport'),'change', async (e)=>{
+    const f = e.target.files?.[0];
+    if(!f) return;
+    try{
+      await importJSONFile(f);
+      toast('Import OK');
+      // refrescar UI
+      renderProviderUI();
+      renderAllClientSelects();
+      ensureCurrentInvoice();
+      renderInvoiceUI();
+      renderInvoiceList();
+      renderClientList();
+      renderProductList();
+      renderSettingsUI();
+    }catch(err){
+      alert('Error import: ' + err.message);
+    }finally{
+      e.target.value = '';
+    }
+  });
+
+  on($('#btnSaveProvider'),'click', saveProviderFromUI);
+  on($('#btnSaveSettings'),'click', saveSettingsFromUI);
+  on($('#btnSaveFirebase'),'click', saveFirebaseFromUI);
+
+  // Login modal
+  on($('#btnLogin'),'click', ()=> openModal('#loginModal'));
+  on($('#btnLoginClose'),'click', ()=> closeModal('#loginModal'));
+
+  // PIN modal
+  on($('#btnUnlock'),'click', ()=> openPinModal());
+  on($('#btnLock'),'click', ()=> lockAccounting());
+
+  on($('#btnPinCancel'),'click', ()=> closeModal('#pinModal'));
+  on($('#btnPinOk'),'click', ()=> confirmPin());
+}
+
+/* =========================
+   12) Contabilidad PIN (lógica completa en Parte 3/3)
+========================= */
+function openPinModal(){
+  $('#pinInput').value = '';
+  $('#pinMsg').textContent = 'Introduce PIN';
+  openModal('#pinModal');
+  setTimeout(()=>$('#pinInput')?.focus(), 50);
+}
+function confirmPin(){
+  const pin = ($('#pinInput').value || '').trim();
+  if(pin && pin === String(state.settings.pin || '7392')){
+    state.unlockedAccounting = true;
+    sessionStorage.setItem(LS_ACC_UNLOCK,'1');
+    $('#pinMsg').textContent = 'OK';
+    closeModal('#pinModal');
+    renderAccountingLockedState();
+    toast('Contabilidad desbloqueada');
+  }else{
+    $('#pinMsg').textContent = 'PIN incorrecto';
+  }
+}
+function lockAccounting(){
+  state.unlockedAccounting = false;
+  sessionStorage.removeItem(LS_ACC_UNLOCK);
+  renderAccountingLockedState();
+  toast('Contabilidad bloqueada');
+}
+function renderAccountingLockedState(){
+  const st = $('#accStatus');
+  if(st) st.textContent = state.unlockedAccounting ? 'Desbloqueado' : 'Bloqueado';
+
+  const tbody = $('#accTable tbody');
+  if(!tbody) return;
+
+  if(!state.unlockedAccounting){
+    tbody.innerHTML = `<tr><td colspan="5" class="muted">Contabilidad bloqueada. Pulsa “Desbloquear”.</td></tr>`;
+    $('#accSales').textContent = fmtEUR(0);
+    $('#accIva').textContent = fmtEUR(0);
+    $('#accN').textContent = '0';
+    $('#accMargin').textContent = fmtEUR(0);
+    return;
+  }
+
+  // si desbloqueado, cálculo real se hace en Parte 3/3
+  tbody.innerHTML = `<tr><td colspan="5" class="muted">Listo. Pulsa “Calcular”.</td></tr>`;
+}
+
+/* =========================
+   13) Clientes/Productos/Facturas render placeholders
+   (Render completo en Partes 2/3 y 3/3)
+========================= */
+function renderAllClientSelects(){
+  const sel1 = $('#invClient');
+  const sel2 = $('#accClient');
+
+  const opts = (state.clients||[]).map(c => `<option value="${escHtml(c.id)}">${escHtml(c.name || c.fiscalName || 'Cliente')}</option>`).join('');
+  if(sel1) sel1.innerHTML = `<option value="">— Seleccionar cliente —</option>` + opts;
+  if(sel2) sel2.innerHTML = `<option value="">(Todos)</option>` + opts;
+}
+
+function renderInvoiceUI(){
+  // render real (grid + autocomplete + totales + preview) en Parte 2/3
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+
+  // meta básica ya aquí (sin líneas)
+  $('#invNumber').value = inv.number || '';
+  $('#invDate').value = inv.dateISO || toISODate(new Date());
+  $('#invTags').value = inv.tags || '';
+  $('#invNotes').value = inv.notes || '';
+  $('#invObs').value = inv.obs || '';
+
+  $('#chkTransport').checked = !!inv.transportEnabled;
+  $('#chkIvaIncluido').checked = !!inv.ivaIncluido;
+
+  // cliente seleccionado
+  renderAllClientSelects();
+  $('#invClient').value = inv.clientId || '';
+
+  // placeholder preview mínimo
+  renderInvoicePreview();
+}
+
+function renderInvoicePreview(){
+  // preview completo en Parte 3/3 (incluye tabla + QR + logo)
+  const wrap = $('#invoicePreview');
+  if(!wrap) return;
+  const inv = getCurrentInvoice();
+  if(!inv){
+    wrap.innerHTML = `<div class="muted">Sin factura.</div>`;
+    return;
+  }
+  const cli = state.clients.find(c=>c.id===inv.clientId);
+  wrap.innerHTML = `
+    <div class="muted">
+      Vista previa cargando… (tabla + QR + logo se activa en Partes 2/3 y 3/3)
+      <br/>Factura: <strong>${escHtml(inv.number||'')}</strong> · Fecha: <strong>${escHtml(inv.dateISO||'')}</strong>
+      <br/>Cliente: <strong>${escHtml(cli?.name || '')}</strong>
+    </div>
+  `;
+}
+
+function renderInvoiceList(){
+  // listado completo en Parte 3/3
+  const box = $('#invoiceList');
+  if(!box) return;
+  box.innerHTML = `<div class="muted">Listado se renderiza en Parte 3/3.</div>`;
+}
+
+function renderClientList(){
+  // lista completa en Parte 3/3
+  const box = $('#clientList');
+  if(!box) return;
+  box.innerHTML = `<div class="muted">Clientes se renderizan en Parte 3/3.</div>`;
+}
+
+function renderProductList(){
+  // lista completa en Parte 2/3
+  const box = $('#productList');
+  if(!box) return;
+  box.innerHTML = `<div class="muted">Productos se renderizan en Parte 2/3.</div>`;
+}
+
+/* =========================
+   14) QR base (texto) — render real en Parte 3/3
+========================= */
+function buildQrText(inv){
+  const tpl = state.settings.qrTemplate || defaultSettings().qrTemplate;
+  const nif = state.provider?.nif || '';
+  const num = inv?.number || '';
+  const fecha = inv?.dateISO || toISODate(new Date());
+  const total = fmt2(0); // se actualiza en Parte 2/3 con totales reales
+  return tpl
+    .replaceAll('{NIF}', nif)
+    .replaceAll('{NUM}', num)
+    .replaceAll('{FECHA}', fecha)
+    .replaceAll('{TOTAL}', total);
+}
+function regenQRBoth(){
+  // se implementa completo en Parte 3/3 (main + preview)
+  const hint = $('#qrHint');
+  const inv = getCurrentInvoice();
+  if(hint) hint.textContent = inv ? buildQrText(inv) : '—';
+}
+
+/* =========================
+   15) Firebase opcional: flags (init real en Parte 3/3)
+========================= */
+function isFirebaseConfigured(){
+  const fb = state.settings?.firebase || {};
+  return !!(fb.apiKey && fb.authDomain && fb.databaseURL && fb.projectId && fb.appId);
+}
+
+/* =========================
+   16) Boot (se ejecuta al final de Parte 3/3)
+========================= */
+document.addEventListener('DOMContentLoaded', ()=>{
+  // arrancamos en Parte 3/3 cuando todo esté definido
+  if(typeof window.__ARSLAN_BOOT === 'function'){
+    window.__ARSLAN_BOOT();
+  }
+});
+/* =========================================================
+   app.js (2/3)
+   - Vocabulario productos + catálogo (precio + kg/caja + historial 5)
+   - Clientes (listado + editor + inline en factura)
+   - GRID PRO (5 líneas por defecto) + Autocomplete (NO sustituye solo)
+   - Cálculos: kg / caja / ud + bruto/tara/neto + importe
+   - Totales: transporte + IVA 4% (incluido o desglosado)
+   - QR UI (main + preview) + copy text
+========================================================= */
+
+/* =========================
+   17) Vocabulario Productos (raw → Set)
+========================= */
+const DEFAULT_VOCAB_RAW = `
 MANZANA PINK LADY
 MANDARINA COLOMBE
 MANDARINA PLASENCIA
@@ -156,6 +729,7 @@ TOMATE CHERRY RAMA
 TOMATE CHERRY PERA
 TOMATE DANIELA
 TOMATE ROSA PRIMERA
+CEBOLLINO
 TOMATE ASURCADO MARRON
 TOMATE RAMA
 PIMIENTO PADRON
@@ -202,6 +776,7 @@ MANDARINA TABALET
 BERZA
 COL DE BRUSELAS
 NUECES SEGUNDA
+ESCAROLA
 CEBOLLA ROJA
 MENTA
 HABANERO
@@ -273,6 +848,7 @@ KUMATO
 KIWI CHILE
 MELOCOTON AMARILLO SEGUNDA
 HIERBABUENA
+REMOLACHA
 LECHUGA ROMANA
 KAKI
 CIRUELA CLAUDIA
@@ -293,6 +869,7 @@ KIWI TOMASIN
 PIMIENTO CALIFORNIA ROJO
 MANDARINA SATSUMA
 CASTANA
+CAKI
 MANZANA KANZI
 PERA ERCOLINA
 NABO
@@ -308,2151 +885,2428 @@ UVA ROJA PRIMERA
 UVA BLANCA PRIMERA
 `.trim();
 
-/* =========================
-   Helpers
-========================= */
-function uid(prefix="id"){
-  return `${prefix}_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+function normalizeProdName(s){
+  return String(s||'').trim().replace(/\s+/g,' ').toUpperCase();
 }
-function norm(s){
-  return (s||"").toString().trim().replace(/\s+/g," ").toUpperCase();
+function prodKeyFromName(name){
+  return normalizeProdName(name);
 }
-function safeJSONParse(s){
-  try{ return JSON.parse(s); }catch(e){ return null; }
-}
-function n2(x){
-  const t = (x ?? "").toString().replace(",", ".").trim();
-  if(t === "") return 0;
-  const v = Number(t);
-  return Number.isFinite(v) ? v : 0;
-}
-function moneyEUR(n){
-  const x = Number(n);
-  const v = Number.isFinite(x) ? x : 0;
-  return v.toLocaleString("es-ES", { style:"currency", currency:"EUR" });
-}
-function clamp2(n){
-  const x = Number(n);
-  if(!Number.isFinite(x)) return 0;
-  return Math.round(x * 100) / 100;
-}
-function todayISO(){
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,"0");
-  const dd = String(d.getDate()).padStart(2,"0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-function timeStamp(){
-  const d = new Date();
-  return d.toISOString();
-}
-function setMini(id, txt){
-  const el = $(id);
-  if(el) el.textContent = txt;
-}
-function showModal(el){
-  if(!el) return;
-  el.classList.add("show");
-  el.setAttribute("aria-hidden","false");
-}
-function hideModal(el){
-  if(!el) return;
-  el.classList.remove("show");
-  el.setAttribute("aria-hidden","true");
-}
-function lzDecompressParam(param){
-  if(!param) return null;
-  try{
-    const json = window.LZString?.decompressFromEncodedURIComponent(param);
-    if(!json) return null;
-    return safeJSONParse(json);
-  }catch(e){ return null; }
-}
-function lzCompress(obj){
-  const json = JSON.stringify(obj);
-  return window.LZString?.compressToEncodedURIComponent(json) || "";
-}
+function buildDefaultProductsFromVocab(){
+  const set = new Set();
+  DEFAULT_VOCAB_RAW.split('\n').map(x=>normalizeProdName(x)).filter(Boolean).forEach(x=>set.add(x));
 
-/* =========================
-   DB model
-========================= */
-function defaultSettings(){
-  return {
-    taxRate: 0.04,
-    qrTemplate: "AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}",
-    logoSvg: `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60">
-  <rect x="2" y="2" width="56" height="56" rx="14" fill="#0b0d10"/>
-  <text x="80" y="40" font-family="Poppins, Arial" font-size="28" font-weight="800" fill="#0b0d10">ARSLAN</text>
-</svg>`,
-    adminPin: "7392",
-    firebase: {
-      apiKey:"",
-      authDomain:"",
-      databaseURL:"",
-      projectId:"",
-      appId:"",
-      storageBucket:""
-    }
-  };
-}
-
-function defaultDB(){
-  return {
-    meta: { version: 3, createdAt: timeStamp(), updatedAt: timeStamp() },
-    provider: { ...DEFAULT_PROVIDER },
-    clients: [...DEFAULT_CLIENTS],
-    products: [], // [{id,name,unitDefault,kgBox,priceKg,priceBox,priceUnit,cost,origin,history:[]}]
-    invoices: [], // newest first
-    settings: defaultSettings()
-  };
-}
-
-let DB = defaultDB();
-let currentInvoiceId = null;
-let currentClientId = null;
-let currentProdId = null;
-
-/* =========================
-   Load/Save local
-========================= */
-function loadLocal(){
-  const raw = localStorage.getItem(LS_KEY);
-  const data = safeJSONParse(raw || "null");
-  if(data && typeof data === "object"){
-    DB = Object.assign(defaultDB(), data);
-    // Ensure nested defaults
-    DB.settings = Object.assign(defaultSettings(), DB.settings || {});
-    DB.settings.firebase = Object.assign(defaultSettings().firebase, (DB.settings.firebase || {}));
-    DB.provider = Object.assign({ ...DEFAULT_PROVIDER }, DB.provider || {});
-    DB.clients = Array.isArray(DB.clients) ? DB.clients : [];
-    DB.products = Array.isArray(DB.products) ? DB.products : [];
-    DB.invoices = Array.isArray(DB.invoices) ? DB.invoices : [];
-  }else{
-    DB = defaultDB();
+  const out = {};
+  for(const name of set){
+    const key = prodKeyFromName(name);
+    out[key] = {
+      key,
+      name,
+      modeDefault: 'kg',     // kg/caja/ud
+      kgPerBox: 0,
+      prices: { kg: 0, caja: 0, ud: 0 },
+      cost: 0,
+      originDefault: '',
+      history: []            // [{ts, kg, caja, ud}]
+    };
   }
+  return out;
 }
 
-function saveLocal(){
-  DB.meta.updatedAt = timeStamp();
-  localStorage.setItem(LS_KEY, JSON.stringify(DB));
-  setMini("#dbState", `Local OK • ${DB.invoices.length} facturas • ${DB.clients.length} clientes • ${DB.products.length} productos`);
-}
-
-/* =========================
-   UI refs (Facturas)
-========================= */
-const elPillMode = $("#pillMode");
-const btnSync = $("#btnSync");
-const btnLogin = $("#btnLogin");
-
-const btnExportJson = $("#btnExportJson");
-const btnImportJson = $("#btnImportJson");
-const fileImportJson = $("#fileImportJson");
-
-const tabs = $$(".tab");
-const views = $$(".view");
-
-const invList = $("#invList");
-const invSearch = $("#invSearch");
-const btnNewInvoice = $("#btnNewInvoice");
-
-const invNumber = $("#invNumber");
-const invDate = $("#invDate");
-const invTags = $("#invTags");
-const invNotes = $("#invNotes");
-const btnDupInvoice = $("#btnDupInvoice");
-const btnDelInvoice = $("#btnDelInvoice");
-
-const provName = $("#provName");
-const provNif = $("#provNif");
-const provAddr = $("#provAddr");
-const provPhone = $("#provPhone");
-const provEmail = $("#provEmail");
-
-const clientSelect = $("#clientSelect");
-const cliName = $("#cliName");
-const cliNif = $("#cliNif");
-const cliPhone = $("#cliPhone");
-const cliAddr = $("#cliAddr");
-const cliEmail = $("#cliEmail");
-const cliAlias = $("#cliAlias");
-const btnSaveClientFromInvoice = $("#btnSaveClientFromInvoice");
-const btnNewClientQuick = $("#btnNewClientQuick");
-
-const qrBox = $("#qrBox");
-const qrMini = $("#qrMini");
-const btnRegenQR = $("#btnRegenQR");
-
-const btnAddLine = $("#btnAddLine");
-const btnClearLines = $("#btnClearLines");
-const linesTbody = $("#linesTbody");
-const dlProducts = $("#dlProducts");
-
-const swTrans = $("#swTrans");
-const transPct = $("#transPct");
-const swIvaIncl = $("#swIvaIncl");
-
-const tSubtotal = $("#tSubtotal");
-const tTrans = $("#tTrans");
-const tIva = $("#tIva");
-const tTotal = $("#tTotal");
-const taxNote = $("#taxNote");
-
-const payMethod = $("#payMethod");
-const payAmount = $("#payAmount");
-const btnAddPay = $("#btnAddPay");
-const btnClearPays = $("#btnClearPays");
-const payList = $("#payList");
-const tPaid = $("#tPaid");
-const tDue = $("#tDue");
-const payState = $("#payState");
-
-const btnSaveInvoice = $("#btnSaveInvoice");
-const btnPDF = $("#btnPDF");
-const btnPDFCloud = $("#btnPDFCloud");
-const btnOpenPDF = $("#btnOpenPDF");
-const btnCopyPdfLink = $("#btnCopyPdfLink");
-const btnWhats = $("#btnWhats");
-const btnImportPricesLink = $("#btnImportPricesLink");
-const btnMakePricesLink = $("#btnMakePricesLink");
-const pdfState = $("#pdfState");
-
-/* =========================
-   UI refs (Clientes)
-========================= */
-const cliSearch2 = $("#cliSearch2");
-const btnNewClient = $("#btnNewClient");
-const clientsList = $("#clientsList");
-
-const cName = $("#cName");
-const cNif = $("#cNif");
-const cAlias = $("#cAlias");
-const cAddr = $("#cAddr");
-const cPhone = $("#cPhone");
-const cEmail = $("#cEmail");
-const cNotes = $("#cNotes");
-const btnSaveClient = $("#btnSaveClient");
-const btnDelClient = $("#btnDelClient");
-const clientsMsg = $("#clientsMsg");
-
-/* =========================
-   UI refs (Productos)
-========================= */
-const prodSearch = $("#prodSearch");
-const btnSeedVocab = $("#btnSeedVocab");
-const btnNewProd = $("#btnNewProd");
-const prodList = $("#prodList");
-
-const pName = $("#pName");
-const pUnit = $("#pUnit");
-const pKgBox = $("#pKgBox");
-const pPriceKg = $("#pPriceKg");
-const pPriceBox = $("#pPriceBox");
-const pPriceUnit = $("#pPriceUnit");
-const pCost = $("#pCost");
-const pOrigin = $("#pOrigin");
-const btnSaveProd = $("#btnSaveProd");
-const btnDelProd = $("#btnDelProd");
-const pHist = $("#pHist");
-const prodMsg = $("#prodMsg");
-
-/* =========================
-   UI refs (Contabilidad)
-========================= */
-const accStatus = $("#accStatus");
-const btnUnlockAcc = $("#btnUnlockAcc");
-const btnLockAcc = $("#btnLockAcc");
-
-const accFrom = $("#accFrom");
-const accTo = $("#accTo");
-const accClient = $("#accClient");
-const accTag = $("#accTag");
-const btnRunAcc = $("#btnRunAcc");
-const kSales = $("#kSales");
-const kIva = $("#kIva");
-const kN = $("#kN");
-const kMargin = $("#kMargin");
-const accTable = $("#accTable");
-
-/* =========================
-   UI refs (Ajustes)
-========================= */
-const btnResetLocal = $("#btnResetLocal");
-const setTax = $("#setTax");
-const setQrTpl = $("#setQrTpl");
-const setLogoSvg = $("#setLogoSvg");
-const btnSaveSettings = $("#btnSaveSettings");
-const setMsg = $("#setMsg");
-
-const fbApiKey = $("#fbApiKey");
-const fbAuthDomain = $("#fbAuthDomain");
-const fbDbUrl = $("#fbDbUrl");
-const fbProjectId = $("#fbProjectId");
-const fbAppId = $("#fbAppId");
-const fbBucket = $("#fbBucket");
-const btnSaveFirebase = $("#btnSaveFirebase");
-const fbMsg = $("#fbMsg");
-const btnOpenPricesPage = $("#btnOpenPricesPage");
-
-/* =========================
-   Modals
-========================= */
-const loginModal = $("#loginModal");
-const btnCloseLogin = $("#btnCloseLogin");
-const loginEmail = $("#loginEmail");
-const loginPass = $("#loginPass");
-const btnDoLogin = $("#btnDoLogin");
-const btnDoSignup = $("#btnDoSignup");
-const btnDoLogout = $("#btnDoLogout");
-const loginMsg = $("#loginMsg");
-
-const pinModal = $("#pinModal");
-const btnClosePin = $("#btnClosePin");
-const pinInput = $("#pinInput");
-const btnPinOk = $("#btnPinOk");
-const btnPinCancel = $("#btnPinCancel");
-const pinMsg = $("#pinMsg");
-
-const pricesModal = $("#pricesModal");
-const btnClosePrices = $("#btnClosePrices");
-const pricesLinkInput = $("#pricesLinkInput");
-const btnDoImportPrices = $("#btnDoImportPrices");
-const btnCopyMyPricesEditor = $("#btnCopyMyPricesEditor");
-const pricesMsg = $("#pricesMsg");
-
-/* =========================
-   Tabs nav
-========================= */
-function openView(id){
-  tabs.forEach(b => b.classList.toggle("active", b.dataset.view === id));
-  views.forEach(v => v.classList.toggle("active", v.id === id));
-}
-tabs.forEach(b => b.addEventListener("click", () => openView(b.dataset.view)));
-
-/* =========================
-   Products helpers
-========================= */
-function getProductByName(name){
-  const n = norm(name);
-  return DB.products.find(p => norm(p.name) === n) || null;
-}
-function getProductById(id){
-  return DB.products.find(p => p.id === id) || null;
-}
-function ensureProductHistory(p){
-  if(!Array.isArray(p.history)) p.history = [];
-  p.history = p.history.slice(0, 5);
-}
-function pushPriceHistory(p, snapshot){
-  ensureProductHistory(p);
-  p.history.unshift({ ts: Date.now(), ...snapshot });
-  p.history = p.history.slice(0, 5);
-}
-function productPriceForMode(p, mode){
-  if(!p) return 0;
-  if(mode === "kg") return n2(p.priceKg);
-  if(mode === "caja") return n2(p.priceBox);
-  return n2(p.priceUnit);
+function initProductsIfEmpty(){
+  if(state.products && Object.keys(state.products).length > 0) return;
+  state.products = buildDefaultProductsFromVocab();
+  saveLocal();
 }
 
 /* =========================
-   Invoice helpers
+   18) Clientes: util
 ========================= */
-function newInvoiceSkeleton(){
-  const num = `FA-${new Date().getFullYear()}${String(new Date().getMonth()+1).padStart(2,"0")}${String(new Date().getDate()).padStart(2,"0")}${String(new Date().getHours()).padStart(2,"0")}${String(new Date().getMinutes()).padStart(2,"0")}`;
-  const firstClient = DB.clients[0]?.id || "";
-  const taxRate = Number(DB.settings.taxRate ?? 0.04) || 0.04;
-
-  const inv = {
-    id: uid("inv"),
-    number: num,
-    dateISO: todayISO(),
-    tags: "",
-    notes: "",
-    clientId: firstClient,
-    provider: { ...DB.provider },     // snapshot editable in factura (y se puede guardar a provider)
-    clientSnap: null,                // se llena al cargar según clientId
-    lines: [],
-    payments: [],
-    transportEnabled: false,
-    transportPct: 0.10,
-    ivaIncluded: false,
-    taxRate,
-    totals: { subtotal:0, transport:0, iva:0, total:0 },
-    pdf: { localUrl:"", cloudUrl:"" },
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
-
-  // 5 líneas por defecto vacías
-  for(let i=0;i<5;i++) inv.lines.push(newEmptyLine());
-  return inv;
+function getClientById(id){
+  return (state.clients||[]).find(c=>c.id===id) || null;
+}
+function ensureClientId(cli){
+  if(cli.id) return cli.id;
+  cli.id = uid('cli');
+  return cli.id;
 }
 
-function newEmptyLine(){
+/* =========================
+   19) Factura: líneas (estructura + defaults)
+========================= */
+function createEmptyLine(){
   return {
-    id: uid("ln"),
-    productId: "",
-    productName: "",
-    mode: "kg",
-    qty: 0,
-    gross: 0,
-    tare: 0,
-    net: 0,
+    id: uid('ln'),
+    productKey: '',
+    productName: '',
+    mode: 'kg',       // kg/caja/ud
+    cant: 0,          // si caja/ud
+    bruto: 0,
+    tara: 0,
+    neto: 0,
     price: 0,
-    origin: "",
+    origin: '',
     amount: 0
   };
 }
 
-function getInvoiceById(id){
-  return DB.invoices.find(x => x.id === id) || null;
-}
-
-function upsertInvoice(inv){
-  inv.updatedAt = Date.now();
-  const idx = DB.invoices.findIndex(x => x.id === inv.id);
-  if(idx >= 0) DB.invoices[idx] = inv;
-  else DB.invoices.unshift(inv);
+function ensureInvoiceLines(inv, n=5){
+  if(!inv.lines) inv.lines = [];
+  while(inv.lines.length < n){
+    inv.lines.push(createEmptyLine());
+  }
 }
 
 /* =========================
-   Totals compute
+   20) Autocomplete (NO sustituye solo)
 ========================= */
-function computeLine(line){
-  const mode = line.mode || "kg";
-  const qty = clamp2(n2(line.qty));
-  const gross = clamp2(n2(line.gross));
-  const tare = clamp2(n2(line.tare));
-  let net = clamp2(n2(line.net));
-
-  if(mode === "kg"){
-    // net = gross - tare (si el usuario no mete net, lo calculamos)
-    const calc = clamp2(gross - tare);
-    net = calc;
-    line.net = net;
-    line.amount = clamp2(net * clamp2(n2(line.price)));
-    line.qty = 0; // no aplica en kg (pero lo dejamos en 0)
-  }else if(mode === "caja"){
-    // si qty y producto con kgBox, net puede ser qty*kgBox (si gross/tare no se usa)
-    line.qty = qty;
-    const p = line.productId ? getProductById(line.productId) : getProductByName(line.productName);
-    const kgBox = p ? n2(p.kgBox) : 0;
-
-    // si el usuario mete gross/tare, usamos net = gross - tare; si no, net = qty*kgBox (si kgBox existe)
-    const hasGross = (gross > 0 || tare > 0);
-    if(hasGross){
-      net = clamp2(gross - tare);
-    }else if(kgBox > 0 && qty > 0){
-      net = clamp2(qty * kgBox);
-    }else{
-      net = clamp2(n2(line.net));
+function getProductSuggestions(query, limit=12){
+  const q = normalizeProdName(query);
+  if(!q) return [];
+  const keys = Object.keys(state.products||{});
+  const hits = [];
+  for(const k of keys){
+    const p = state.products[k];
+    if(!p) continue;
+    if(p.name.includes(q)){
+      hits.push(p);
+      if(hits.length >= limit) break;
     }
-    line.net = net;
-
-    // price: por caja (por defecto). Si priceBox no existe y hay priceKg, el user puede usar priceKg manual.
-    // Regla: si net>0 y el usuario claramente puso precio kg (p.priceKg) y priceBox está vacío => net*price
-    // Pero para no “adivinar” mal, usamos:
-    // - si hay kgBox y priceBox existe => qty*price
-    // - si no, net*price
-    const price = clamp2(n2(line.price));
-    if(qty > 0 && (p && n2(p.priceBox) > 0)){
-      line.amount = clamp2(qty * price);
-    }else{
-      line.amount = clamp2(net * price);
-    }
-  }else{
-    // unidad
-    line.qty = qty;
-    line.net = 0;
-    line.gross = 0;
-    line.tare = 0;
-    line.amount = clamp2(qty * clamp2(n2(line.price)));
   }
-
-  // normalizar
-  line.price = clamp2(n2(line.price));
-  line.origin = (line.origin || "").toString();
-  return line;
+  return hits;
 }
 
-function computeInvoiceTotals(inv){
-  // compute lines
-  let subtotal = 0;
-  inv.lines.forEach(ln => {
-    computeLine(ln);
-    subtotal += n2(ln.amount);
+function getProductLastPriceForMode(p, mode){
+  if(!p) return 0;
+  // si hay precio actual, úsalo; si no, intenta último historial
+  const cur = Number(p.prices?.[mode] || 0);
+  if(cur > 0) return cur;
+  const h = p.history || [];
+  if(h.length){
+    const last = h[0];
+    return Number(last?.[mode] || 0);
+  }
+  return 0;
+}
+
+/* =========================
+   21) GRID PRO render
+========================= */
+function renderLines(){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+  ensureInvoiceLines(inv, 5);
+
+  const body = $('#linesBody');
+  if(!body) return;
+  body.innerHTML = '';
+
+  inv.lines.forEach((ln, idx)=>{
+    const row = document.createElement('div');
+    row.className = 'gridRow';
+    row.dataset.lineId = ln.id;
+
+    // Producto (acWrap)
+    const prodCell = document.createElement('div');
+    prodCell.className = 'acWrap cell-prod';
+    prodCell.innerHTML = `
+      <input type="text" class="inpProd" placeholder="Producto" value="${escHtml(ln.productName||'')}" autocomplete="off" />
+      <div class="priceHint inpHint"></div>
+      <div class="acList" style="display:none;"></div>
+    `;
+
+    // Modo
+    const modeCell = document.createElement('div');
+    modeCell.className = 'cell-mode';
+    modeCell.innerHTML = `
+      <select class="inpMode">
+        <option value="kg">kg</option>
+        <option value="caja">caja</option>
+        <option value="ud">ud</option>
+      </select>
+    `;
+
+    // Cant
+    const cantCell = document.createElement('div');
+    cantCell.className = 'cell-cant';
+    cantCell.innerHTML = `<input class="inpCant" type="number" inputmode="decimal" placeholder="Cant." value="${ln.cant||0}" />`;
+
+    // Bruto
+    const brutoCell = document.createElement('div');
+    brutoCell.className = 'cell-bruto';
+    brutoCell.innerHTML = `<input class="inpBruto" type="number" inputmode="decimal" placeholder="Bruto" value="${ln.bruto||0}" />`;
+
+    // Tara
+    const taraCell = document.createElement('div');
+    taraCell.className = 'cell-tara';
+    taraCell.innerHTML = `<input class="inpTara" type="number" inputmode="decimal" placeholder="Tara" value="${ln.tara||0}" />`;
+
+    // Neto (readonly)
+    const netoCell = document.createElement('div');
+    netoCell.className = 'cell-neto';
+    netoCell.innerHTML = `<input class="inpNeto" type="number" inputmode="decimal" placeholder="Neto" value="${ln.neto||0}" readonly />`;
+
+    // Precio
+    const priceCell = document.createElement('div');
+    priceCell.className = 'cell-precio';
+    priceCell.innerHTML = `<input class="inpPrice" type="number" inputmode="decimal" placeholder="Precio" value="${ln.price||0}" />`;
+
+    // Origen
+    const originCell = document.createElement('div');
+    originCell.className = 'cell-origen';
+    originCell.innerHTML = `<input class="inpOrigin" type="text" placeholder="Origen" value="${escHtml(ln.origin||'')}" />`;
+
+    // Importe
+    const amountCell = document.createElement('div');
+    amountCell.className = 'cell-importe';
+    amountCell.innerHTML = `<div class="amountBox">${fmtEUR(ln.amount||0)}</div>`;
+
+    // Delete
+    const delCell = document.createElement('div');
+    delCell.className = 'cell-del';
+    delCell.innerHTML = `<button class="btnX" title="Borrar línea">×</button>`;
+
+    row.appendChild(prodCell);
+    row.appendChild(modeCell);
+    row.appendChild(cantCell);
+    row.appendChild(brutoCell);
+    row.appendChild(taraCell);
+    row.appendChild(netoCell);
+    row.appendChild(priceCell);
+    row.appendChild(originCell);
+    row.appendChild(amountCell);
+    row.appendChild(delCell);
+
+    body.appendChild(row);
+
+    // aplicar modo seleccionado
+    row.querySelector('.inpMode').value = ln.mode || 'kg';
+
+    // binds
+    bindLineRow(row);
+    updateLineUIHints(row); // último precio UI
   });
-  subtotal = clamp2(subtotal);
 
-  // transport
-  const transEnabled = !!inv.transportEnabled;
-  const pct = clamp2(n2(inv.transportPct));
-  const transport = transEnabled ? clamp2(subtotal * pct) : 0;
+  recalcInvoiceTotalsAndUI();
+  regenQRBoth();
+  renderInvoicePreview();
+}
 
-  // IVA
-  const taxRate = clamp2(n2(inv.taxRate ?? DB.settings.taxRate ?? 0.04));
-  let iva = 0;
-  let total = 0;
+function findLineById(inv, lineId){
+  return inv.lines.find(x=>x.id === lineId) || null;
+}
 
-  if(inv.ivaIncluded){
-    // IVA incluido: no desglosar, iva mostrado = 0 (o informativo)
-    iva = 0;
-    total = clamp2(subtotal + transport);
+/* =========================
+   22) Línea: cálculos
+========================= */
+function calcLine(ln){
+  const mode = ln.mode || 'kg';
+  const bruto = clampNum(ln.bruto, 0);
+  const tara = clampNum(ln.tara, 0);
+  let neto = clampNum(bruto - tara, 0);
+  let amount = 0;
+
+  // modo caja: si hay cant y kg/caja, neto puede venir de ahí si bruto=0
+  if(mode === 'caja'){
+    const p = state.products?.[ln.productKey] || null;
+    const kgBox = clampNum(p?.kgPerBox || 0, 0);
+    const cant = clampNum(ln.cant, 0);
+    if(bruto === 0 && tara === 0 && kgBox > 0 && cant > 0){
+      neto = cant * kgBox;
+    }
+    amount = clampNum(ln.price, 0) * (cant > 0 ? cant : 0);
+    // si precio está pensado €/kg, usuario puede ponerlo, y entonces quiere neto*precio
+    // regla: si cant==0 y neto>0, usamos neto*precio
+    if(cant === 0 && neto > 0){
+      amount = clampNum(ln.price, 0) * neto;
+    }
+  }else if(mode === 'ud'){
+    const cant = clampNum(ln.cant, 0);
+    amount = clampNum(ln.price, 0) * cant;
   }else{
-    iva = clamp2((subtotal + transport) * taxRate);
-    total = clamp2(subtotal + transport + iva);
+    // kg
+    amount = clampNum(ln.price, 0) * neto;
   }
 
-  inv.totals = { subtotal, transport, iva, total };
-  return inv.totals;
+  ln.neto = Number.isFinite(neto) ? neto : 0;
+  ln.amount = Number.isFinite(amount) ? amount : 0;
+  return ln;
 }
 
 /* =========================
-   Payments
+   23) Bind fila (inputs + autocomplete + borrar + enter next)
 ========================= */
-function sumPayments(inv){
-  return clamp2((inv.payments || []).reduce((a,p) => a + n2(p.amount), 0));
+function bindLineRow(row){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+
+  const lineId = row.dataset.lineId;
+  const ln = findLineById(inv, lineId);
+  if(!ln) return;
+
+  const inpProd = row.querySelector('.inpProd');
+  const acList = row.querySelector('.acList');
+  const hint = row.querySelector('.inpHint');
+
+  const inpMode = row.querySelector('.inpMode');
+  const inpCant = row.querySelector('.inpCant');
+  const inpBruto = row.querySelector('.inpBruto');
+  const inpTara = row.querySelector('.inpTara');
+  const inpPrice = row.querySelector('.inpPrice');
+  const inpOrigin = row.querySelector('.inpOrigin');
+
+  const btnX = row.querySelector('.btnX');
+
+  // --- Autocomplete helpers
+  function closeAC(){
+    acList.style.display = 'none';
+    acList.innerHTML = '';
+    acList.dataset.active = '';
+  }
+  function openAC(items){
+    if(!items.length){ closeAC(); return; }
+    acList.innerHTML = items.map((p,i)=>{
+      const lp = getProductLastPriceForMode(p, p.modeDefault || 'kg');
+      const sub = lp ? `Último: ${fmt2(lp)} (${p.modeDefault||'kg'})` : 'Sin precio';
+      return `<div class="acItem" data-idx="${i}" data-key="${escHtml(p.key)}">
+                ${escHtml(p.name)}
+                <span class="acSub">${escHtml(sub)}</span>
+              </div>`;
+    }).join('');
+    acList.style.display = 'block';
+    acList.dataset.active = '0';
+    setActive(0);
+  }
+  function setActive(i){
+    const items = $$('.acItem', acList);
+    if(!items.length) return;
+    i = Math.max(0, Math.min(items.length-1, i));
+    items.forEach(el=>el.classList.remove('active'));
+    items[i].classList.add('active');
+    acList.dataset.active = String(i);
+    // ensure visible
+    items[i].scrollIntoView({block:'nearest'});
+  }
+  function pickActive(){
+    const items = $$('.acItem', acList);
+    if(!items.length) return false;
+    const i = parseInt(acList.dataset.active||'0',10);
+    const el = items[i];
+    if(!el) return false;
+    const key = el.dataset.key;
+    const p = state.products?.[key];
+    if(!p) return false;
+
+    // ✅ NO sustituye solo: solo al seleccionar/enter sobre sugerencia
+    ln.productKey = p.key;
+    ln.productName = p.name;
+
+    // defaults
+    ln.mode = p.modeDefault || ln.mode || 'kg';
+    ln.origin = ln.origin || p.originDefault || '';
+    // precio automático por modo
+    const autoPrice = getProductLastPriceForMode(p, ln.mode);
+    if(!ln.price || Number(ln.price) === 0){
+      ln.price = autoPrice || 0;
+    }
+
+    // actualiza UI
+    inpProd.value = ln.productName;
+    inpMode.value = ln.mode;
+    inpOrigin.value = ln.origin;
+    inpPrice.value = ln.price || 0;
+
+    closeAC();
+    updateLineUIHints(row);
+    calcLine(ln);
+    updateRowAmounts(row, ln);
+    recalcInvoiceTotalsAndUI(true);
+    saveLocal();
+    regenQRBoth();
+    renderInvoicePreview();
+    return true;
+  }
+
+  // input producto: mostrar lista
+  on(inpProd,'input', ()=>{
+    ln.productName = (inpProd.value||'').trim();
+    // NO tocamos productKey hasta que seleccione
+    const items = getProductSuggestions(inpProd.value, 12);
+    openAC(items);
+  });
+
+  on(inpProd,'keydown', (e)=>{
+    if(acList.style.display === 'block'){
+      if(e.key === 'ArrowDown'){ e.preventDefault(); setActive(parseInt(acList.dataset.active||'0',10)+1); return; }
+      if(e.key === 'ArrowUp'){ e.preventDefault(); setActive(parseInt(acList.dataset.active||'0',10)-1); return; }
+      if(e.key === 'Enter'){
+        // si hay sugerencias, Enter selecciona la activa
+        e.preventDefault();
+        if(pickActive()){
+          // pasar al siguiente input
+          setTimeout(()=>inpMode.focus(), 0);
+        }
+        return;
+      }
+      if(e.key === 'Escape'){ closeAC(); return; }
+    }
+    // Enter normal si no hay ac abierto: pasar a siguiente
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      inpMode.focus();
+    }
+  });
+
+  on(inpProd,'blur', ()=>{
+    // cerrar con delay por click en item
+    setTimeout(()=>closeAC(), 180);
+  });
+
+  on(acList,'mousedown', (e)=>{
+    const item = e.target.closest('.acItem');
+    if(!item) return;
+    acList.dataset.active = item.dataset.idx;
+    pickActive();
+  });
+
+  // cambios normales
+  on(inpMode,'change', ()=>{
+    ln.mode = inpMode.value;
+    // si hay producto seleccionado, sugerir precio
+    const p = state.products?.[ln.productKey];
+    if(p){
+      const autoPrice = getProductLastPriceForMode(p, ln.mode);
+      if(!ln.price || Number(ln.price) === 0){
+        ln.price = autoPrice || 0;
+        inpPrice.value = ln.price || 0;
+      }
+    }
+    calcLine(ln);
+    updateLineUIHints(row);
+    updateRowAmounts(row, ln);
+    recalcInvoiceTotalsAndUI(true);
+    saveLocal();
+    regenQRBoth();
+    renderInvoicePreview();
+  });
+
+  const numRecalc = ()=>{
+    ln.cant = parseNum(inpCant.value);
+    ln.bruto = parseNum(inpBruto.value);
+    ln.tara = parseNum(inpTara.value);
+    ln.price = parseNum(inpPrice.value);
+    ln.origin = (inpOrigin.value||'').trim();
+
+    calcLine(ln);
+    updateRowAmounts(row, ln);
+    recalcInvoiceTotalsAndUI(true);
+    saveLocal();
+    regenQRBoth();
+    renderInvoicePreview();
+  };
+
+  on(inpCant,'input', numRecalc);
+  on(inpBruto,'input', numRecalc);
+  on(inpTara,'input', numRecalc);
+  on(inpPrice,'input', numRecalc);
+  on(inpOrigin,'input', ()=>{
+    ln.origin = (inpOrigin.value||'').trim();
+    saveLocal();
+    renderInvoicePreview();
+  });
+
+  // enter next field
+  const chain = [inpProd, inpMode, inpCant, inpBruto, inpTara, inpPrice, inpOrigin];
+  chain.forEach((el, i)=>{
+    on(el,'keydown', (e)=>{
+      if(e.key === 'Enter'){
+        // autocomplete ya lo gestiona en prod
+        if(el === inpProd) return;
+        e.preventDefault();
+        const next = chain[i+1];
+        if(next) next.focus();
+        else {
+          // última columna: si es última fila, añade una nueva
+          const allRows = $$('.gridRow', $('#linesBody'));
+          const idxRow = allRows.indexOf(row);
+          if(idxRow === allRows.length-1){
+            addLine();
+            setTimeout(()=>{
+              const newRows = $$('.gridRow', $('#linesBody'));
+              const r2 = newRows[newRows.length-1];
+              r2?.querySelector('.inpProd')?.focus();
+            }, 0);
+          }else{
+            const rNext = allRows[idxRow+1];
+            rNext?.querySelector('.inpProd')?.focus();
+          }
+        }
+      }
+    });
+  });
+
+  // borrar línea
+  on(btnX,'click', ()=>{
+    const idx = inv.lines.findIndex(x=>x.id===ln.id);
+    if(idx >= 0){
+      inv.lines.splice(idx,1);
+      // mantener mínimo 5
+      ensureInvoiceLines(inv, 5);
+      saveLocal();
+      renderLines();
+      toast('Línea borrada');
+    }
+  });
 }
-function payStateText(inv){
-  const paid = sumPayments(inv);
-  const total = n2(inv.totals?.total);
-  const due = clamp2(total - paid);
-  if(total <= 0) return "—";
-  if(due <= 0.01) return "PAGADA";
-  if(paid > 0) return "PARCIAL";
-  return "IMPAGADA";
+
+function updateRowAmounts(row, ln){
+  row.querySelector('.inpNeto').value = ln.neto || 0;
+  row.querySelector('.amountBox').textContent = fmtEUR(ln.amount || 0);
+}
+
+function updateLineUIHints(row){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+  const ln = findLineById(inv, row.dataset.lineId);
+  if(!ln) return;
+
+  const hint = row.querySelector('.inpHint');
+  if(!hint) return;
+
+  const p = state.products?.[ln.productKey];
+  if(!p){
+    hint.textContent = '';
+    return;
+  }
+
+  const last = getProductLastPriceForMode(p, ln.mode || p.modeDefault || 'kg');
+  const mode = (ln.mode || 'kg');
+  const kgBox = Number(p.kgPerBox || 0);
+
+  const extras = [];
+  if(mode === 'caja' && kgBox > 0) extras.push(`${fmt2(kgBox)} kg/caja`);
+  if(last > 0) extras.push(`Último: ${fmt2(last)} (${mode})`);
+
+  hint.textContent = extras.join(' · ');
 }
 
 /* =========================
-   Render Datalist products
+   24) Totales factura + pagos + UI
 ========================= */
-function renderProductsDatalist(){
-  if(!dlProducts) return;
-  dlProducts.innerHTML = DB.products
-    .slice()
-    .sort((a,b) => norm(a.name).localeCompare(norm(b.name)))
-    .map(p => `<option value="${p.name}"></option>`)
-    .join("");
+function computeInvoiceTotals(inv){
+  const taxRate = Number(state.settings.taxRate ?? 4) / 100;
+  const transportPct = Number(state.settings.transportPct ?? 10) / 100;
+
+  const subtotal = (inv.lines||[]).reduce((s,ln)=>{
+    // recalcula por seguridad
+    calcLine(ln);
+    return s + (Number(ln.amount)||0);
+  }, 0);
+
+  const transport = inv.transportEnabled ? subtotal * transportPct : 0;
+
+  const base = subtotal + transport;
+
+  let iva = 0;
+  let total = base;
+
+  if(!inv.ivaIncluido){
+    iva = base * taxRate;
+    total = base + iva;
+  }else{
+    // IVA incluido: no se añade (solo texto en PDF más adelante)
+    iva = 0;
+    total = base;
+  }
+
+  // pagos
+  const paidParts = (inv.payments||[]).reduce((s,p)=> s + (Number(p.amount)||0), 0);
+  const paidManual = Number(inv.payManual||0);
+  const paid = paidParts + paidManual;
+  const pending = total - paid;
+
+  return { subtotal, transport, iva, total, paid, pending };
+}
+
+function recalcInvoiceTotalsAndUI(soft=false){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+
+  const t = computeInvoiceTotals(inv);
+
+  $('#tSubtotal').textContent = fmtEUR(t.subtotal);
+  $('#tTransport').textContent = fmtEUR(t.transport);
+  $('#tIva').textContent = fmtEUR(t.iva);
+  $('#tTotal').textContent = fmtEUR(t.total);
+  $('#tPending').textContent = fmtEUR(Math.max(0, t.pending));
+
+  // estado sugerido (no forzamos si usuario quiere manual)
+  if(t.pending <= 0 && t.total > 0){
+    // si no hay pendiente, recomendación pagada
+  }else if(t.paid > 0){
+    // recomendación parcial
+  }
+
+  // PDF state pill
+  const pdfState = $('#pdfState');
+  if(pdfState){
+    pdfState.textContent = inv.pdfUrl ? 'PDF en nube ✅' : (state.tempPdfUrl ? 'PDF local ✅' : '—');
+  }
+
+  if(!soft) saveLocal();
 }
 
 /* =========================
-   Render invoice list
+   25) Factura: cliente inline (derecha)
 ========================= */
+function renderInvoiceClientUI(inv){
+  const cli = getClientById(inv.clientId);
+
+  $('#cliName').value = cli?.fiscalName || cli?.name || '';
+  $('#cliNif').value = cli?.nif || '';
+  $('#cliAddr').value = cli?.addr || '';
+  $('#cliPhone').value = cli?.phone || '';
+  $('#cliEmail').value = cli?.email || '';
+}
+
+function setInvoiceClientFromSelect(){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+  const id = $('#invClient').value || '';
+  inv.clientId = id;
+
+  const cli = getClientById(id);
+  inv.clientNameCache = cli?.name || cli?.fiscalName || '';
+
+  // IVA incluido default por cliente (si lo tiene)
+  if(cli && typeof cli.ivaIncluidoDefault === 'boolean'){
+    inv.ivaIncluido = !!cli.ivaIncluidoDefault;
+    $('#chkIvaIncluido').checked = inv.ivaIncluido;
+  }
+
+  renderInvoiceClientUI(inv);
+  saveLocal();
+  recalcInvoiceTotalsAndUI(true);
+  regenQRBoth();
+  renderInvoicePreview();
+}
+
+function newClientInline(){
+  $('#invClient').value = '';
+  $('#cliName').value = '';
+  $('#cliNif').value = '';
+  $('#cliAddr').value = '';
+  $('#cliPhone').value = '';
+  $('#cliEmail').value = '';
+  toast('Nuevo cliente (rellena y guarda)');
+}
+
+function saveClientInline(){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+
+  const selId = $('#invClient').value || '';
+
+  const fiscalName = ($('#cliName').value || '').trim();
+  const nif = ($('#cliNif').value || '').trim();
+  const addr = ($('#cliAddr').value || '').trim();
+  const phone = ($('#cliPhone').value || '').trim();
+  const email = ($('#cliEmail').value || '').trim();
+
+  if(!fiscalName){
+    alert('Pon nombre del cliente');
+    return;
+  }
+
+  let cli = selId ? getClientById(selId) : null;
+  if(!cli){
+    cli = { id: uid('cli'), name: fiscalName, fiscalName, nif, addr, phone, email, alias:'', notes:'' };
+    state.clients.push(cli);
+  }else{
+    cli.fiscalName = fiscalName;
+    cli.name = cli.name || fiscalName;
+    cli.nif = nif;
+    cli.addr = addr;
+    cli.phone = phone;
+    cli.email = email;
+  }
+
+  inv.clientId = cli.id;
+  inv.clientNameCache = cli.name || cli.fiscalName;
+
+  renderAllClientSelects();
+  $('#invClient').value = cli.id;
+
+  saveLocal();
+  toast('Cliente guardado');
+  renderInvoiceClientUI(inv);
+  renderClientList();
+  renderInvoiceList();
+}
+
+/* =========================
+   26) Factura: meta + botones
+========================= */
+function bindInvoiceMetaAndButtons(){
+  on($('#invClient'),'change', setInvoiceClientFromSelect);
+
+  on($('#invNumber'),'input', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.number = ($('#invNumber').value || '').trim();
+    saveLocal(); regenQRBoth(); renderInvoicePreview(); renderInvoiceList();
+  });
+  on($('#invDate'),'change', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.dateISO = $('#invDate').value || toISODate(new Date());
+    saveLocal(); regenQRBoth(); renderInvoicePreview(); renderInvoiceList();
+  });
+  on($('#invTags'),'input', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.tags = ($('#invTags').value || '').trim();
+    saveLocal(); renderInvoicePreview(); renderInvoiceList();
+  });
+  on($('#invNotes'),'input', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.notes = ($('#invNotes').value || '').trim();
+    saveLocal(); renderInvoicePreview();
+  });
+  on($('#invObs'),'input', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.obs = ($('#invObs').value || '').trim();
+    saveLocal(); renderInvoicePreview();
+  });
+
+  on($('#chkTransport'),'change', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.transportEnabled = $('#chkTransport').checked;
+    saveLocal(); recalcInvoiceTotalsAndUI(true); regenQRBoth(); renderInvoicePreview(); renderInvoiceList();
+  });
+  on($('#chkIvaIncluido'),'change', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.ivaIncluido = $('#chkIvaIncluido').checked;
+    saveLocal(); recalcInvoiceTotalsAndUI(true); regenQRBoth(); renderInvoicePreview(); renderInvoiceList();
+  });
+
+  on($('#btnAddIvaToTotal'),'click', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.ivaIncluido = false;
+    $('#chkIvaIncluido').checked = false;
+    saveLocal();
+    recalcInvoiceTotalsAndUI(true);
+    toast('IVA añadido al total');
+  });
+
+  // pagos
+  on($('#btnAddPay'),'click', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    const amt = parseNum($('#payAmount').value);
+    if(amt <= 0) return;
+    inv.payments = inv.payments || [];
+    inv.payments.unshift({ id: uid('pay'), ts: Date.now(), amount: amt });
+    $('#payAmount').value = '';
+    saveLocal();
+    renderPayList();
+    recalcInvoiceTotalsAndUI(true);
+    renderInvoicePreview();
+    renderInvoiceList();
+  });
+
+  on($('#payManual'),'input', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.payManual = parseNum($('#payManual').value);
+    saveLocal(); recalcInvoiceTotalsAndUI(true); renderInvoicePreview(); renderInvoiceList();
+  });
+
+  on($('#payStatus'),'change', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.payStatus = $('#payStatus').value;
+    saveLocal(); renderInvoicePreview(); renderInvoiceList();
+  });
+
+  on($('#payMethod'),'change', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    inv.payMethod = $('#payMethod').value;
+    saveLocal(); renderInvoicePreview(); renderInvoiceList();
+  });
+
+  // clientes inline
+  on($('#btnNewClientInline'),'click', newClientInline);
+  on($('#btnSaveClientInline'),'click', saveClientInline);
+
+  // líneas
+  on($('#btnAddLine'),'click', ()=> addLine());
+  on($('#btnClearLines'),'click', ()=> clearLines());
+
+  // facturas: nueva / duplicar / eliminar
+  on($('#btnNewInvoice'),'click', ()=>{
+    const inv = createEmptyInvoice();
+    ensureInvoiceLines(inv, 5);
+    state.invoices.unshift(inv);
+    state.currentInvoiceId = inv.id;
+    saveLocal();
+    renderInvoiceUI();
+    toast('Nueva factura');
+  });
+
+  on($('#btnDupInvoice'),'click', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    const copy = JSON.parse(JSON.stringify(inv));
+    copy.id = uid('inv');
+    copy.number = invoiceNumberFromDate(new Date());
+    copy.dateISO = toISODate(new Date());
+    copy.pdfUrl = '';
+    copy.payments = [];
+    copy.payManual = 0;
+    copy.payStatus = 'impagada';
+    copy.payMethod = 'efectivo';
+    // duplicar líneas con ids nuevos
+    copy.lines = (copy.lines||[]).map(l=>{
+      const nl = { ...l };
+      nl.id = uid('ln');
+      return nl;
+    });
+    state.invoices.unshift(copy);
+    state.currentInvoiceId = copy.id;
+    saveLocal();
+    renderInvoiceUI();
+    toast('Duplicada');
+  });
+
+  on($('#btnDelInvoice'),'click', ()=>{
+    const inv = getCurrentInvoice(); if(!inv) return;
+    if(!confirm('¿Eliminar factura?')) return;
+    const idx = state.invoices.findIndex(x=>x.id===inv.id);
+    if(idx>=0) state.invoices.splice(idx,1);
+    state.currentInvoiceId = null;
+    ensureCurrentInvoice();
+    saveLocal();
+    renderInvoiceUI();
+    toast('Eliminada');
+  });
+
+  on($('#btnSaveInvoice'),'click', ()=>{
+    saveLocal();
+    toast('Guardado');
+    renderInvoiceList();
+  });
+
+  // QR
+  on($('#btnRegenQR'),'click', ()=>{ regenQRBoth(); toast('QR actualizado'); });
+  on($('#btnCopyQR'),'click', ()=>{
+    const inv = getCurrentInvoice();
+    const txt = inv ? buildQrText(inv) : '';
+    if(!txt) return;
+    navigator.clipboard?.writeText(txt);
+    toast('QR copiado');
+  });
+
+  // listado/ búsquedas (se renderiza aquí ya)
+  on($('#invSearch'),'input', renderInvoiceList);
+  on($('#btnClearInvSearch'),'click', ()=>{
+    $('#invSearch').value = '';
+    renderInvoiceList();
+  });
+
+  // placeholders PDF/Whats (se completan en Parte 3/3)
+  on($('#btnPDF'),'click', ()=> alert('PDF PRO se activa en PARTE 3/3'));
+  on($('#btnPDFCloud'),'click', ()=> alert('PDF + Nube se activa en PARTE 3/3'));
+  on($('#btnWhats'),'click', ()=> alert('WhatsApp PRO se activa en PARTE 3/3'));
+  on($('#btnOpenPDF'),'click', ()=>{
+    if(state.tempPdfUrl) window.open(state.tempPdfUrl, '_blank');
+    else if(getCurrentInvoice()?.pdfUrl) window.open(getCurrentInvoice().pdfUrl, '_blank');
+    else alert('Aún no hay PDF.');
+  });
+  on($('#btnCopyPDF'),'click', ()=>{
+    const u = getCurrentInvoice()?.pdfUrl || '';
+    if(!u) return toast('Sin link PDF');
+    navigator.clipboard?.writeText(u);
+    toast('Link PDF copiado');
+  });
+
+  // Sync placeholder
+  on($('#btnSync'),'click', ()=> alert('Sync Cloud se activa en PARTE 3/3'));
+}
+
+/* =========================
+   27) Líneas: add/clear
+========================= */
+function addLine(){
+  const inv = getCurrentInvoice(); if(!inv) return;
+  inv.lines.push(createEmptyLine());
+  saveLocal();
+  renderLines();
+}
+function clearLines(){
+  const inv = getCurrentInvoice(); if(!inv) return;
+  if(!confirm('¿Vaciar líneas?')) return;
+  inv.lines = [];
+  ensureInvoiceLines(inv, 5);
+  saveLocal();
+  renderLines();
+}
+
+/* =========================
+   28) Pagos: render lista
+========================= */
+function renderPayList(){
+  const inv = getCurrentInvoice(); if(!inv) return;
+  const box = $('#payList');
+  const hint = $('#payListHint');
+  if(!box || !hint) return;
+
+  const arr = inv.payments || [];
+  if(!arr.length){
+    hint.textContent = 'Sin pagos parciales.';
+    box.innerHTML = '';
+  }else{
+    hint.textContent = '';
+    box.innerHTML = arr.map(p=>{
+      const d = new Date(p.ts||Date.now());
+      return `
+        <div class="payItem">
+          <div>
+            <strong>${fmtEUR(p.amount||0)}</strong>
+            <div class="muted" style="font-size:12px;">${escHtml(toISODate(d))}</div>
+          </div>
+          <button class="btn danger" data-payid="${escHtml(p.id)}">Quitar</button>
+        </div>
+      `;
+    }).join('');
+
+    $$('.payItem button', box).forEach(btn=>{
+      on(btn,'click', ()=>{
+        const id = btn.dataset.payid;
+        inv.payments = (inv.payments||[]).filter(x=>x.id!==id);
+        saveLocal();
+        renderPayList();
+        recalcInvoiceTotalsAndUI(true);
+        renderInvoicePreview();
+        renderInvoiceList();
+      });
+    });
+  }
+
+  $('#payManual').value = inv.payManual || 0;
+  $('#payStatus').value = inv.payStatus || 'impagada';
+  $('#payMethod').value = inv.payMethod || 'efectivo';
+}
+
+/* =========================
+   29) Facturas: listado (ya funcional)
+========================= */
+function invoiceQuickTotal(inv){
+  const t = computeInvoiceTotals(inv);
+  return t.total;
+}
+function invoiceMatchesSearch(inv, q){
+  q = (q||'').trim().toUpperCase();
+  if(!q) return true;
+  const cli = getClientById(inv.clientId);
+  const hay = [
+    inv.number||'',
+    inv.dateISO||'',
+    inv.tags||'',
+    cli?.name||inv.clientNameCache||'',
+    cli?.fiscalName||'',
+    cli?.nif||''
+  ].join(' ').toUpperCase();
+  return hay.includes(q);
+}
+
 function renderInvoiceList(){
-  const q = norm(invSearch.value || "");
-  const list = DB.invoices.filter(inv => {
+  const box = $('#invoiceList');
+  if(!box) return;
+  const q = ($('#invSearch')?.value || '').trim();
+  const list = (state.invoices||[]).filter(inv => invoiceMatchesSearch(inv, q));
+
+  if(!list.length){
+    box.innerHTML = `<div class="muted">Sin facturas.</div>`;
+    return;
+  }
+
+  box.innerHTML = list.map(inv=>{
+    const cli = getClientById(inv.clientId);
+    const tot = invoiceQuickTotal(inv);
+    return `
+      <div class="listItem" data-invid="${escHtml(inv.id)}">
+        <div class="top">
+          <div><strong>${escHtml(inv.number||'')}</strong></div>
+          <div class="badge">${escHtml(fmtEUR(tot))}</div>
+        </div>
+        <div class="meta">
+          <span>${escHtml(inv.dateISO||'')}</span>
+          <span>•</span>
+          <span>${escHtml(cli?.name || inv.clientNameCache || '')}</span>
+          ${inv.tags ? `<span>•</span><span>${escHtml(inv.tags)}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  $$('.listItem', box).forEach(it=>{
+    on(it,'click', ()=>{
+      const id = it.dataset.invid;
+      state.currentInvoiceId = id;
+      saveLocal();
+      renderInvoiceUI();
+      showTab('factura');
+      toast('Factura abierta');
+    });
+  });
+}
+
+/* =========================
+   30) Clientes: listado + editor (tab Clientes) — funcional
+========================= */
+function renderClientList(){
+  const box = $('#clientList');
+  if(!box) return;
+
+  const q = ($('#cliSearch')?.value || '').trim().toUpperCase();
+  const list = (state.clients||[]).filter(c=>{
     if(!q) return true;
-    const hay = `${inv.number} ${inv.dateISO} ${inv.tags||""} ${inv.notes||""} ${inv.clientNameCache||""}`.toUpperCase();
-    // clientNameCache se rellena al render
+    const hay = [c.name,c.fiscalName,c.nif,c.addr,c.alias].join(' ').toUpperCase();
     return hay.includes(q);
   });
 
-  invList.innerHTML = "";
-  list.forEach(inv => {
-    const cli = DB.clients.find(c => c.id === inv.clientId) || null;
-    const cliName2 = cli ? (cli.alias || cli.name) : "—";
-    inv.clientNameCache = cliName2;
-
-    // totals compute (ligero)
-    computeInvoiceTotals(inv);
-    const item = document.createElement("div");
-    item.className = "inv-item" + (inv.id === currentInvoiceId ? " active" : "");
-    item.innerHTML = `
-      <div class="top">
-        <div class="num">${inv.number || "—"}</div>
-        <div class="total">${moneyEUR(inv.totals?.total || 0)}</div>
-      </div>
-      <div class="sub">
-        <span>${inv.dateISO || ""}</span>
-        <span>•</span>
-        <span>${cliName2}</span>
-        ${inv.tags ? `<span>•</span><span>${inv.tags}</span>` : ``}
+  box.innerHTML = list.map(c=>{
+    return `
+      <div class="listItem" data-cliid="${escHtml(c.id)}">
+        <div class="top">
+          <div><strong>${escHtml(c.name || c.fiscalName || '')}</strong></div>
+          <div class="badge">${escHtml(c.nif || '')}</div>
+        </div>
+        <div class="meta">
+          <span>${escHtml(c.addr || '')}</span>
+        </div>
       </div>
     `;
-    item.addEventListener("click", () => {
-      openInvoice(inv.id);
+  }).join('') || `<div class="muted">Sin clientes.</div>`;
+
+  $$('.listItem', box).forEach(it=>{
+    on(it,'click', ()=>{
+      const id = it.dataset.cliid;
+      const c = getClientById(id);
+      if(!c) return;
+      $('#cliId').value = c.id;
+      $('#cliEditName').value = c.fiscalName || c.name || '';
+      $('#cliEditAlias').value = c.alias || '';
+      $('#cliEditNif').value = c.nif || '';
+      $('#cliEditAddr').value = c.addr || '';
+      $('#cliEditPhone').value = c.phone || '';
+      $('#cliEditEmail').value = c.email || '';
+      $('#cliEditNotes').value = c.notes || '';
     });
-    invList.appendChild(item);
-  });
-
-  saveLocal();
-}
-
-/* =========================
-   Render invoice editor
-========================= */
-function fillProviderUI(p){
-  provName.value = p.name || "";
-  provNif.value = p.nif || "";
-  provAddr.value = p.addr || "";
-  provPhone.value = p.phone || "";
-  provEmail.value = p.email || "";
-}
-
-function fillClientSelect(){
-  const cur = currentInvoiceId ? getInvoiceById(currentInvoiceId)?.clientId : "";
-  clientSelect.innerHTML = DB.clients
-    .slice()
-    .sort((a,b)=> norm(a.alias||a.name).localeCompare(norm(b.alias||b.name)))
-    .map(c => `<option value="${c.id}">${(c.alias||c.name)} • ${(c.nif||"")}</option>`)
-    .join("");
-  if(cur) clientSelect.value = cur;
-}
-
-function fillClientUI(c){
-  cliName.value = c?.name || "";
-  cliNif.value = c?.nif || "";
-  cliPhone.value = c?.phone || "";
-  cliAddr.value = c?.addr || "";
-  cliEmail.value = c?.email || "";
-  cliAlias.value = c?.alias || "";
-}
-
-function renderLines(inv){
-  linesTbody.innerHTML = "";
-
-  inv.lines.forEach((ln) => {
-    const row = document.createElement("div");
-    row.className = "line-row";
-    row.dataset.id = ln.id;
-
-    // Hint (solo pantalla)
-    const hintId = `hint_${ln.id}`;
-
-    row.innerHTML = `
-      <div class="col-prod">
-        <input class="col-prod-input" data-k="productName" list="dlProducts" placeholder="Producto" value="${(ln.productName||"").replaceAll('"','&quot;')}" autocomplete="off">
-        <div class="hint" id="${hintId}"></div>
-      </div>
-
-      <div class="col-modo">
-        <select data-k="mode">
-          <option value="kg">kg</option>
-          <option value="caja">caja</option>
-          <option value="unidad">unidad</option>
-        </select>
-      </div>
-
-      <div class="col-cant">
-        <input data-k="qty" type="number" inputmode="decimal" step="0.01" placeholder="0" value="${ln.qty ? ln.qty : ""}">
-      </div>
-
-      <div class="col-bruto">
-        <input data-k="gross" type="number" inputmode="decimal" step="0.01" placeholder="0" value="${ln.gross ? ln.gross : ""}">
-      </div>
-
-      <div class="col-tara">
-        <input data-k="tare" type="number" inputmode="decimal" step="0.01" placeholder="0" value="${ln.tare ? ln.tare : ""}">
-      </div>
-
-      <div class="col-neto">
-        <input data-k="net" type="number" inputmode="decimal" step="0.01) placeholder="0" value="${ln.net ? ln.net : ""}">
-      </div>
-
-      <div class="col-precio">
-        <input data-k="price" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="${ln.price ? ln.price : ""}">
-      </div>
-
-      <div class="col-origen">
-        <input data-k="origin" placeholder="Origen" value="${(ln.origin||"").replaceAll('"','&quot;')}" autocomplete="off">
-      </div>
-
-      <div class="col-importe">
-        <div class="amount-pill">${moneyEUR(ln.amount || 0)}</div>
-      </div>
-
-      <div class="col-x center">
-        <button class="xbtn" type="button" title="Eliminar">✕</button>
-      </div>
-    `;
-
-    // Fix select value
-    row.querySelector(`select[data-k="mode"]`).value = ln.mode || "kg";
-
-    // delete
-    row.querySelector(".xbtn").addEventListener("click", () => {
-      const inv2 = getInvoiceById(currentInvoiceId);
-      if(!inv2) return;
-      const idx = inv2.lines.findIndex(x => x.id === ln.id);
-      if(idx >= 0){
-        inv2.lines.splice(idx, 1);
-        if(inv2.lines.length === 0) inv2.lines.push(newEmptyLine());
-        upsertInvoice(inv2);
-        renderInvoice(inv2);
-      }
-    });
-
-    // events
-    const inputs = Array.from(row.querySelectorAll("input,select"));
-    inputs.forEach((el, i) => {
-      // Enter -> siguiente input en tabla
-      el.addEventListener("keydown", (ev) => {
-        if(ev.key === "Enter"){
-          ev.preventDefault();
-          const flat = Array.from(linesTbody.querySelectorAll("input,select"));
-          const pos = flat.indexOf(el);
-          if(pos >= 0 && flat[pos+1]){
-            flat[pos+1].focus();
-            flat[pos+1].select?.();
-          }
-        }
-      });
-
-      el.addEventListener("input", () => onLineEdit(ln.id, el));
-      el.addEventListener("change", () => onLineEdit(ln.id, el));
-      el.addEventListener("blur", () => {
-        if(el.getAttribute("data-k") === "productName"){
-          onProductChosen(ln.id);
-        }
-      });
-    });
-
-    linesTbody.appendChild(row);
-
-    // hint
-    refreshLineHint(ln.id);
   });
 }
 
-function getLine(inv, lineId){
-  return inv.lines.find(x => x.id === lineId) || null;
-}
+function bindClientsTab(){
+  on($('#cliSearch'),'input', renderClientList);
+  on($('#btnNewClient'),'click', ()=>{
+    $('#cliId').value = '';
+    $('#cliEditName').value = '';
+    $('#cliEditAlias').value = '';
+    $('#cliEditNif').value = '';
+    $('#cliEditAddr').value = '';
+    $('#cliEditPhone').value = '';
+    $('#cliEditEmail').value = '';
+    $('#cliEditNotes').value = '';
+    toast('Nuevo cliente');
+  });
 
-function refreshLineAmountUI(lineId){
-  const inv = getInvoiceById(currentInvoiceId);
-  if(!inv) return;
-  const ln = getLine(inv, lineId);
-  if(!ln) return;
+  on($('#btnSaveClient'),'click', ()=>{
+    const id = ($('#cliId').value || '').trim();
+    const fiscalName = ($('#cliEditName').value || '').trim();
+    if(!fiscalName) return alert('Nombre requerido');
 
-  const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
-  if(!row) return;
-  const amount = row.querySelector(".amount-pill");
-  if(amount) amount.textContent = moneyEUR(ln.amount || 0);
-}
+    const alias = ($('#cliEditAlias').value || '').trim();
+    const nif = ($('#cliEditNif').value || '').trim();
+    const addr = ($('#cliEditAddr').value || '').trim();
+    const phone = ($('#cliEditPhone').value || '').trim();
+    const email = ($('#cliEditEmail').value || '').trim();
+    const notes = ($('#cliEditNotes').value || '').trim();
 
-function refreshLineHint(lineId){
-  const inv = getInvoiceById(currentInvoiceId);
-  if(!inv) return;
-  const ln = getLine(inv, lineId);
-  if(!ln) return;
-
-  const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
-  if(!row) return;
-
-  const hint = row.querySelector(".hint");
-  if(!hint) return;
-
-  const p = ln.productId ? getProductById(ln.productId) : getProductByName(ln.productName);
-  if(!p || !Array.isArray(p.history) || p.history.length === 0){
-    hint.textContent = "";
-    return;
-  }
-  const last = p.history[0];
-  const parts = [];
-  if(last.priceKg) parts.push(`€/kg ${last.priceKg}`);
-  if(last.priceBox) parts.push(`€/caja ${last.priceBox}`);
-  if(last.priceUnit) parts.push(`€/ud ${last.priceUnit}`);
-  hint.textContent = `Últimos: ${parts.join(" • ")} (solo pantalla)`;
-}
-
-function onLineEdit(lineId, el){
-  const inv = getInvoiceById(currentInvoiceId);
-  if(!inv) return;
-  const ln = getLine(inv, lineId);
-  if(!ln) return;
-
-  const k = el.getAttribute("data-k");
-  if(!k) return;
-
-  if(k === "productName"){
-    ln.productName = el.value || "";
-    // NO sustituimos automático. Solo si coincide exacto, en blur/change aplicamos defaults.
-  }else if(k === "mode"){
-    ln.mode = el.value || "kg";
-    // Al cambiar modo: si hay producto, ponemos precio por defecto del modo
-    const p = ln.productId ? getProductById(ln.productId) : getProductByName(ln.productName);
-    if(p){
-      const pp = productPriceForMode(p, ln.mode);
-      if(pp > 0) ln.price = pp;
-      if(!ln.origin && p.origin) ln.origin = p.origin;
+    let cli = id ? getClientById(id) : null;
+    if(!cli){
+      cli = { id: uid('cli'), name: alias ? `${alias}` : fiscalName, fiscalName, alias, nif, addr, phone, email, notes };
+      state.clients.push(cli);
+    }else{
+      cli.fiscalName = fiscalName;
+      cli.alias = alias;
+      cli.name = alias ? `${alias}` : (cli.name || fiscalName);
+      cli.nif = nif;
+      cli.addr = addr;
+      cli.phone = phone;
+      cli.email = email;
+      cli.notes = notes;
     }
-  }else if(k === "origin"){
-    ln.origin = el.value || "";
-  }else{
-    // numeric
-    ln[k] = el.value;
-  }
 
-  // compute and update UI
-  computeInvoiceTotals(inv);
-  upsertInvoice(inv);
+    saveLocal();
+    renderAllClientSelects();
+    renderClientList();
+    renderInvoiceList();
 
-  refreshLineAmountUI(lineId);
-  refreshLineHint(lineId);
-  renderTotals(inv);
-  renderPayments(inv);
-
-  saveLocal();
-}
-
-function onProductChosen(lineId){
-  const inv = getInvoiceById(currentInvoiceId);
-  if(!inv) return;
-  const ln = getLine(inv, lineId);
-  if(!ln) return;
-
-  const name = ln.productName || "";
-  const p = getProductByName(name);
-  if(!p) {
-    // no match exacto: no tocamos
-    ln.productId = "";
-    refreshLineHint(lineId);
-    return;
-  }
-
-  // match exacto: aplicamos defaults sin “inventar”
-  ln.productId = p.id;
-  // modo: si aún está en default kg y el producto tiene otro default, lo cambiamos
-  if(!ln.mode) ln.mode = p.unitDefault || "kg";
-  if(p.unitDefault && ln.mode === "kg" && p.unitDefault !== "kg"){
-    ln.mode = p.unitDefault;
-    // reflejar en select
-    const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
-    const sel = row?.querySelector(`select[data-k="mode"]`);
-    if(sel) sel.value = ln.mode;
-  }
-
-  // precio por defecto del modo
-  const pp = productPriceForMode(p, ln.mode);
-  if(pp > 0) {
-    ln.price = pp;
-    // reflejar en input precio
-    const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
-    const inp = row?.querySelector(`input[data-k="price"]`);
-    if(inp) inp.value = String(pp);
-  }
-
-  // origen default si vacío
-  if(!ln.origin && p.origin){
-    ln.origin = p.origin;
-    const row = linesTbody.querySelector(`.line-row[data-id="${lineId}"]`);
-    const inp = row?.querySelector(`input[data-k="origin"]`);
-    if(inp) inp.value = ln.origin;
-  }
-
-  computeInvoiceTotals(inv);
-  upsertInvoice(inv);
-  refreshLineHint(lineId);
-  renderTotals(inv);
-  saveLocal();
-}
-
-/* =========================
-   Render totals & payments UI
-========================= */
-function renderTotals(inv){
-  const tot = computeInvoiceTotals(inv);
-
-  tSubtotal.textContent = moneyEUR(tot.subtotal);
-  tTrans.textContent = moneyEUR(tot.transport);
-  tIva.textContent = moneyEUR(tot.iva);
-  tTotal.textContent = moneyEUR(tot.total);
-
-  swTrans.checked = !!inv.transportEnabled;
-  transPct.value = (inv.transportPct ?? 0.10);
-  swIvaIncl.checked = !!inv.ivaIncluded;
-
-  taxNote.textContent = inv.ivaIncluded ? "IVA incluido en precios (sin desglose)" : "IVA desglosado (4%)";
-}
-
-function renderPayments(inv){
-  payList.innerHTML = "";
-  const pays = Array.isArray(inv.payments) ? inv.payments : [];
-  pays.forEach((p) => {
-    const item = document.createElement("div");
-    item.className = "pay-item";
-    item.innerHTML = `
-      <div class="l">
-        <div style="font-weight:900">${moneyEUR(n2(p.amount))}</div>
-        <div class="muted mini">${(p.method||"").toUpperCase()} • ${(p.ts ? new Date(p.ts).toLocaleString("es-ES") : "")}</div>
-      </div>
-      <div class="r">
-        <button class="pay-del" type="button">✕</button>
-      </div>
-    `;
-    item.querySelector(".pay-del").addEventListener("click", () => {
-      const inv2 = getInvoiceById(currentInvoiceId);
-      if(!inv2) return;
-      inv2.payments = inv2.payments.filter(x => x.id !== p.id);
-      upsertInvoice(inv2);
-      renderPayments(inv2);
+    // si el cliente editado es el de la factura abierta, refrescar
+    const inv = getCurrentInvoice();
+    if(inv && inv.clientId === cli.id){
+      inv.clientNameCache = cli.name || cli.fiscalName;
+      renderInvoiceClientUI(inv);
       saveLocal();
-    });
-    payList.appendChild(item);
+      renderInvoicePreview();
+    }
+    toast('Cliente guardado');
   });
 
-  const paid = sumPayments(inv);
-  const due = clamp2(n2(inv.totals?.total) - paid);
-  tPaid.textContent = moneyEUR(paid);
-  tDue.textContent = moneyEUR(due);
+  on($('#btnDelClient'),'click', ()=>{
+    const id = ($('#cliId').value || '').trim();
+    if(!id) return;
+    if(!confirm('¿Eliminar cliente?')) return;
 
-  const st = payStateText(inv);
-  payState.textContent = `Estado: ${st}`;
-}
-
-/* =========================
-   Render full invoice editor
-========================= */
-function renderInvoice(inv){
-  if(!inv) return;
-
-  // header meta
-  invNumber.value = inv.number || "";
-  invDate.value = inv.dateISO || todayISO();
-  invTags.value = inv.tags || "";
-  invNotes.value = inv.notes || "";
-
-  // provider snapshot in invoice
-  fillProviderUI(inv.provider || DB.provider);
-
-  // client select
-  fillClientSelect();
-  if(inv.clientId) clientSelect.value = inv.clientId;
-
-  // load client data
-  const cli = DB.clients.find(c => c.id === inv.clientId) || null;
-  fillClientUI(cli);
-
-  // switches
-  swTrans.checked = !!inv.transportEnabled;
-  transPct.value = inv.transportPct ?? 0.10;
-  swIvaIncl.checked = !!inv.ivaIncluded;
-
-  // grid
-  inv.lines = Array.isArray(inv.lines) ? inv.lines : [];
-  if(inv.lines.length === 0){
-    for(let i=0;i<5;i++) inv.lines.push(newEmptyLine());
-  }
-  renderLines(inv);
-
-  // totals + payments
-  computeInvoiceTotals(inv);
-  renderTotals(inv);
-  renderPayments(inv);
-
-  // QR
-  renderQR(inv);
-
-  setMini("#pdfState", inv.pdf?.cloudUrl ? "PDF nube: OK" : (inv.pdf?.localUrl ? "PDF local: OK" : "—"));
-  saveLocal();
-}
-
-function openInvoice(id){
-  const inv = getInvoiceById(id);
-  if(!inv) return;
-  currentInvoiceId = id;
-  renderInvoiceList();
-  renderInvoice(inv);
-}
-
-function createInvoice(){
-  const inv = newInvoiceSkeleton();
-  upsertInvoice(inv);
-  currentInvoiceId = inv.id;
-  saveLocal();
-  renderInvoiceList();
-  renderInvoice(inv);
-}
-
-/* =========================
-   QR AEAT
-========================= */
-function buildQrText(inv){
-  const tpl = (DB.settings.qrTemplate || "AEAT|NIF={NIF}|NUM={NUM}|FECHA={FECHA}|TOTAL={TOTAL}");
-  const nif = (DB.provider?.nif || DEFAULT_PROVIDER.nif || "").trim();
-  const num = (inv.number || "").trim();
-  const fecha = (inv.dateISO || "").trim();
-  const total = clamp2(n2(inv.totals?.total)).toFixed(2);
-  return tpl
-    .replaceAll("{NIF}", nif)
-    .replaceAll("{NUM}", num)
-    .replaceAll("{FECHA}", fecha)
-    .replaceAll("{TOTAL}", total);
-}
-
-function renderQR(inv){
-  const txt = buildQrText(inv);
-  qrMini.textContent = txt;
-
-  // clear previous
-  qrBox.innerHTML = "";
-
-  if(!window.QRCode){
-    qrBox.innerHTML = `<div class="muted mini" style="padding:12px;text-align:center">QR lib no cargó</div>`;
-    return;
-  }
-
-  try{
-    // eslint-disable-next-line no-new
-    new window.QRCode(qrBox, {
-      text: txt,
-      width: 150,
-      height: 150,
-      correctLevel: window.QRCode.CorrectLevel.M
-    });
-  }catch(e){
-    qrBox.innerHTML = `<div class="muted mini" style="padding:12px;text-align:center">Error QR</div>`;
-  }
-}
-
-/* =========================
-   Factura: bind UI -> state
-========================= */
-function bindInvoiceMeta(){
-  invNumber.addEventListener("input", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.number = invNumber.value || inv.number;
-    upsertInvoice(inv);
-    renderInvoiceList();
-    renderQR(inv);
-    saveLocal();
-  });
-
-  invDate.addEventListener("change", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.dateISO = invDate.value || todayISO();
-    upsertInvoice(inv);
-    renderInvoiceList();
-    renderQR(inv);
-    saveLocal();
-  });
-
-  invTags.addEventListener("input", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.tags = invTags.value || "";
-    upsertInvoice(inv);
-    renderInvoiceList();
-    saveLocal();
-  });
-
-  invNotes.addEventListener("input", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.notes = invNotes.value || "";
-    upsertInvoice(inv);
-    saveLocal();
-  });
-
-  // provider fields update invoice snapshot (y opcionalmente DB.provider en ajustes/guardar)
-  [provName, provNif, provAddr, provPhone, provEmail].forEach((el) => {
-    el.addEventListener("input", () => {
-      const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-      inv.provider = {
-        name: provName.value || "",
-        nif: provNif.value || "",
-        addr: provAddr.value || "",
-        phone: provPhone.value || "",
-        email: provEmail.value || ""
-      };
-      // también actualizamos DB.provider para que sea el default del sistema
-      DB.provider = { ...inv.provider };
-      upsertInvoice(inv);
-      renderQR(inv);
-      saveLocal();
-    });
-  });
-
-  clientSelect.addEventListener("change", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.clientId = clientSelect.value || "";
-    upsertInvoice(inv);
-
-    const cli = DB.clients.find(c => c.id === inv.clientId) || null;
-    fillClientUI(cli);
-    renderInvoiceList();
-    saveLocal();
-  });
-
-  // cambios en UI cliente NO alteran automáticamente el cliente, solo cuando se pulsa “Guardar cambios cliente”
-  btnSaveClientFromInvoice.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    const c = DB.clients.find(x => x.id === inv.clientId);
-    if(!c) { setMini("#clientsMsg", "Selecciona un cliente"); return; }
-
-    c.name = cliName.value || c.name;
-    c.nif = cliNif.value || c.nif;
-    c.phone = cliPhone.value || c.phone;
-    c.addr = cliAddr.value || c.addr;
-    c.email = cliEmail.value || c.email;
-    c.alias = cliAlias.value || c.alias;
-
-    saveLocal();
-    fillClientSelect();
-    renderInvoiceList();
-    setMini("#clientsMsg", "✅ Cliente actualizado desde factura");
-  });
-
-  btnNewClientQuick.addEventListener("click", () => {
-    const id = uid("cli");
-    const c = {
-      id,
-      name: cliName.value || "NUEVO CLIENTE",
-      nif: cliNif.value || "",
-      addr: cliAddr.value || "",
-      phone: cliPhone.value || "",
-      email: cliEmail.value || "",
-      alias: cliAlias.value || "",
-      notes: ""
-    };
-    DB.clients.unshift(c);
-    saveLocal();
-    fillClientSelect();
-    clientSelect.value = id;
-
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.clientId = id;
-    upsertInvoice(inv);
-    renderInvoiceList();
-    setMini("#clientsMsg", "✅ Cliente creado");
-  });
-
-  // switches totals
-  swTrans.addEventListener("change", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.transportEnabled = !!swTrans.checked;
-    inv.transportPct = n2(transPct.value || 0.10);
-    upsertInvoice(inv);
-    renderTotals(inv);
-    renderInvoiceList();
-    saveLocal();
-  });
-
-  transPct.addEventListener("input", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.transportPct = n2(transPct.value || 0.10);
-    upsertInvoice(inv);
-    renderTotals(inv);
-    saveLocal();
-  });
-
-  swIvaIncl.addEventListener("change", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.ivaIncluded = !!swIvaIncl.checked;
-    upsertInvoice(inv);
-    renderTotals(inv);
-    saveLocal();
-  });
-
-  // actions
-  btnNewInvoice.addEventListener("click", createInvoice);
-
-  btnDupInvoice.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId);
-    if(!inv) return;
-    const copy = JSON.parse(JSON.stringify(inv));
-    copy.id = uid("inv");
-    copy.number = `FA-${new Date().getFullYear()}${String(new Date().getMonth()+1).padStart(2,"0")}${String(new Date().getDate()).padStart(2,"0")}${String(new Date().getHours()).padStart(2,"0")}${String(new Date().getMinutes()).padStart(2,"0")}`;
-    copy.createdAt = Date.now();
-    copy.updatedAt = Date.now();
-    copy.pdf = { localUrl:"", cloudUrl:"" };
-    upsertInvoice(copy);
-    currentInvoiceId = copy.id;
-    saveLocal();
-    renderInvoiceList();
-    renderInvoice(copy);
-  });
-
-  btnDelInvoice.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId);
-    if(!inv) return;
-    if(!confirm(`¿Eliminar ${inv.number}?`)) return;
-    DB.invoices = DB.invoices.filter(x => x.id !== inv.id);
-    currentInvoiceId = DB.invoices[0]?.id || null;
-    saveLocal();
-    renderInvoiceList();
-    if(currentInvoiceId) renderInvoice(getInvoiceById(currentInvoiceId));
-    else createInvoice();
-  });
-
-  btnAddLine.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.lines.push(newEmptyLine());
-    upsertInvoice(inv);
-    renderInvoice(inv);
-  });
-
-  btnClearLines.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    if(!confirm("¿Vaciar líneas?")) return;
-    inv.lines = [];
-    for(let i=0;i<5;i++) inv.lines.push(newEmptyLine());
-    upsertInvoice(inv);
-    renderInvoice(inv);
-  });
-
-  btnRegenQR.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    renderQR(inv);
-  });
-
-  // payments
-  btnAddPay.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    const amt = n2(payAmount.value);
-    if(!(amt > 0)){
-      setMini("#payState", "Importe inválido");
+    // No borrar si hay facturas vinculadas (seguridad)
+    const used = (state.invoices||[]).some(inv => inv.clientId === id);
+    if(used){
+      alert('Este cliente está usado en facturas. No se elimina.');
       return;
     }
-    inv.payments = Array.isArray(inv.payments) ? inv.payments : [];
-    inv.payments.unshift({
-      id: uid("pay"),
-      amount: clamp2(amt),
-      method: payMethod.value || "efectivo",
-      ts: Date.now()
-    });
-    payAmount.value = "";
-    upsertInvoice(inv);
-    renderPayments(inv);
+
+    state.clients = (state.clients||[]).filter(c=>c.id!==id);
+    $('#cliId').value = '';
     saveLocal();
-  });
-
-  btnClearPays.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    if(!confirm("¿Vaciar pagos?")) return;
-    inv.payments = [];
-    upsertInvoice(inv);
-    renderPayments(inv);
-    saveLocal();
-  });
-
-  // save invoice
-  btnSaveInvoice.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    inv.number = invNumber.value || inv.number;
-    inv.dateISO = invDate.value || inv.dateISO;
-    inv.tags = invTags.value || "";
-    inv.notes = invNotes.value || "";
-    inv.transportEnabled = !!swTrans.checked;
-    inv.transportPct = n2(transPct.value || 0.10);
-    inv.ivaIncluded = !!swIvaIncl.checked;
-
-    // provider snapshot already updated, but ensure:
-    inv.provider = {
-      name: provName.value || "",
-      nif: provNif.value || "",
-      addr: provAddr.value || "",
-      phone: provPhone.value || "",
-      email: provEmail.value || ""
-    };
-
-    // clientId already set
-    computeInvoiceTotals(inv);
-    upsertInvoice(inv);
-
-    saveLocal();
-    renderInvoiceList();
-    renderQR(inv);
-    setMini("#pdfState", "✅ Guardado");
-  });
-
-  // PDF buttons (Parte 2/2 implementa real)
-  btnPDF.addEventListener("click", async () => {
-    setMini("#pdfState", "⏳ PDF… (Parte 5/5)");
-  });
-  btnPDFCloud.addEventListener("click", async () => {
-    setMini("#pdfState", "⏳ PDF + Nube… (Parte 5/5)");
-  });
-  btnOpenPDF.addEventListener("click", () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    const url = inv.pdf?.localUrl || inv.pdf?.cloudUrl;
-    if(!url){ setMini("#pdfState", "No hay PDF"); return; }
-    window.open(url, "_blank");
-  });
-  btnCopyPdfLink.addEventListener("click", async () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    const url = inv.pdf?.cloudUrl || inv.pdf?.localUrl;
-    if(!url){ setMini("#pdfState", "No hay link"); return; }
-    try{
-      await navigator.clipboard.writeText(url);
-      setMini("#pdfState", "✅ Link copiado");
-    }catch(e){
-      setMini("#pdfState", "No se pudo copiar");
-    }
-  });
-
-  // WhatsApp TXT
-  btnWhats.addEventListener("click", async () => {
-    const inv = getInvoiceById(currentInvoiceId); if(!inv) return;
-    computeInvoiceTotals(inv);
-
-    const cli = DB.clients.find(c => c.id === inv.clientId) || {};
-    const lines = inv.lines
-      .filter(l => norm(l.productName).length > 0 && n2(l.amount) > 0)
-      .map(l => {
-        const mode = l.mode;
-        const qty = (mode === "kg") ? `${clamp2(n2(l.net))}kg` : `${clamp2(n2(l.qty))} ${mode}`;
-        return `- ${norm(l.productName)} • ${qty} • ${moneyEUR(l.amount)}`;
-      })
-      .join("\n");
-
-    const txt =
-`${inv.number} • ${inv.dateISO}
-Cliente: ${(cli.alias||cli.name||"—")}
-Total: ${moneyEUR(inv.totals.total)}
-
-${lines}
-
-${inv.pdf?.cloudUrl ? "PDF: "+inv.pdf.cloudUrl : ""}`.trim();
-
-    try{
-      await navigator.clipboard.writeText(txt);
-      setMini("#pdfState", "✅ WhatsApp TXT copiado");
-    }catch(e){
-      alert(txt);
-    }
-  });
-
-  // Prices link modal
-  btnImportPricesLink.addEventListener("click", () => {
-    pricesLinkInput.value = "";
-    setMini("#pricesMsg", "—");
-    showModal(pricesModal);
-  });
-  btnClosePrices.addEventListener("click", () => hideModal(pricesModal));
-  btnDoImportPrices.addEventListener("click", () => {
-    const link = pricesLinkInput.value.trim();
-    const ok = importPricesFromLink(link);
-    setMini("#pricesMsg", ok ? "✅ Precios importados" : "❌ No se pudo importar");
-    renderProductsDatalist();
-    renderInvoiceList();
-    const inv = getInvoiceById(currentInvoiceId);
-    if(inv) renderInvoice(inv);
-  });
-  btnCopyMyPricesEditor.addEventListener("click", async () => {
-    const url = buildPricesEditorUrl();
-    try{
-      await navigator.clipboard.writeText(url);
-      setMini("#pricesMsg", "✅ Link editor copiado");
-    }catch(e){
-      setMini("#pricesMsg", url);
-    }
-  });
-
-  btnMakePricesLink.addEventListener("click", async () => {
-    const url = buildPricesEditorUrl();
-    try{
-      await navigator.clipboard.writeText(url);
-      setMini("#pdfState", "✅ Link editor copiado");
-    }catch(e){
-      setMini("#pdfState", url);
-    }
-    window.open(url, "_blank");
+    renderAllClientSelects();
+    renderClientList();
+    toast('Cliente eliminado');
   });
 }
 
 /* =========================
-   Prices editor integration
+   31) Productos: listado + editor (tab Productos) — funcional
 ========================= */
-function buildPricesPack(){
-  // enviamos catálogo (products) para que el editor liste
-  const products = DB.products
-    .slice()
-    .sort((a,b)=> norm(a.name).localeCompare(norm(b.name)))
-    .map(p => ({
-      id: p.id,
-      name: p.name,
-      unitDefault: p.unitDefault || "kg",
-      kgBox: p.kgBox ?? "",
-      priceKg: p.priceKg ?? "",
-      priceBox: p.priceBox ?? "",
-      priceUnit: p.priceUnit ?? "",
-      history: Array.isArray(p.history) ? p.history.slice(0,5) : []
-    }));
+function renderProductList(){
+  const box = $('#productList');
+  if(!box) return;
 
-  return {
-    meta: {
-      kind: "arslan_products_pack_v1",
-      createdAt: timeStamp(),
-      source: "arslan_app",
-      mainApp: new URL(location.href).toString()
-    },
-    products
-  };
+  const q = ($('#prodSearch')?.value || '').trim().toUpperCase();
+  const keys = Object.keys(state.products||{});
+  const list = keys
+    .map(k=>state.products[k])
+    .filter(p=>p && (!q || p.name.includes(q)))
+    .slice(0, 600); // UI rápido
+
+  box.innerHTML = list.map(p=>{
+    const b1 = p.prices?.kg ? `kg ${fmt2(p.prices.kg)}` : '';
+    const b2 = p.prices?.caja ? `caja ${fmt2(p.prices.caja)}` : '';
+    const b3 = p.prices?.ud ? `ud ${fmt2(p.prices.ud)}` : '';
+    const badges = [b1,b2,b3].filter(Boolean).map(x=>`<span class="badge">${escHtml(x)}</span>`).join('');
+    return `
+      <div class="listItem" data-prodkey="${escHtml(p.key)}">
+        <div class="top">
+          <div><strong>${escHtml(p.name)}</strong></div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">${badges}</div>
+        </div>
+        <div class="meta">
+          <span>Modo: ${escHtml(p.modeDefault||'kg')}</span>
+          ${p.kgPerBox ? `<span>•</span><span>${escHtml(fmt2(p.kgPerBox))} kg/caja</span>` : ``}
+          ${p.originDefault ? `<span>•</span><span>${escHtml(p.originDefault)}</span>` : ``}
+        </div>
+      </div>
+    `;
+  }).join('') || `<div class="muted">Sin productos.</div>`;
+
+  $$('.listItem', box).forEach(it=>{
+    on(it,'click', ()=>{
+      const k = it.dataset.prodkey;
+      loadProductEditor(k);
+    });
+  });
 }
 
-function buildPricesEditorUrl(){
-  const pack = buildPricesPack();
-  const comp = lzCompress(pack);
-  const u = new URL(location.href);
-  // ir a prices.html en misma carpeta
-  u.pathname = u.pathname.replace(/\/[^/]*$/, "/prices.html");
-  u.search = "";
-  u.hash = "";
-  u.searchParams.set("pack", comp);
-  return u.toString();
+function loadProductEditor(key){
+  const p = state.products?.[key];
+  if(!p) return;
+
+  $('#prodKey').value = p.key;
+  $('#prodName').value = p.name;
+  $('#prodMode').value = p.modeDefault || 'kg';
+  $('#prodKgBox').value = p.kgPerBox || 0;
+  $('#prodPriceKg').value = p.prices?.kg || 0;
+  $('#prodPriceBox').value = p.prices?.caja || 0;
+  $('#prodPriceUd').value = p.prices?.ud || 0;
+  $('#prodCost').value = p.cost || 0;
+  $('#prodOrigin').value = p.originDefault || '';
+
+  renderProductHistory(p);
 }
 
-function extractPricesParamFromLink(link){
-  if(!link) return null;
-  try{
-    const u = new URL(link);
-    const p = u.searchParams.get("prices");
-    if(p) return p;
-    if(u.hash && u.hash.includes("prices=")){
-      return u.hash.split("prices=")[1] || null;
+function renderProductHistory(p){
+  const box = $('#prodHistory');
+  if(!box) return;
+  const h = p.history || [];
+  if(!h.length){
+    box.innerHTML = `<div class="muted">Sin historial.</div>`;
+    return;
+  }
+  box.innerHTML = h.slice(0,5).map(r=>{
+    const d = new Date(r.ts||Date.now());
+    const a = [];
+    if(r.kg) a.push(`kg ${fmt2(r.kg)}`);
+    if(r.caja) a.push(`caja ${fmt2(r.caja)}`);
+    if(r.ud) a.push(`ud ${fmt2(r.ud)}`);
+    return `<div class="histRow"><span>${escHtml(toISODate(d))}</span><strong>${escHtml(a.join(' · ') || '—')}</strong></div>`;
+  }).join('');
+}
+
+function bindProductsTab(){
+  on($('#prodSearch'),'input', renderProductList);
+
+  on($('#btnNewProd'),'click', ()=>{
+    $('#prodKey').value = '';
+    $('#prodName').value = '';
+    $('#prodMode').value = 'kg';
+    $('#prodKgBox').value = 0;
+    $('#prodPriceKg').value = 0;
+    $('#prodPriceBox').value = 0;
+    $('#prodPriceUd').value = 0;
+    $('#prodCost').value = 0;
+    $('#prodOrigin').value = '';
+    $('#prodHistory').innerHTML = `<div class="muted">Sin historial.</div>`;
+    toast('Nuevo producto');
+  });
+
+  on($('#btnSaveProd'),'click', ()=>{
+    const oldKey = ($('#prodKey').value || '').trim();
+    const name = normalizeProdName($('#prodName').value || '');
+    if(!name) return alert('Nombre requerido');
+
+    const key = prodKeyFromName(name);
+    const modeDefault = $('#prodMode').value || 'kg';
+    const kgPerBox = parseNum($('#prodKgBox').value);
+    const priceKg = parseNum($('#prodPriceKg').value);
+    const priceBox = parseNum($('#prodPriceBox').value);
+    const priceUd = parseNum($('#prodPriceUd').value);
+    const cost = parseNum($('#prodCost').value);
+    const originDefault = ($('#prodOrigin').value || '').trim();
+
+    const old = oldKey ? state.products?.[oldKey] : null;
+    const prevPrices = old ? { ...(old.prices||{}) } : { kg:0, caja:0, ud:0 };
+
+    // si renombre (key cambia), migrar
+    if(oldKey && oldKey !== key){
+      // mover producto
+      delete state.products[oldKey];
     }
-    return null;
+
+    const p = state.products[key] || {
+      key, name,
+      modeDefault: 'kg',
+      kgPerBox: 0,
+      prices: {kg:0,caja:0,ud:0},
+      cost: 0,
+      originDefault: '',
+      history: []
+    };
+
+    p.key = key;
+    p.name = name;
+    p.modeDefault = modeDefault;
+    p.kgPerBox = clampNum(kgPerBox, 0);
+    p.prices = { kg: clampNum(priceKg,0), caja: clampNum(priceBox,0), ud: clampNum(priceUd,0) };
+    p.cost = clampNum(cost,0);
+    p.originDefault = originDefault;
+    p.history = p.history || [];
+
+    // historial si cambian precios
+    const changed =
+      Number(prevPrices.kg||0) !== Number(p.prices.kg||0) ||
+      Number(prevPrices.caja||0) !== Number(p.prices.caja||0) ||
+      Number(prevPrices.ud||0) !== Number(p.prices.ud||0);
+
+    if(changed){
+      p.history.unshift({ ts: Date.now(), kg: p.prices.kg, caja: p.prices.caja, ud: p.prices.ud });
+      p.history = p.history.slice(0,5);
+    }
+
+    state.products[key] = p;
+
+    // si renombre, actualizar líneas en facturas que apunten al oldKey
+    if(oldKey && oldKey !== key){
+      (state.invoices||[]).forEach(inv=>{
+        (inv.lines||[]).forEach(ln=>{
+          if(ln.productKey === oldKey){
+            ln.productKey = key;
+            ln.productName = name;
+          }
+        });
+      });
+    }
+
+    saveLocal();
+    $('#prodKey').value = key;
+    renderProductHistory(p);
+    renderProductList();
+    renderLines();
+    toast('Producto guardado');
+  });
+
+  on($('#btnDelProd'),'click', ()=>{
+    const key = ($('#prodKey').value || '').trim();
+    if(!key) return;
+    if(!confirm('¿Eliminar producto?')) return;
+
+    // Seguridad: si usado en facturas, no eliminar
+    const used = (state.invoices||[]).some(inv => (inv.lines||[]).some(ln => ln.productKey === key));
+    if(used){
+      alert('Este producto está usado en facturas. No se elimina.');
+      return;
+    }
+
+    delete state.products[key];
+    saveLocal();
+    $('#prodKey').value = '';
+    renderProductList();
+    toast('Producto eliminado');
+  });
+}
+
+/* =========================
+   32) QR: ahora sí usa TOTAL real
+========================= */
+function buildQrText(inv){
+  const tpl = state.settings.qrTemplate || defaultSettings().qrTemplate;
+  const nif = state.provider?.nif || '';
+  const num = inv?.number || '';
+  const fecha = inv?.dateISO || toISODate(new Date());
+  const total = fmt2(computeInvoiceTotals(inv).total);
+  return tpl
+    .replaceAll('{NIF}', nif)
+    .replaceAll('{NUM}', num)
+    .replaceAll('{FECHA}', fecha)
+    .replaceAll('{TOTAL}', total);
+}
+
+function renderQrInto(el, text){
+  if(!el) return;
+  el.innerHTML = '';
+  try{
+    // QRCode lib global
+    // eslint-disable-next-line no-undef
+    new QRCode(el, {
+      text,
+      width: 160,
+      height: 160,
+      correctLevel: QRCode.CorrectLevel.M
+    });
   }catch(e){
-    // maybe the user pasted only token
-    if(link.startsWith("prices=")) return link.slice(7);
-    return null;
+    el.textContent = 'QR error';
   }
 }
 
-function importPricesFromPayload(payload){
-  // payload esperado: {meta:{kind:"arslan_prices_updates_v1"}, updates:[{id,name,unitDefault,kgBox,priceKg,priceBox,priceUnit,editedAt}]}
-  if(!payload || typeof payload !== "object") return false;
-  if(!Array.isArray(payload.updates)) return false;
+function regenQRBoth(){
+  const inv = getCurrentInvoice();
+  const txt = inv ? buildQrText(inv) : '';
+  const hint = $('#qrHint');
+  if(hint) hint.textContent = txt || '—';
 
-  let changed = 0;
+  // main
+  const box = $('#qrBox');
+  if(box && txt) renderQrInto(box, txt);
 
-  payload.updates.forEach(up => {
-    const id = up.id;
-    let p = getProductById(id);
-    if(!p && up.name){
-      p = getProductByName(up.name);
-    }
-    if(!p){
-      // si no existe, lo creamos para no perder precios
-      p = {
-        id: id || uid("prd"),
-        name: norm(up.name || "PRODUCTO"),
-        unitDefault: up.unitDefault || "kg",
-        kgBox: up.kgBox || "",
-        priceKg: up.priceKg || "",
-        priceBox: up.priceBox || "",
-        priceUnit: up.priceUnit || "",
-        cost: "",
-        origin: "",
-        history: []
-      };
-      DB.products.unshift(p);
-    }
+  // preview (si existe)
+  const pv = $('#invoicePreview');
+  if(pv){
+    const pvBox = pv.querySelector('.invQr .qrBox');
+    if(pvBox && txt) renderQrInto(pvBox, txt);
+  }
+}
 
-    // guardar historial (solo si hay cambios reales en precio)
-    const prev = { priceKg: p.priceKg, priceBox: p.priceBox, priceUnit: p.priceUnit };
-    const next = {
-      priceKg: up.priceKg ?? p.priceKg,
-      priceBox: up.priceBox ?? p.priceBox,
-      priceUnit: up.priceUnit ?? p.priceUnit
-    };
+/* =========================
+   33) Vista previa Factura (UI) — con tabla + QR + totales
+========================= */
+function renderInvoicePreview(){
+  const wrap = $('#invoicePreview');
+  if(!wrap) return;
+  const inv = getCurrentInvoice();
+  if(!inv){
+    wrap.innerHTML = `<div class="muted">Sin factura.</div>`;
+    return;
+  }
 
-    const differs =
-      String(prev.priceKg ?? "") !== String(next.priceKg ?? "") ||
-      String(prev.priceBox ?? "") !== String(next.priceBox ?? "") ||
-      String(prev.priceUnit ?? "") !== String(next.priceUnit ?? "");
+  const cli = getClientById(inv.clientId);
+  const t = computeInvoiceTotals(inv);
 
-    if(differs){
-      pushPriceHistory(p, { ...next });
-      changed++;
-    }
+  // tabla preview
+  const rows = (inv.lines||[])
+    .filter(ln => (ln.productName || ln.productKey) && (Number(ln.amount)||0) > 0)
+    .map(ln=>{
+      return `
+        <tr>
+          <td><strong>${escHtml(ln.productName || '')}</strong></td>
+          <td>${escHtml(ln.mode||'')}</td>
+          <td>${escHtml(fmt2(ln.cant||0))}</td>
+          <td>${escHtml(fmt2(ln.bruto||0))}</td>
+          <td>${escHtml(fmt2(ln.tara||0))}</td>
+          <td>${escHtml(fmt2(ln.neto||0))}</td>
+          <td>${escHtml(fmt2(ln.price||0))}</td>
+          <td>${escHtml(ln.origin||'')}</td>
+          <td><strong>${escHtml(fmtEUR(ln.amount||0))}</strong></td>
+        </tr>
+      `;
+    }).join('');
 
-    // aplicar
-    if(up.unitDefault) p.unitDefault = up.unitDefault;
-    if(up.kgBox !== undefined) p.kgBox = up.kgBox;
-    if(up.priceKg !== undefined) p.priceKg = up.priceKg;
-    if(up.priceBox !== undefined) p.priceBox = up.priceBox;
-    if(up.priceUnit !== undefined) p.priceUnit = up.priceUnit;
-  });
+  wrap.innerHTML = `
+    <div class="invP-top">
+      <div class="invBlock">
+        <div class="h">PROVEEDOR</div>
+        <div class="l"><strong>${escHtml(state.provider.name||'')}</strong></div>
+        <div class="l">${escHtml(state.provider.nif||'')}</div>
+        <div class="l">${escHtml(state.provider.addr||'')}</div>
+        <div class="l">${escHtml(state.provider.phone||'')} · ${escHtml(state.provider.email||'')}</div>
+      </div>
 
-  saveLocal();
-  setMini("#prodMsg", `✅ Precios importados (${changed} cambios)`);
+      <div class="invQr">
+        <div class="qrBox"></div>
+      </div>
+
+      <div class="invBlock">
+        <div class="h">CLIENTE</div>
+        <div class="l"><strong>${escHtml(cli?.fiscalName || cli?.name || '')}</strong></div>
+        <div class="l">${escHtml(cli?.nif || '')}</div>
+        <div class="l">${escHtml(cli?.addr || '')}</div>
+        <div class="l">${escHtml(cli?.phone || '')} ${cli?.email ? ('· '+escHtml(cli.email)) : ''}</div>
+      </div>
+    </div>
+
+    <div class="invMeta">
+      <div class="m">Nº: <strong>${escHtml(inv.number||'')}</strong></div>
+      <div class="m">Fecha: <strong>${escHtml(inv.dateISO||'')}</strong></div>
+      <div class="m">Tags: <strong>${escHtml(inv.tags||'—')}</strong></div>
+    </div>
+
+    <table class="invTable">
+      <thead>
+        <tr>
+          <th>Producto</th><th>Modo</th><th>Cant.</th><th>Bruto</th><th>Tara</th><th>Neto</th><th>Precio</th><th>Origen</th><th>Importe</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows || `<tr><td colspan="9" class="muted">Sin líneas con importe.</td></tr>`}
+      </tbody>
+    </table>
+
+    <div class="invFoot">
+      <div class="invTotals">
+        <div class="row"><span>Subtotal</span><strong>${escHtml(fmtEUR(t.subtotal))}</strong></div>
+        <div class="row"><span>Transporte</span><strong>${escHtml(fmtEUR(t.transport))}</strong></div>
+        <div class="row"><span>IVA (4%)</span><strong>${escHtml(fmtEUR(t.iva))}</strong></div>
+        <div class="row big"><span>TOTAL</span><strong>${escHtml(fmtEUR(t.total))}</strong></div>
+        <div class="hint" style="margin-top:6px;">
+          ${inv.ivaIncluido ? 'IVA incluido en los precios (sin desglose).' : 'IVA 4% desglosado.'}
+        </div>
+      </div>
+
+      <div class="invSide">
+        <div class="row">Estado: <strong>${escHtml(inv.payStatus||'impagada')}</strong></div>
+        <div class="row">Método: <strong>${escHtml(inv.payMethod||'efectivo')}</strong></div>
+        <div class="row">Pendiente: <strong>${escHtml(fmtEUR(Math.max(0,t.pending)))}</strong></div>
+        <div class="row">Obs: <strong>${escHtml(inv.obs||'—')}</strong></div>
+      </div>
+    </div>
+  `;
+
+  // QR preview
+  regenQRBoth();
+}
+
+/* =========================
+   34) Render factura UI (override placeholder)
+========================= */
+function renderInvoiceUI(){
+  ensureCurrentInvoice();
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+
+  // defaults 5 líneas
+  ensureInvoiceLines(inv, 5);
+
+  // provider
+  renderProviderUI();
+
+  // cliente selects
+  renderAllClientSelects();
+  $('#invClient').value = inv.clientId || '';
+
+  // cliente fields
+  renderInvoiceClientUI(inv);
+
+  // meta
+  $('#invNumber').value = inv.number || invoiceNumberFromDate(new Date());
+  $('#invDate').value = inv.dateISO || toISODate(new Date());
+  $('#invTags').value = inv.tags || '';
+  $('#invNotes').value = inv.notes || '';
+  $('#invObs').value = inv.obs || '';
+
+  // toggles
+  $('#chkTransport').checked = !!inv.transportEnabled;
+  $('#chkIvaIncluido').checked = !!inv.ivaIncluido;
+
+  // pagos
+  renderPayList();
+
+  // grid
+  renderLines();
+
+  // lista facturas
+  renderInvoiceList();
+}
+
+/* =========================
+   35) Boot parcial (la app ya funciona offline)
+   (Cloud + PDF PRO final se completan en Parte 3/3)
+========================= */
+window.__ARSLAN_BOOT = function(){
+  // 1) load local
+  loadLocal();
+
+  // 2) init products vocab if empty
+  initProductsIfEmpty();
+
+  // 3) ensure invoice + 5 lines
+  ensureCurrentInvoice();
+  const inv = getCurrentInvoice();
+  ensureInvoiceLines(inv, 5);
+
+  // 4) tabs & binds
+  bindTabs();
+  bindGeneralButtons();
+  bindInvoiceMetaAndButtons();
+  bindClientsTab();
+  bindProductsTab();
+
+  // 5) UI renders
+  renderSettingsUI();
+  renderAllClientSelects();
+  renderProviderUI();
+  renderInvoiceUI();
+  renderClientList();
+  renderProductList();
+  renderAccountingLockedState();
+
+  // 6) inline quick buttons in tabs
+  toast('Listo');
+};
+/* =========================================================
+   app.js (3/3)
+   - PDF PRO (jsPDF + AutoTable): Proveedor izq / QR centro / Cliente der + logo
+   - WhatsApp PRO: resumen limpio + totales + link PDF si existe
+   - Cloud opcional Firebase: login + sync + guardar pdfUrl (Storage)
+   - Contabilidad real (PIN): ventas + IVA + margen (coste producto)
+========================================================= */
+
+/* =========================
+   36) PDF PRO — helpers
+========================= */
+function ensureLibsPDF(){
+  const okJsPDF = !!(window.jspdf && window.jspdf.jsPDF);
+  const okAT = !!(window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable);
+  if(!okJsPDF){
+    alert('Falta jsPDF. Revisa el index.html (CDN jsPDF).');
+    return false;
+  }
+  if(!okAT){
+    alert('Falta AutoTable. Revisa el index.html (plugin jspdf-autotable).');
+    return false;
+  }
   return true;
 }
 
-function importPricesFromLink(link){
-  const token = extractPricesParamFromLink(link);
-  if(!token) return false;
-  const payload = lzDecompressParam(token);
-  if(!payload) return false;
-  const ok = importPricesFromPayload(payload);
-  return ok;
+function getLogoDataURL_BW(){
+  // Logo B/W simple (sin depender de archivos): círculo + “A”
+  // Genera un PNG en canvas y devuelve dataURL
+  const c = document.createElement('canvas');
+  c.width = 220; c.height = 220;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffffff';
+  g.fillRect(0,0,c.width,c.height);
+  g.strokeStyle = '#111111';
+  g.lineWidth = 10;
+  g.beginPath();
+  g.arc(110,110,90,0,Math.PI*2);
+  g.stroke();
+
+  g.fillStyle = '#111111';
+  g.font = 'bold 110px Arial';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('A',110,118);
+
+  g.font = 'bold 26px Arial';
+  g.fillText('ARSLAN',110,185);
+
+  return c.toDataURL('image/png');
+}
+
+function getQrDataURL(text){
+  try{
+    const tmp = document.createElement('div');
+    tmp.style.position = 'fixed';
+    tmp.style.left = '-9999px';
+    tmp.style.top = '-9999px';
+    document.body.appendChild(tmp);
+
+    // eslint-disable-next-line no-undef
+    new QRCode(tmp, { text, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M });
+
+    const canvas = tmp.querySelector('canvas');
+    const img = tmp.querySelector('img');
+    let url = '';
+    if(canvas) url = canvas.toDataURL('image/png');
+    else if(img) url = img.src;
+
+    tmp.remove();
+    return url;
+  }catch(e){
+    console.warn('QR dataURL error', e);
+    return '';
+  }
+}
+
+function pdfFilename(inv){
+  const safeNum = (inv.number||'FACTURA').replace(/[^\w\-]+/g,'_');
+  return `${safeNum}.pdf`;
 }
 
 /* =========================
-   Export/Import JSON
+   37) PDF PRO — generar (local) y (cloud opcional)
 ========================= */
-function exportJSON(){
-  const blob = new Blob([JSON.stringify(DB, null, 2)], { type:"application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `arslan_kiwi_facturas_db_${todayISO()}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+async function generatePDF({ upload=false } = {}){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+
+  if(!ensureLibsPDF()) return;
+
+  // Totales y QR
+  const totals = computeInvoiceTotals(inv);
+  const qrText = buildQrText(inv);
+  const qrImg = getQrDataURL(qrText);
+  const logoImg = getLogoDataURL_BW();
+
+  const cli = getClientById(inv.clientId);
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 12;
+
+  // Header baseline
+  const topY = 14;
+
+  // Logo
+  try{
+    doc.addImage(logoImg, 'PNG', margin, topY, 18, 18);
+  }catch(e){}
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('FACTURA', margin+22, topY+8);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Nº: ${inv.number || ''}`, pageW - margin, topY+3, { align:'right' });
+  doc.text(`Fecha: ${inv.dateISO || ''}`, pageW - margin, topY+9, { align:'right' });
+
+  // 3 bloques: proveedor | QR | cliente
+  const boxY = topY + 22;
+  const boxH = 32;
+  const gap = 6;
+  const boxW = (pageW - 2*margin - 2*gap) / 3;
+
+  function drawBox(x,y,w,h,title,lines){
+    doc.setDrawColor(30);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(x,y,w,h,2,2);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(9);
+    doc.text(title, x+3, y+5);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(9);
+    let yy = y+10;
+    (lines||[]).forEach(s=>{
+      if(!s) return;
+      doc.text(String(s), x+3, yy);
+      yy += 4.2;
+    });
+  }
+
+  const provLines = [
+    state.provider.name || '',
+    state.provider.nif || '',
+    state.provider.addr || '',
+    `${state.provider.phone || ''}${state.provider.email ? ' · '+state.provider.email : ''}`.trim()
+  ];
+
+  const cliLines = [
+    cli?.fiscalName || cli?.name || '',
+    cli?.nif || '',
+    cli?.addr || '',
+    `${cli?.phone || ''}${cli?.email ? ' · '+cli.email : ''}`.trim()
+  ];
+
+  drawBox(margin, boxY, boxW, boxH, 'PROVEEDOR', provLines);
+  drawBox(margin + boxW + gap + boxW + gap, boxY, boxW, boxH, 'CLIENTE', cliLines);
+
+  // QR box centro
+  const qrX = margin + boxW + gap;
+  doc.setDrawColor(30);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(qrX, boxY, boxW, boxH, 2, 2);
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(9);
+  doc.text('QR AEAT', qrX+3, boxY+5);
+  if(qrImg){
+    try{
+      // centrado
+      const s = 22;
+      doc.addImage(qrImg, 'PNG', qrX + (boxW - s)/2, boxY + 7, s, s);
+    }catch(e){}
+  }else{
+    doc.setFont('helvetica','normal');
+    doc.text('QR no disponible', qrX+3, boxY+14);
+  }
+
+  // Tabla
+  const tableY = boxY + boxH + 10;
+
+  const head = [[
+    'Producto','Modo','Cant.','Bruto','Tara','Neto','Precio','Origen','Importe'
+  ]];
+
+  const body = (inv.lines||[]).map(ln=>{
+    // IMPORTANTE: “últimos precios” NO se imprimen — solo el precio de la línea.
+    const prod = (ln.productName || '').trim();
+    const hasAny = prod || ln.productKey;
+    if(!hasAny) return null;
+    // recalcular por seguridad
+    calcLine(ln);
+    const amount = Number(ln.amount||0);
+    // dejamos pasar incluso 0 si el usuario lo quiere en PDF (pero normalmente no)
+    return [
+      prod,
+      ln.mode || '',
+      fmt2(ln.cant||0),
+      fmt2(ln.bruto||0),
+      fmt2(ln.tara||0),
+      fmt2(ln.neto||0),
+      fmt2(ln.price||0),
+      (ln.origin||''),
+      fmt2(amount)
+    ];
+  }).filter(Boolean);
+
+  doc.autoTable({
+    startY: tableY,
+    head,
+    body: body.length ? body : [['(sin líneas)','','','','','','','','']],
+    styles: {
+      font: 'helvetica',
+      fontSize: 9,
+      lineWidth: 0.1,
+      cellPadding: 2
+    },
+    headStyles: {
+      fillColor: [245,245,245],
+      textColor: [0,0,0],
+      fontStyle: 'bold'
+    },
+    alternateRowStyles: { fillColor: [252,252,252] },
+    columnStyles: {
+      0: { cellWidth: 45 },
+      1: { cellWidth: 12 },
+      2: { cellWidth: 13, halign:'right' },
+      3: { cellWidth: 13, halign:'right' },
+      4: { cellWidth: 12, halign:'right' },
+      5: { cellWidth: 13, halign:'right' },
+      6: { cellWidth: 14, halign:'right' },
+      7: { cellWidth: 25 },
+      8: { cellWidth: 16, halign:'right' }
+    },
+    didDrawPage: (data)=>{
+      // Footer: página
+      const p = doc.internal.getNumberOfPages();
+      doc.setFontSize(9);
+      doc.setTextColor(80);
+      doc.text(`Página ${p}`, pageW - margin, pageH - 8, { align:'right' });
+    }
+  });
+
+  // Totales bajo tabla
+  const endY = doc.lastAutoTable.finalY + 8;
+
+  const totalsX = pageW - margin - 70;
+  doc.setDrawColor(30);
+  doc.setLineWidth(0.2);
+  doc.roundedRect(totalsX, endY, 70, 30, 2, 2);
+
+  doc.setFont('helvetica','normal');
+  doc.setTextColor(0);
+  doc.text('Subtotal', totalsX+4, endY+8);
+  doc.text(fmtEUR(totals.subtotal), totalsX+66, endY+8, {align:'right'});
+
+  doc.text('Transporte', totalsX+4, endY+14);
+  doc.text(fmtEUR(totals.transport), totalsX+66, endY+14, {align:'right'});
+
+  doc.text('IVA (4%)', totalsX+4, endY+20);
+  doc.text(fmtEUR(totals.iva), totalsX+66, endY+20, {align:'right'});
+
+  doc.setFont('helvetica','bold');
+  doc.text('TOTAL', totalsX+4, endY+27);
+  doc.text(fmtEUR(totals.total), totalsX+66, endY+27, {align:'right'});
+
+  // Notas / IVA incluido
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  doc.setTextColor(70);
+  const note = inv.ivaIncluido ? 'IVA incluido en los precios (sin desglose).' : 'IVA 4% desglosado.';
+  doc.text(note, margin, pageH - 10);
+
+  // Blob + URL local
+  const blob = doc.output('blob');
+  const url = URL.createObjectURL(blob);
+  state.tempPdfUrl = url;
+
+  // Guardar en la factura (marcar que hay PDF local)
+  // (si subimos a nube, guardamos pdfUrl también)
+  saveLocal();
+  recalcInvoiceTotalsAndUI(true);
+
+  // Descargar local (si no es upload-only)
+  if(!upload){
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = pdfFilename(inv);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('PDF generado');
+    return { blob, url, downloadUrl: '' };
+  }
+
+  // Upload Cloud
+  const res = await uploadPdfToCloud(inv, blob);
+  if(res?.downloadUrl){
+    inv.pdfUrl = res.downloadUrl;
+    // marca en DB
+    await cloudSaveAll(); // guarda factura con pdfUrl
+    saveLocal();
+    recalcInvoiceTotalsAndUI(true);
+    toast('PDF subido a nube ✅');
+  }else{
+    toast('PDF listo (sin nube)');
+  }
+  return { blob, url, downloadUrl: res?.downloadUrl || '' };
 }
 
-function importJSONFile(file){
-  const fr = new FileReader();
-  fr.onload = () => {
-    const data = safeJSONParse(fr.result);
-    if(!data){
-      setMini("#dbState", "❌ JSON inválido");
+/* =========================
+   38) WhatsApp PRO
+========================= */
+function buildWhatsText(inv){
+  const cli = getClientById(inv.clientId);
+  const t = computeInvoiceTotals(inv);
+
+  const lines = (inv.lines||[])
+    .filter(ln => (ln.productName || ln.productKey))
+    .map(ln=>{
+      calcLine(ln);
+      const prod = ln.productName || '';
+      const mode = ln.mode || 'kg';
+      const cant = fmt2(ln.cant||0);
+      const neto = fmt2(ln.neto||0);
+      const price = fmt2(ln.price||0);
+      const amount = fmt2(ln.amount||0);
+
+      // formato corto según modo
+      if(mode === 'kg'){
+        return `- ${prod} · neto ${neto}kg · ${price}€/kg = ${amount}€`;
+      }
+      if(mode === 'caja'){
+        return `- ${prod} · ${cant} caja · ${price}€ = ${amount}€`;
+      }
+      return `- ${prod} · ${cant} ud · ${price}€ = ${amount}€`;
+    });
+
+  const header = [
+    `FACTURA ${inv.number || ''}`,
+    `Fecha: ${inv.dateISO || ''}`,
+    `Cliente: ${cli?.name || inv.clientNameCache || ''}`,
+    inv.tags ? `Tags: ${inv.tags}` : ''
+  ].filter(Boolean).join('\n');
+
+  const totals = [
+    '',
+    `Subtotal: ${fmtEUR(t.subtotal)}`,
+    `Transporte: ${fmtEUR(t.transport)}`,
+    inv.ivaIncluido ? `IVA: (incluido)` : `IVA (4%): ${fmtEUR(t.iva)}`,
+    `TOTAL: ${fmtEUR(t.total)}`,
+    `Pendiente: ${fmtEUR(Math.max(0,t.pending))}`
+  ].join('\n');
+
+  const pdfLine = inv.pdfUrl ? `\n\nPDF: ${inv.pdfUrl}` : (state.tempPdfUrl ? `\n\nPDF (local): generado` : '');
+
+  return `${header}\n\n${lines.join('\n')}${totals}${pdfLine}`.trim();
+}
+
+function sendWhatsApp(){
+  const inv = getCurrentInvoice();
+  if(!inv) return;
+  const text = buildWhatsText(inv);
+  const url = 'https://wa.me/?text=' + encodeURIComponent(text);
+  window.open(url, '_blank');
+}
+
+/* =========================
+   39) CLOUD Firebase (lazy-load, sin romper offline)
+   - Auth + RTDB + Storage opcional
+========================= */
+let __fb = null;
+
+async function loadFirebase(){
+  if(__fb) return __fb;
+
+  if(!isFirebaseConfigured()){
+    throw new Error('Firebase no configurado (Ajustes).');
+  }
+
+  const base = 'https://www.gstatic.com/firebasejs/12.7.0/';
+  const [
+    appMod,
+    authMod,
+    dbMod,
+    storageMod
+  ] = await Promise.all([
+    import(base+'firebase-app.js'),
+    import(base+'firebase-auth.js'),
+    import(base+'firebase-database.js'),
+    import(base+'firebase-storage.js')
+  ]);
+
+  __fb = { appMod, authMod, dbMod, storageMod };
+  return __fb;
+}
+
+function fbConfig(){
+  const fb = state.settings.firebase || {};
+  return {
+    apiKey: fb.apiKey,
+    authDomain: fb.authDomain,
+    databaseURL: fb.databaseURL,
+    projectId: fb.projectId,
+    appId: fb.appId,
+    storageBucket: fb.storageBucket || undefined
+  };
+}
+
+async function cloudInit(){
+  try{
+    const { appMod, authMod, dbMod, storageMod } = await loadFirebase();
+
+    if(state.cloud.ready) return true;
+
+    const app = appMod.initializeApp(fbConfig());
+    const auth = authMod.getAuth(app);
+    const db = dbMod.getDatabase(app);
+
+    let storage = null;
+    try{
+      storage = storageMod.getStorage(app);
+    }catch(e){
+      storage = null;
+    }
+
+    state.cloud.firebase = { app, auth, db, storage };
+    state.cloud.ready = true;
+    state.cloud.enabled = true;
+
+    // Listener sesión
+    authMod.onAuthStateChanged(auth, (user)=>{
+      state.cloud.user = user || null;
+      updateCloudUIStatus();
+    });
+
+    updateCloudUIStatus();
+    return true;
+  }catch(e){
+    console.warn('cloudInit error:', e);
+    state.cloud.enabled = false;
+    state.cloud.ready = false;
+    updateCloudUIStatus();
+    return false;
+  }
+}
+
+function cloudPath(){
+  const u = state.cloud.user;
+  if(!u) return '';
+  return `arslan_facturas_kiwi_bw/users/${u.uid}/data`;
+}
+
+function updateCloudUIStatus(){
+  const el = $('#pillMode');
+  const u = state.cloud.user;
+  const ok = state.cloud.ready && state.cloud.enabled;
+
+  const cloudInfo = $('#cloudInfo');
+  if(cloudInfo){
+    cloudInfo.textContent = ok
+      ? (u ? `Cloud: conectado (${u.email || 'user'})` : 'Cloud: listo (sin login)')
+      : 'Cloud: OFF (local)';
+  }
+
+  if(el){
+    // no pisar toast: solo si está en modo normal
+    // (mantiene el estilo simple)
+  }
+
+  // botones
+  const bSync = $('#btnSync');
+  const bPdfCloud = $('#btnPDFCloud');
+  const bLoginDo = $('#btnLoginDo');
+  const bLogout = $('#btnLogout');
+  if(bSync) bSync.disabled = !(ok && u);
+  if(bPdfCloud) bPdfCloud.disabled = !(ok && u);
+  if(bLoginDo) bLoginDo.disabled = !ok;
+  if(bLogout) bLogout.disabled = !(ok && u);
+}
+
+/* =========================
+   40) Login UI (modal)
+========================= */
+function bindLoginUI(){
+  // intenta encontrar inputs típicos
+  const email = $('#loginEmail');
+  const pass = $('#loginPass');
+  const btnDo = $('#btnLoginDo');
+  const btnOut = $('#btnLogout');
+
+  if(btnDo){
+    on(btnDo,'click', async ()=>{
+      try{
+        await cloudInit();
+        const { authMod } = await loadFirebase();
+        const auth = state.cloud.firebase.auth;
+        const em = (email?.value || '').trim();
+        const pw = (pass?.value || '').trim();
+        if(!em || !pw) return alert('Email y contraseña');
+        await authMod.signInWithEmailAndPassword(auth, em, pw);
+        closeModal('#loginModal');
+        toast('Login OK');
+      }catch(e){
+        alert('Login error: ' + (e?.message || e));
+      }
+    });
+  }
+
+  if(btnOut){
+    on(btnOut,'click', async ()=>{
+      try{
+        await cloudInit();
+        const { authMod } = await loadFirebase();
+        await authMod.signOut(state.cloud.firebase.auth);
+        toast('Logout');
+      }catch(e){
+        alert('Logout error: ' + (e?.message || e));
+      }
+    });
+  }
+}
+
+/* =========================
+   41) Cloud Save/Load + Merge inteligente
+========================= */
+function isLocalDefaultEmpty(){
+  // consideramos “vacío” si no hay facturas reales (solo 1 vacía sin líneas)
+  const invs = state.invoices || [];
+  if(!invs.length) return true;
+  if(invs.length === 1){
+    const inv = invs[0];
+    const hasLine = (inv.lines||[]).some(l => (l.productName||l.productKey) && (Number(l.amount)||0) > 0);
+    const hasClient = !!inv.clientId;
+    const hasMeta = !!inv.number;
+    return !(hasLine || hasClient || hasMeta);
+  }
+  return false;
+}
+
+function invDedupeKey(inv){
+  const cli = inv.clientId || '';
+  return `${inv.dateISO||''}__${inv.number||''}__${cli}`.toUpperCase();
+}
+
+function mergeData(local, cloud){
+  const out = JSON.parse(JSON.stringify(local));
+
+  // --- Clients merge (id -> name)
+  const lc = Array.isArray(local.clients) ? local.clients : [];
+  const cc = Array.isArray(cloud.clients) ? cloud.clients : [];
+  const mapC = new Map();
+
+  const normName = (c)=> normalizeProdName(c?.name || c?.fiscalName || '');
+
+  // primero cloud (preferimos cloud como fuente “compartida”)
+  cc.forEach(c=>{
+    if(!c) return;
+    const id = c.id || uid('cli');
+    mapC.set(id, c);
+  });
+  // luego local: si id existe, merge; si no, intenta por nombre
+  lc.forEach(c=>{
+    if(!c) return;
+    const id = c.id || uid('cli');
+    if(mapC.has(id)){
+      mapC.set(id, { ...mapC.get(id), ...c });
       return;
     }
-    DB = Object.assign(defaultDB(), data);
-    DB.settings = Object.assign(defaultSettings(), DB.settings || {});
-    DB.settings.firebase = Object.assign(defaultSettings().firebase, (DB.settings.firebase || {}));
-    DB.provider = Object.assign({ ...DEFAULT_PROVIDER }, DB.provider || {});
-    DB.clients = Array.isArray(DB.clients) ? DB.clients : [];
-    DB.products = Array.isArray(DB.products) ? DB.products : [];
-    DB.invoices = Array.isArray(DB.invoices) ? DB.invoices : [];
-
-    saveLocal();
-    renderAll();
-    setMini("#dbState", "✅ Import OK");
-  };
-  fr.readAsText(file);
-}
-
-/* =========================
-   Clients view
-========================= */
-function renderClientsList(){
-  const q = norm(cliSearch2.value || "");
-  const list = DB.clients
-    .slice()
-    .sort((a,b)=> norm(a.alias||a.name).localeCompare(norm(b.alias||b.name)))
-    .filter(c => {
-      if(!q) return true;
-      const hay = `${c.name} ${c.alias||""} ${c.nif||""} ${c.addr||""}`.toUpperCase();
-      return hay.includes(q);
-    });
-
-  clientsList.innerHTML = "";
-  list.forEach(c => {
-    const item = document.createElement("div");
-    item.className = "list-item" + (c.id === currentClientId ? " active" : "");
-    item.innerHTML = `
-      <div class="t">
-        <div class="name">${c.alias || c.name}</div>
-        <div class="badge">${c.nif || "—"}</div>
-      </div>
-      <div class="meta">
-        ${c.name ? `<span>${c.name}</span>` : ``}
-        ${c.addr ? `<span>•</span><span>${c.addr}</span>` : ``}
-      </div>
-    `;
-    item.addEventListener("click", () => {
-      currentClientId = c.id;
-      renderClientsList();
-      fillClientEditor(c);
-    });
-    clientsList.appendChild(item);
+    // match por nombre
+    const nm = normName(c);
+    const found = Array.from(mapC.values()).find(x => normName(x) === nm);
+    if(found){
+      const merged = { ...found, ...c, id: found.id };
+      mapC.set(found.id, merged);
+    }else{
+      mapC.set(id, c);
+    }
   });
-}
+  out.clients = Array.from(mapC.values());
 
-function fillClientEditor(c){
-  cName.value = c?.name || "";
-  cNif.value = c?.nif || "";
-  cAlias.value = c?.alias || "";
-  cAddr.value = c?.addr || "";
-  cPhone.value = c?.phone || "";
-  cEmail.value = c?.email || "";
-  cNotes.value = c?.notes || "";
-}
+  // --- Products merge por key
+  const lp = local.products || {};
+  const cp = cloud.products || {};
+  const mapP = new Map();
 
-function saveClientEditor(){
-  if(!currentClientId){
-    setMini("#clientsMsg", "Selecciona un cliente");
-    return;
-  }
-  const c = DB.clients.find(x => x.id === currentClientId);
-  if(!c){
-    setMini("#clientsMsg", "Cliente no encontrado");
-    return;
-  }
-  c.name = cName.value || "";
-  c.nif = cNif.value || "";
-  c.alias = cAlias.value || "";
-  c.addr = cAddr.value || "";
-  c.phone = cPhone.value || "";
-  c.email = cEmail.value || "";
-  c.notes = cNotes.value || "";
+  Object.keys(cp).forEach(k=> mapP.set(k, cp[k]));
+  Object.keys(lp).forEach(k=>{
+    if(mapP.has(k)) mapP.set(k, { ...mapP.get(k), ...lp[k] });
+    else mapP.set(k, lp[k]);
+  });
+  out.products = {};
+  for(const [k,v] of mapP.entries()) out.products[k] = v;
 
-  saveLocal();
-  renderClientsList();
-  fillClientSelect();
-  setMini("#clientsMsg", "✅ Guardado");
-}
+  // --- Invoices merge: por id o key compuesto
+  const li = Array.isArray(local.invoices) ? local.invoices : [];
+  const ci = Array.isArray(cloud.invoices) ? cloud.invoices : [];
+  const mapI = new Map();
+  const mapKey = new Map();
 
-function deleteClientEditor(){
-  if(!currentClientId) return;
-  const c = DB.clients.find(x => x.id === currentClientId);
-  if(!c) return;
-  if(!confirm(`¿Eliminar cliente ${c.alias||c.name}?`)) return;
-
-  // re-map en facturas a vacío
-  DB.invoices.forEach(inv => {
-    if(inv.clientId === c.id) inv.clientId = "";
+  // cloud first
+  ci.forEach(inv=>{
+    if(!inv) return;
+    if(inv.id) mapI.set(inv.id, inv);
+    mapKey.set(invDedupeKey(inv), inv);
   });
 
-  DB.clients = DB.clients.filter(x => x.id !== c.id);
-  currentClientId = DB.clients[0]?.id || null;
-
-  saveLocal();
-  renderClientsList();
-  fillClientSelect();
-  setMini("#clientsMsg", "✅ Eliminado");
-}
-
-/* =========================
-   Products view
-========================= */
-function renderProdList(){
-  const q = norm(prodSearch.value || "");
-  const list = DB.products
-    .slice()
-    .sort((a,b)=> norm(a.name).localeCompare(norm(b.name)))
-    .filter(p => !q || norm(p.name).includes(q));
-
-  prodList.innerHTML = "";
-  list.forEach(p => {
-    const item = document.createElement("div");
-    item.className = "list-item" + (p.id === currentProdId ? " active" : "");
-    const priceMain = (p.unitDefault === "caja") ? p.priceBox : (p.unitDefault === "unidad" ? p.priceUnit : p.priceKg);
-    item.innerHTML = `
-      <div class="t">
-        <div class="name">${p.name}</div>
-        <div class="badge">${priceMain ? `${priceMain}€` : "—"}</div>
-      </div>
-      <div class="meta">
-        <span>Def: ${p.unitDefault || "kg"}</span>
-        ${p.kgBox ? `<span>•</span><span>Kg/caja ${p.kgBox}</span>` : ``}
-        ${(p.origin||"") ? `<span>•</span><span>${p.origin}</span>` : ``}
-      </div>
-    `;
-    item.addEventListener("click", () => {
-      currentProdId = p.id;
-      renderProdList();
-      fillProdEditor(p);
-    });
-    prodList.appendChild(item);
-  });
-}
-
-function fillProdEditor(p){
-  pName.value = p?.name || "";
-  pUnit.value = p?.unitDefault || "kg";
-  pKgBox.value = p?.kgBox ?? "";
-  pPriceKg.value = p?.priceKg ?? "";
-  pPriceBox.value = p?.priceBox ?? "";
-  pPriceUnit.value = p?.priceUnit ?? "";
-  pCost.value = p?.cost ?? "";
-  pOrigin.value = p?.origin ?? "";
-  renderProdHist(p);
-}
-
-function renderProdHist(p){
-  pHist.innerHTML = "";
-  const hist = Array.isArray(p?.history) ? p.history : [];
-  if(hist.length === 0){
-    pHist.innerHTML = `<div class="hist-item"><span class="muted">Sin historial</span></div>`;
-    return;
-  }
-  hist.slice(0,5).forEach(h => {
-    const when = h.ts ? new Date(h.ts).toLocaleString("es-ES") : "";
-    const parts = [];
-    if(h.priceKg) parts.push(`€/kg ${h.priceKg}`);
-    if(h.priceBox) parts.push(`€/caja ${h.priceBox}`);
-    if(h.priceUnit) parts.push(`€/ud ${h.priceUnit}`);
-    const item = document.createElement("div");
-    item.className = "hist-item";
-    item.innerHTML = `<span>${parts.join(" • ")}</span><span class="muted mini">${when}</span>`;
-    pHist.appendChild(item);
-  });
-}
-
-function saveProdEditor(){
-  // si no hay seleccionado, crear
-  let p = currentProdId ? DB.products.find(x => x.id === currentProdId) : null;
-  const name = norm(pName.value || "");
-  if(!name){
-    setMini("#prodMsg", "Nombre inválido");
-    return;
-  }
-
-  // no duplicar por nombre
-  const existing = DB.products.find(x => norm(x.name) === name && (!p || x.id !== p.id));
-  if(existing){
-    setMini("#prodMsg", "Ya existe ese producto (mismo nombre)");
-    return;
-  }
-
-  const patch = {
-    name,
-    unitDefault: pUnit.value || "kg",
-    kgBox: pKgBox.value ?? "",
-    priceKg: pPriceKg.value ?? "",
-    priceBox: pPriceBox.value ?? "",
-    priceUnit: pPriceUnit.value ?? "",
-    cost: pCost.value ?? "",
-    origin: pOrigin.value ?? ""
-  };
-
-  if(!p){
-    p = {
-      id: uid("prd"),
-      history: []
-    };
-    DB.products.unshift(p);
-    currentProdId = p.id;
-  }
-
-  // historial: si cambian precios, push snapshot
-  const prev = { priceKg: p.priceKg ?? "", priceBox: p.priceBox ?? "", priceUnit: p.priceUnit ?? "" };
-  const next = { priceKg: patch.priceKg ?? "", priceBox: patch.priceBox ?? "", priceUnit: patch.priceUnit ?? "" };
-  const differs =
-    String(prev.priceKg) !== String(next.priceKg) ||
-    String(prev.priceBox) !== String(next.priceBox) ||
-    String(prev.priceUnit) !== String(next.priceUnit);
-
-  Object.assign(p, patch);
-  ensureProductHistory(p);
-  if(differs){
-    pushPriceHistory(p, next);
-  }
-
-  saveLocal();
-  renderProdList();
-  renderProductsDatalist();
-  // refrescar factura para aplicar cambios en hints/precios futuros
-  const inv = getInvoiceById(currentInvoiceId);
-  if(inv) renderInvoice(inv);
-
-  setMini("#prodMsg", "✅ Guardado");
-}
-
-function deleteProdEditor(){
-  if(!currentProdId) return;
-  const p = DB.products.find(x => x.id === currentProdId);
-  if(!p) return;
-  if(!confirm(`¿Eliminar producto ${p.name}?`)) return;
-
-  // no romper facturas: dejamos nombre en líneas, y quitamos productId si coincide
-  DB.invoices.forEach(inv => {
-    inv.lines.forEach(ln => {
-      if(ln.productId === p.id) ln.productId = "";
-    });
-  });
-
-  DB.products = DB.products.filter(x => x.id !== p.id);
-  currentProdId = DB.products[0]?.id || null;
-
-  saveLocal();
-  renderProdList();
-  renderProductsDatalist();
-  setMini("#prodMsg", "✅ Eliminado");
-}
-
-function seedVocab(){
-  const vocab = DEFAULT_VOCAB_TEXT
-    .split("\n")
-    .map(s => norm(s))
-    .filter(Boolean);
-
-  let added = 0;
-  vocab.forEach(name => {
-    if(!DB.products.find(p => norm(p.name) === name)){
-      DB.products.push({
-        id: uid("prd"),
-        name,
-        unitDefault: "kg",
-        kgBox: "",
-        priceKg: "",
-        priceBox: "",
-        priceUnit: "",
-        cost: "",
-        origin: "",
-        history: []
-      });
-      added++;
+  // local merge
+  li.forEach(inv=>{
+    if(!inv) return;
+    if(inv.id && mapI.has(inv.id)){
+      // merge por id (preferimos campos locales para edición reciente)
+      mapI.set(inv.id, { ...mapI.get(inv.id), ...inv });
+      return;
+    }
+    const k = invDedupeKey(inv);
+    const hit = mapKey.get(k);
+    if(hit){
+      const merged = { ...hit, ...inv, id: hit.id || inv.id || uid('inv') };
+      mapI.set(merged.id, merged);
+      mapKey.set(k, merged);
+    }else{
+      const id = inv.id || uid('inv');
+      const nu = { ...inv, id };
+      mapI.set(id, nu);
+      mapKey.set(k, nu);
     }
   });
 
-  saveLocal();
-  renderProdList();
-  renderProductsDatalist();
-  setMini("#prodMsg", `✅ Vocab cargado (+${added})`);
+  // ordenar por fecha desc
+  const mergedList = Array.from(mapI.values()).sort((a,b)=>{
+    const ta = (a.dateISO||'') + (a.number||'');
+    const tb = (b.dateISO||'') + (b.number||'');
+    return tb.localeCompare(ta);
+  });
+
+  out.invoices = mergedList;
+
+  // provider + settings (preferimos local, pero completamos cloud si falta)
+  out.provider = { ...(cloud.provider||{}), ...(local.provider||{}) };
+  out.settings = { ...(cloud.settings||{}), ...(local.settings||{}) };
+
+  return out;
+}
+
+async function cloudLoad(){
+  await cloudInit();
+  if(!state.cloud.user) throw new Error('No hay login');
+
+  const { dbMod } = await loadFirebase();
+  const db = state.cloud.firebase.db;
+
+  const path = cloudPath();
+  const snap = await dbMod.get(dbMod.ref(db, path));
+  const data = snap.exists() ? snap.val() : null;
+
+  return data || null;
+}
+
+async function cloudSaveAll(){
+  await cloudInit();
+  if(!state.cloud.user) throw new Error('No hay login');
+
+  const { dbMod } = await loadFirebase();
+  const db = state.cloud.firebase.db;
+  const path = cloudPath();
+
+  const payload = {
+    ts: Date.now(),
+    provider: state.provider,
+    clients: state.clients,
+    products: state.products,
+    invoices: state.invoices,
+    settings: state.settings
+  };
+  await dbMod.set(dbMod.ref(db, path), payload);
+  return true;
+}
+
+async function cloudSync(){
+  try{
+    await cloudInit();
+    if(!state.cloud.user) return alert('Haz login primero');
+
+    const cloudData = await cloudLoad();
+    if(!cloudData){
+      // nube vacía -> sube local
+      await cloudSaveAll();
+      toast('Cloud: subido');
+      updateCloudUIStatus();
+      return;
+    }
+
+    // estrategia: si local “vacío” -> pull cloud
+    if(isLocalDefaultEmpty()){
+      state.provider = { ...defaultProvider(), ...(cloudData.provider||{}) };
+      state.clients = Array.isArray(cloudData.clients) ? cloudData.clients : defaultClients();
+      state.products = cloudData.products || buildDefaultProductsFromVocab();
+      state.invoices = Array.isArray(cloudData.invoices) ? cloudData.invoices : [];
+      state.settings = { ...defaultSettings(), ...(cloudData.settings||{}) };
+
+      saveLocal();
+      renderSettingsUI();
+      renderAllClientSelects();
+      ensureCurrentInvoice();
+      renderInvoiceUI();
+      renderClientList();
+      renderProductList();
+      renderInvoiceList();
+      toast('Cloud: descargado');
+      return;
+    }
+
+    // merge
+    const localData = {
+      provider: state.provider,
+      clients: state.clients,
+      products: state.products,
+      invoices: state.invoices,
+      settings: state.settings
+    };
+
+    const merged = mergeData(localData, cloudData);
+
+    state.provider = merged.provider;
+    state.clients = merged.clients;
+    state.products = merged.products;
+    state.invoices = merged.invoices;
+    state.settings = merged.settings;
+
+    saveLocal();
+    await cloudSaveAll();
+
+    renderSettingsUI();
+    renderAllClientSelects();
+    ensureCurrentInvoice();
+    renderInvoiceUI();
+    renderClientList();
+    renderProductList();
+    renderInvoiceList();
+
+    toast('Cloud: sincronizado ✅');
+  }catch(e){
+    alert('Sync error: ' + (e?.message || e));
+  }
 }
 
 /* =========================
-   Contabilidad (PIN)
+   42) Upload PDF a Storage (si existe bucket)
 ========================= */
-function isAccUnlocked(){
-  return localStorage.getItem(LS_ACC_UNLOCK) === "1";
-}
-function setAccUnlocked(v){
-  localStorage.setItem(LS_ACC_UNLOCK, v ? "1" : "0");
-  accStatus.textContent = v ? "Desbloqueado" : "Bloqueado";
-  accStatus.style.borderColor = v ? "#0b0d10" : "#d7dbe2";
+async function uploadPdfToCloud(inv, blob){
+  await cloudInit();
+  if(!state.cloud.user) throw new Error('No hay login');
+
+  const { storageMod } = await loadFirebase();
+  const storage = state.cloud.firebase.storage;
+  if(!storage){
+    // sin storage -> no se puede link permanente
+    return { downloadUrl: '' };
+  }
+
+  const uidUser = state.cloud.user.uid;
+  const fname = pdfFilename(inv);
+  const path = `arslan_facturas_kiwi_bw/${uidUser}/pdf/${fname}`;
+
+  const r = storageMod.ref(storage, path);
+  await storageMod.uploadBytes(r, blob, { contentType:'application/pdf' });
+  const url = await storageMod.getDownloadURL(r);
+  return { downloadUrl: url };
 }
 
-function renderAccClientSelect(){
-  accClient.innerHTML = `<option value="">(Todos)</option>` + DB.clients
-    .slice()
-    .sort((a,b)=> norm(a.alias||a.name).localeCompare(norm(b.alias||b.name)))
-    .map(c => `<option value="${c.id}">${c.alias||c.name}</option>`)
-    .join("");
+/* =========================
+   43) Contabilidad real (PIN)
+========================= */
+function getInvoiceCost(inv){
+  // coste usando product.cost:
+  // - kg: neto * cost
+  // - caja: si kgPerBox y cant -> cant*kgPerBox*cost, si no neto*cost
+  // - ud: cant*cost
+  let cost = 0;
+  (inv.lines||[]).forEach(ln=>{
+    if(!(ln.productKey||ln.productName)) return;
+    calcLine(ln);
+    const p = state.products?.[ln.productKey] || null;
+    const c = Number(p?.cost || 0);
+    if(!c) return;
+
+    const mode = ln.mode || 'kg';
+    const cant = Number(ln.cant||0);
+    const neto = Number(ln.neto||0);
+    const kgBox = Number(p?.kgPerBox||0);
+
+    if(mode === 'kg'){
+      cost += neto * c;
+    }else if(mode === 'caja'){
+      if(cant > 0 && kgBox > 0) cost += cant * kgBox * c;
+      else cost += neto * c;
+    }else{
+      // ud
+      cost += cant * c;
+    }
+  });
+  return cost;
 }
 
-function clearAccUI(){
-  kSales.textContent = "0,00 €";
-  kIva.textContent = "0,00 €";
-  kN.textContent = "0";
-  kMargin.textContent = "0,00 €";
-  accTable.innerHTML = "";
-}
+function renderAccounting(){
+  const tbody = $('#accTable tbody');
+  if(!tbody) return;
 
-function runAccounting(){
-  if(!isAccUnlocked()){
-    clearAccUI();
+  if(!state.unlockedAccounting){
+    renderAccountingLockedState();
     return;
   }
 
-  const from = accFrom.value || "0000-01-01";
-  const to = accTo.value || "9999-12-31";
-  const cliId = accClient.value || "";
-  const tagQ = norm(accTag.value || "");
+  const from = $('#accFrom')?.value || '';
+  const to = $('#accTo')?.value || '';
+  const cliId = $('#accClient')?.value || '';
 
-  const invs = DB.invoices.filter(inv => {
-    const d = inv.dateISO || "";
-    if(d < from || d > to) return false;
+  const inRange = (dISO)=>{
+    if(from && dISO < from) return false;
+    if(to && dISO > to) return false;
+    return true;
+  };
+
+  const invs = (state.invoices||[]).filter(inv=>{
+    if(!inRange(inv.dateISO||'')) return false;
     if(cliId && inv.clientId !== cliId) return false;
-    if(tagQ && !norm(inv.tags||"").includes(tagQ)) return false;
     return true;
   });
 
-  let sales = 0;
-  let iva = 0;
-  let margin = 0;
+  let sumSales = 0;
+  let sumIva = 0;
+  let sumCost = 0;
 
-  accTable.innerHTML = "";
-  invs.forEach(inv => {
-    computeInvoiceTotals(inv);
-    sales += n2(inv.totals.total);
-    iva += n2(inv.totals.iva);
+  const rows = invs.map(inv=>{
+    const t = computeInvoiceTotals(inv);
+    // IVA real solo si no incluido; si incluido lo dejamos 0 para contabilidad simple
+    const iva = inv.ivaIncluido ? 0 : t.iva;
+    const cost = getInvoiceCost(inv);
 
-    // margen estimado: (precio - coste)*neto en kg, y qty*(precio-coste) en unidad/caja si coste se usa
-    let invMargin = 0;
-    inv.lines.forEach(ln => {
-      const p = ln.productId ? getProductById(ln.productId) : getProductByName(ln.productName);
-      if(!p) return;
-      const cost = n2(p.cost);
-      const price = n2(ln.price);
+    sumSales += t.total;
+    sumIva += iva;
+    sumCost += cost;
 
-      if(ln.mode === "kg"){
-        invMargin += (price - cost) * n2(ln.net);
-      }else{
-        invMargin += (price - cost) * n2(ln.qty);
-      }
-    });
-    margin += invMargin;
-
-    const cli = DB.clients.find(c => c.id === inv.clientId) || {};
-    const row = document.createElement("div");
-    row.className = "trow";
-    row.innerHTML = `
-      <div>${inv.dateISO || ""}</div>
-      <div>${inv.number || ""}</div>
-      <div>${(cli.alias||cli.name||"—")}</div>
-      <div class="right">${moneyEUR(inv.totals.total)}</div>
-      <div>${inv.tags || ""}</div>
+    const cli = getClientById(inv.clientId);
+    return `
+      <tr>
+        <td>${escHtml(inv.dateISO||'')}</td>
+        <td>${escHtml(inv.number||'')}</td>
+        <td>${escHtml(cli?.name || inv.clientNameCache || '')}</td>
+        <td style="text-align:right;">${escHtml(fmt2(t.total))}</td>
+        <td style="text-align:right;">${escHtml(fmt2(cost))}</td>
+      </tr>
     `;
-    accTable.appendChild(row);
-  });
+  }).join('');
 
-  kSales.textContent = moneyEUR(sales);
-  kIva.textContent = moneyEUR(iva);
-  kN.textContent = String(invs.length);
-  kMargin.textContent = moneyEUR(margin);
+  tbody.innerHTML = rows || `<tr><td colspan="5" class="muted">Sin resultados.</td></tr>`;
+
+  const margin = sumSales - sumCost;
+
+  $('#accSales').textContent = fmtEUR(sumSales);
+  $('#accIva').textContent = fmtEUR(sumIva);
+  $('#accN').textContent = String(invs.length);
+  $('#accMargin').textContent = fmtEUR(margin);
+}
+
+function bindAccounting(){
+  on($('#btnAccCalc'),'click', renderAccounting);
+  on($('#accFrom'),'change', renderAccounting);
+  on($('#accTo'),'change', renderAccounting);
+  on($('#accClient'),'change', renderAccounting);
 }
 
 /* =========================
-   Ajustes
+   44) Re-binds: reemplazar handlers placeholder de Parte 2 (captura)
 ========================= */
-function renderSettings(){
-  setTax.value = String(DB.settings.taxRate ?? 0.04);
-  setQrTpl.value = DB.settings.qrTemplate || "";
-  setLogoSvg.value = DB.settings.logoSvg || "";
-
-  fbApiKey.value = DB.settings.firebase.apiKey || "";
-  fbAuthDomain.value = DB.settings.firebase.authDomain || "";
-  fbDbUrl.value = DB.settings.firebase.databaseURL || "";
-  fbProjectId.value = DB.settings.firebase.projectId || "";
-  fbAppId.value = DB.settings.firebase.appId || "";
-  fbBucket.value = DB.settings.firebase.storageBucket || "";
-}
-
-function saveSettings(){
-  DB.settings.taxRate = n2(setTax.value || 0.04) || 0.04;
-  DB.settings.qrTemplate = setQrTpl.value || DB.settings.qrTemplate;
-  DB.settings.logoSvg = setLogoSvg.value || DB.settings.logoSvg;
-  saveLocal();
-
-  const inv = getInvoiceById(currentInvoiceId);
-  if(inv) { inv.taxRate = DB.settings.taxRate; upsertInvoice(inv); renderInvoice(inv); }
-
-  setMini("#setMsg", "✅ Ajustes guardados");
-}
-
-function saveFirebaseSettings(){
-  DB.settings.firebase = {
-    apiKey: fbApiKey.value || "",
-    authDomain: fbAuthDomain.value || "",
-    databaseURL: fbDbUrl.value || "",
-    projectId: fbProjectId.value || "",
-    appId: fbAppId.value || "",
-    storageBucket: fbBucket.value || ""
+function overrideButtonsReal(){
+  const hook = (id, fn)=>{
+    const el = $(id);
+    if(!el) return;
+    el.addEventListener('click', (e)=>{
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      fn();
+    }, true);
   };
-  saveLocal();
-  setMini("#fbMsg", "✅ Firebase guardado (Cloud en Parte 5/5)");
+
+  hook('#btnPDF', async ()=>{ await generatePDF({ upload:false }); });
+  hook('#btnPDFCloud', async ()=>{ await generatePDF({ upload:true }); });
+  hook('#btnWhats', ()=>{ sendWhatsApp(); });
+  hook('#btnSync', async ()=>{ await cloudSync(); });
 }
 
 /* =========================
-   Login modal (Cloud Parte 2/2)
+   45) Boot final: añade cloud init (opcional) sin romper offline
 ========================= */
-function bindCloudUI(){
-  btnLogin.addEventListener("click", () => showModal(loginModal));
-  btnCloseLogin.addEventListener("click", () => hideModal(loginModal));
+const __BOOT_OLD = window.__ARSLAN_BOOT;
+window.__ARSLAN_BOOT = function(){
+  // boot de Parte 2
+  if(typeof __BOOT_OLD === 'function') __BOOT_OLD();
 
-  btnDoLogin.addEventListener("click", () => {
-    setMini("#loginMsg", "Cloud se completa en PARTE 5/5 (sync + merge + storage)");
-  });
-  btnDoSignup.addEventListener("click", () => {
-    setMini("#loginMsg", "Cloud se completa en PARTE 5/5 (signup/login)");
-  });
-  btnDoLogout.addEventListener("click", () => {
-    setMini("#loginMsg", "Cloud se completa en PARTE 5/5 (logout)");
-  });
+  // rebind real
+  overrideButtonsReal();
+  bindLoginUI();
+  bindAccounting();
 
-  btnSync.addEventListener("click", () => {
-    setMini("#dbState", "Sync nube en PARTE 5/5");
-  });
-}
+  // intenta preparar cloud (no obliga internet)
+  cloudInit().catch(()=>{});
 
-/* =========================
-   Prices page open (Ajustes)
-========================= */
-function bindPricesPageButton(){
-  btnOpenPricesPage.addEventListener("click", () => {
-    const url = buildPricesEditorUrl();
-    window.open(url, "_blank");
-  });
-}
+  // pinta estado cloud
+  updateCloudUIStatus();
 
-/* =========================
-   Bind other UI
-========================= */
-function bindClientsUI(){
-  cliSearch2.addEventListener("input", renderClientsList);
-
-  btnNewClient.addEventListener("click", () => {
-    const c = {
-      id: uid("cli"),
-      name: "NUEVO CLIENTE",
-      nif: "",
-      addr: "",
-      phone: "",
-      email: "",
-      alias: "",
-      notes: ""
-    };
-    DB.clients.unshift(c);
-    currentClientId = c.id;
-    saveLocal();
-    renderClientsList();
-    fillClientEditor(c);
-    fillClientSelect();
-    setMini("#clientsMsg", "✅ Cliente creado");
-  });
-
-  btnSaveClient.addEventListener("click", saveClientEditor);
-  btnDelClient.addEventListener("click", deleteClientEditor);
-}
-
-function bindProductsUI(){
-  prodSearch.addEventListener("input", renderProdList);
-  btnSeedVocab.addEventListener("click", seedVocab);
-
-  btnNewProd.addEventListener("click", () => {
-    const p = {
-      id: uid("prd"),
-      name: "NUEVO PRODUCTO",
-      unitDefault: "kg",
-      kgBox: "",
-      priceKg: "",
-      priceBox: "",
-      priceUnit: "",
-      cost: "",
-      origin: "",
-      history: []
-    };
-    DB.products.unshift(p);
-    currentProdId = p.id;
-    saveLocal();
-    renderProdList();
-    fillProdEditor(p);
-    renderProductsDatalist();
-    setMini("#prodMsg", "✅ Producto creado");
-  });
-
-  btnSaveProd.addEventListener("click", saveProdEditor);
-  btnDelProd.addEventListener("click", deleteProdEditor);
-}
-
-function bindAccountingUI(){
-  setAccUnlocked(isAccUnlocked());
-
-  btnUnlockAcc.addEventListener("click", () => {
-    pinInput.value = "";
-    pinMsg.textContent = "—";
-    showModal(pinModal);
-    setTimeout(() => pinInput.focus(), 50);
-  });
-  btnLockAcc.addEventListener("click", () => {
-    setAccUnlocked(false);
-    clearAccUI();
-  });
-
-  btnClosePin.addEventListener("click", () => hideModal(pinModal));
-  btnPinCancel.addEventListener("click", () => hideModal(pinModal));
-
-  btnPinOk.addEventListener("click", () => {
-    const pin = (pinInput.value || "").trim();
-    if(pin === (DB.settings.adminPin || "7392")){
-      setAccUnlocked(true);
-      hideModal(pinModal);
-      pinMsg.textContent = "✅ OK";
-    }else{
-      pinMsg.textContent = "❌ PIN incorrecto";
-    }
-  });
-
-  btnRunAcc.addEventListener("click", runAccounting);
-}
-
-function bindSettingsUI(){
-  btnSaveSettings.addEventListener("click", saveSettings);
-  btnSaveFirebase.addEventListener("click", saveFirebaseSettings);
-
-  btnResetLocal.addEventListener("click", () => {
-    if(!confirm("¿Reset local? (borra base local)")) return;
-    localStorage.removeItem(LS_KEY);
-    localStorage.removeItem(LS_ACC_UNLOCK);
-    loadLocal();
-    saveLocal();
-    renderAll();
-  });
-}
-
-function bindJsonUI(){
-  btnExportJson.addEventListener("click", exportJSON);
-  btnImportJson.addEventListener("click", () => fileImportJson.click());
-  fileImportJson.addEventListener("change", (e) => {
-    const f = e.target.files?.[0];
-    if(f) importJSONFile(f);
-    e.target.value = "";
-  });
-}
-
-/* =========================
-   URL Auto-import: prices param
-========================= */
-function autoImportPricesFromUrl(){
-  const u = new URL(location.href);
-  let token = u.searchParams.get("prices");
-  if(!token && u.hash && u.hash.includes("prices=")){
-    token = u.hash.split("prices=")[1] || "";
-  }
-  if(token){
-    const payload = lzDecompressParam(token);
-    if(payload){
-      const ok = importPricesFromPayload(payload);
-      setMini("#pricesMsg", ok ? "✅ Precios aplicados desde link" : "❌ Precios link inválido");
-      // limpiar hash para que no reimporte
-      try{
-        u.searchParams.delete("prices");
-        history.replaceState(null, "", u.pathname + u.search);
-      }catch(e){}
-    }
-  }
-}
-
-/* =========================
-   Render all
-========================= */
-function renderAll(){
-  renderProductsDatalist();
-
-  // clientes
-  currentClientId = DB.clients[0]?.id || null;
-  renderClientsList();
-  if(currentClientId){
-    fillClientEditor(DB.clients.find(c => c.id === currentClientId));
-  }
-
-  // productos
-  currentProdId = DB.products[0]?.id || null;
-  renderProdList();
-  if(currentProdId){
-    fillProdEditor(DB.products.find(p => p.id === currentProdId));
-  }
-
-  // contabilidad
-  renderAccClientSelect();
-  clearAccUI();
-
-  // ajustes
-  renderSettings();
-
-  // facturas
-  if(DB.invoices.length === 0){
-    const inv = newInvoiceSkeleton();
-    upsertInvoice(inv);
-  }
-  currentInvoiceId = DB.invoices[0]?.id || null;
-  renderInvoiceList();
-  if(currentInvoiceId){
-    renderInvoice(getInvoiceById(currentInvoiceId));
-  }
-
-  // Mode pill
-  elPillMode.textContent = "Modo local";
-  setMini("#dbState", `Local OK • ${DB.invoices.length} facturas • ${DB.clients.length} clientes • ${DB.products.length} productos`);
-}
-
-/* =========================
-   INIT
-========================= */
-(function init(){
-  loadLocal();
-  // si no hay productos, dejamos vacío; el usuario puede “Cargar vocabulario”
-  saveLocal();
-
-  bindInvoiceMeta();
-  bindClientsUI();
-  bindProductsUI();
-  bindAccountingUI();
-  bindSettingsUI();
-  bindCloudUI();
-  bindJsonUI();
-  bindPricesPageButton();
-
-  invSearch.addEventListener("input", renderInvoiceList);
-
-  autoImportPricesFromUrl();
-  renderAll();
-})();
+  // contabilidad si desbloqueada
+  if(state.unlockedAccounting) renderAccounting();
+};
