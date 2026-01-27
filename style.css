@@ -21,6 +21,7 @@ body{
   background:var(--bg);
   color:var(--ink);
 }
+
 .app-shell{min-height:100%}
 
 /* TOP BAR */
@@ -33,7 +34,10 @@ body{
   border-bottom:1px solid var(--border);
 }
 .brand{display:flex; align-items:center; gap:10px}
-.kiwi-dot{width:14px; height:14px; border-radius:4px; background:#111}
+.kiwi-dot{
+  width:14px; height:14px; border-radius:4px;
+  background:#111;
+}
 .brand-title{font-weight:800; letter-spacing:.2px}
 .brand-sub{font-size:12px; color:var(--muted)}
 .top-actions{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
@@ -43,10 +47,18 @@ body{
   background:#fff;
 }
 
+/* LAYOUT */
+.main{
+  display:flex;
+  flex-direction:column;
+  min-height: calc(100vh - 62px);
+}
+
 /* NAV ARRIBA */
-.main{display:flex; flex-direction:column; min-height: calc(100vh - 62px);}
 .nav{
-  display:flex; flex-wrap:wrap; gap:8px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
   padding:10px 12px;
   border-bottom:1px solid var(--border);
   background:#fff;
@@ -61,7 +73,11 @@ body{
   font-weight:700;
 }
 .nav-btn:hover{background:#f7f7f7}
-.nav-btn.active{background:#111; color:#fff; border-color:#111}
+.nav-btn.active{
+  background:#111;
+  color:#fff;
+  border-color:#111;
+}
 
 /* CONTENT */
 .content{padding:12px}
@@ -80,12 +96,13 @@ body{
   background:#fff;
 }
 .panel-header.sticky{
-  position:sticky; top:62px; z-index:30; background:#fff;
+  position:sticky;
+  top:118px; /* topbar + nav */
+  z-index:30;
+  background:#fff;
 }
+.header-left h2{margin:0}
 .header-actions{display:flex; gap:8px; flex-wrap:wrap}
-.title-big{font-size:18px; font-weight:900}
-.muted{color:var(--muted); font-size:12px}
-.hint{color:var(--muted); font-size:12px; margin-top:8px}
 
 .card{
   border:1px solid var(--border);
@@ -97,6 +114,8 @@ body{
 .mt6{margin-top:6px}
 .mt8{margin-top:8px}
 .mt10{margin-top:10px}
+.muted{color:var(--muted); font-size:12px}
+.hint{color:var(--muted); font-size:12px; margin-top:8px}
 
 .btn{
   border:1px solid var(--border);
@@ -108,8 +127,16 @@ body{
   font-weight:800;
 }
 .btn:hover{background:#f7f7f7}
-.btn.primary{background:#111; color:#fff; border-color:#111}
-.btn.danger{border-color: rgba(217,44,44,.35); background: rgba(217,44,44,.08); color:#111}
+.btn.primary{
+  background:#111;
+  color:#fff;
+  border-color:#111;
+}
+.btn.danger{
+  border-color: rgba(217,44,44,.35);
+  background: rgba(217,44,44,.08);
+  color:#111;
+}
 .btn.file{position:relative; overflow:hidden}
 .btn.file input{position:absolute; inset:0; opacity:0; cursor:pointer}
 
@@ -122,28 +149,41 @@ input,select{
   color:var(--ink);
   outline:none;
 }
-input:focus,select:focus{border-color:#111; box-shadow: 0 0 0 3px rgba(0,0,0,.08);}
+input:focus,select:focus{
+  border-color:#111;
+  box-shadow: 0 0 0 3px rgba(0,0,0,.08);
+}
 label{font-size:12px; color:var(--muted); margin-bottom:6px; display:block}
 .field{display:flex; flex-direction:column; gap:6px}
 
 .row{display:flex; align-items:center}
 .row.gap{gap:8px}
+.row.space{justify-content:space-between}
 .row.wrap{flex-wrap:wrap}
 .grow{flex:1}
 
+/* GRIDS */
 .grid-2{display:grid; grid-template-columns: 1fr 1fr; gap:12px; padding:12px}
+.grid-3{display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; padding:12px}
 
-/* Facturas layout */
+/* FACTURAS: dos columnas (lista + editor), responsive */
 .two-cols{
   display:grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 420px 1fr;
   gap:12px;
   padding:12px;
 }
-.col.list{min-width:0}
-.col.editor{min-width:0}
+.col{min-width:0}
 
-.listbox{max-height: 340px; overflow:auto}
+.title-big{font-size:18px; font-weight:900}
+.pill{
+  padding:6px 10px; border-radius:999px;
+  border:1px solid var(--border);
+  background:#fff;
+  font-size:12px; color:var(--muted);
+}
+
+.listbox{max-height: 360px; overflow:auto}
 .item{
   border:1px solid var(--border);
   background:#fff;
@@ -158,65 +198,18 @@ label{font-size:12px; color:var(--muted); margin-bottom:6px; display:block}
 
 .badge{
   padding:3px 8px; border-radius:999px; font-size:11px;
-  border:1px solid var(--border); background:#fff; color:var(--muted)
-}
-.badge.ok{border-color: rgba(26,127,55,.35); background: rgba(26,127,55,.08); color:#111}
-.badge.bad{border-color: rgba(217,44,44,.35); background: rgba(217,44,44,.08); color:#111}
-
-.sep{border:0; height:1px; background: var(--border); margin:14px 0}
-
-/* Lines grid - sin scroll horizontal */
-.lines{display:flex; flex-direction:column; gap:10px}
-.line{
   border:1px solid var(--border);
-  border-radius:14px;
-  background:#fff;
-  padding:10px;
-
-  display:grid;
-  grid-template-columns: 1.7fr .7fr .7fr .9fr .9fr 44px;
-  grid-template-areas:
-    "prod mode qty price amount del"
-    "bruto tara neto origin origin del";
-  gap:8px;
+  background:#fff; color:var(--muted)
 }
-.cell-prod{grid-area:prod}
-.cell-mode{grid-area:mode}
-.cell-qty{grid-area:qty}
-.cell-price{grid-area:price}
-.cell-amount{grid-area:amount}
-.cell-del{grid-area:del}
-.cell-bruto{grid-area:bruto}
-.cell-tara{grid-area:tara}
-.cell-neto{grid-area:neto}
-.cell-origin{grid-area:origin}
-
-.money{
-  text-align:right;
-  font-weight:900;
-  padding:10px 8px;
-  border:1px solid var(--border);
-  border-radius:12px;
-  background:#fafafa;
-}
-
-.icon-btn{
-  width:44px; height:44px;
-  border-radius:12px;
-  border:1px solid var(--border);
-  background:#fff;
-  cursor:pointer;
-  font-weight:900;
-}
-.icon-btn:hover{background:#f7f7f7}
-.icon-btn.danger{border-color: rgba(217,44,44,.35); background: rgba(217,44,44,.08)}
 
 .totals{display:flex; flex-direction:column; gap:8px}
 .tot-line{display:flex; align-items:center; justify-content:space-between}
 .tot-line.big{font-size:18px}
 .kpi{font-size:26px; font-weight:900; margin-top:6px}
 
-/* Autocomplete */
+.sep{border:0; height:1px; background: var(--border); margin:14px 0}
+
+/* AUTOCOMPLETE */
 .ac-wrap{position:relative}
 .ac{
   position:absolute; left:0; right:0; top:100%;
@@ -237,31 +230,60 @@ label{font-size:12px; color:var(--muted); margin-bottom:6px; display:block}
 .ac .ac-item:last-child{border-bottom:none}
 .ac .ac-item:hover, .ac .ac-item.active{background:#f2f2f2}
 
-/* Productos */
-.cat-head{
-  display:grid;
-  grid-template-columns: 1.3fr .8fr .9fr .9fr .8fr 1fr 1.2fr 70px;
-  gap:8px;
-  padding:10px 8px;
-  border:1px solid var(--border);
-  border-radius:14px;
-  background:#fafafa;
-  font-size:12px;
-  color:var(--muted);
+/* ✅ LÍNEAS FACTURA — GRID PRO (SIN SCROLL HORIZONTAL) */
+.lines{
+  margin-top:10px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
 }
-.cat-list{margin-top:10px; display:flex; flex-direction:column; gap:10px}
-.cat-row{
-  display:grid;
-  grid-template-columns: 1.3fr .8fr .9fr .9fr .8fr 1fr 1.2fr 70px;
-  gap:8px;
-  padding:10px;
+
+.line{
   border:1px solid var(--border);
   border-radius:14px;
   background:#fff;
+  padding:10px;
+  display:grid;
+  grid-template-columns: 1.7fr .7fr .7fr .9fr .9fr 44px;
+  grid-template-areas:
+    "prod mode qty price amount del"
+    "bruto tara neto origin origin del";
+  gap:8px;
 }
-.smallhist{font-size:12px; color:var(--muted); line-height:1.35}
 
-/* Tablas */
+.cell-prod{grid-area:prod}
+.cell-mode{grid-area:mode}
+.cell-qty{grid-area:qty}
+.cell-price{grid-area:price}
+.cell-amount{grid-area:amount}
+.cell-del{grid-area:del}
+.cell-bruto{grid-area:bruto}
+.cell-tara{grid-area:tara}
+.cell-neto{grid-area:neto}
+.cell-origin{grid-area:origin}
+
+.line .money{
+  text-align:right;
+  font-weight:900;
+  padding:10px 8px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:#fafafa;
+}
+
+/* Botón eliminar */
+.icon-btn{
+  width:44px; height:44px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:#fff;
+  cursor:pointer;
+  font-weight:900;
+}
+.icon-btn:hover{background:#f7f7f7}
+.icon-btn.danger{border-color: rgba(217,44,44,.35); background: rgba(217,44,44,.08)}
+
+/* TABLA contabilidad */
 .acc-table{overflow:auto}
 .table{
   width:100%;
@@ -280,11 +302,14 @@ label{font-size:12px; color:var(--muted); margin-bottom:6px; display:block}
 .table th{font-size:12px; color:var(--muted); background:#fafafa; text-align:left}
 .table tr:hover td{background:#f7f7f7}
 
-/* Modal */
+/* MODAL */
 .modal{
-  position:fixed; inset:0;
+  position:fixed;
+  inset:0;
   background: rgba(0,0,0,.25);
-  display:flex; align-items:center; justify-content:center;
+  display:flex;
+  align-items:center;
+  justify-content:center;
   z-index:80;
 }
 .modal-card{
@@ -298,11 +323,14 @@ label{font-size:12px; color:var(--muted); margin-bottom:6px; display:block}
 .modal-title{font-weight:900; font-size:16px}
 
 @media (max-width: 980px){
-  .two-cols{grid-template-columns:1fr}
-  .listbox{max-height:260px}
+  .two-cols{grid-template-columns: 1fr; }
+  .panel-header.sticky{top:118px}
 }
+
 @media (max-width: 900px){
+  .grid-3{grid-template-columns:1fr}
   .grid-2{grid-template-columns:1fr}
+
   .line{
     grid-template-columns: 1fr 1fr 1fr;
     grid-template-areas:
@@ -311,8 +339,5 @@ label{font-size:12px; color:var(--muted); margin-bottom:6px; display:block}
       "bruto tara neto"
       "origin origin amount"
       "del del del";
-  }
-  .cat-head, .cat-row{
-    grid-template-columns: 1.2fr .7fr .8fr .8fr .6fr 1fr 1fr 70px;
   }
 }
