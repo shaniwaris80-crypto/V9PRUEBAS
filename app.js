@@ -1086,25 +1086,61 @@ function renderLines(inv){
     row.className="line";
     row.dataset.lineId = line.id;
 
-    row.innerHTML = `
-      <div class="ac-wrap">
-        <input class="prod" data-k="product" placeholder="Producto" value="${escapeHtml(line.product||"")}" autocomplete="off"/>
-        <div class="ac"></div>
-      </div>
+ row.innerHTML = `
+  <!-- Producto -->
+  <div class="cell-prod ac-wrap">
+    <input class="prod" data-k="product" placeholder="Producto" value="${escapeHtml(line.product||"")}" autocomplete="off"/>
+    <div class="ac"></div>
+  </div>
 
-      <select data-k="mode">
-        <option value="kg" ${line.mode==="kg"?"selected":""}>kg</option>
-        <option value="unidad" ${line.mode==="unidad"?"selected":""}>unidad</option>
-        <option value="caja" ${line.mode==="caja"?"selected":""}>caja</option>
-      </select>
+  <!-- Modo -->
+  <div class="cell-mode">
+    <select data-k="mode" title="Modo">
+      <option value="kg" ${line.mode==="kg"?"selected":""}>kg</option>
+      <option value="unidad" ${line.mode==="unidad"?"selected":""}>ud</option>
+      <option value="caja" ${line.mode==="caja"?"selected":""}>caja</option>
+    </select>
+  </div>
 
-      <input data-k="qty" inputmode="decimal" placeholder="Cant" value="${toInput(line.qty)}"/>
-      <input data-k="bruto" inputmode="decimal" placeholder="Bruto" value="${toInput(line.bruto)}"/>
-      <input data-k="tara" inputmode="decimal" placeholder="Tara" value="${toInput(line.tara)}"/>
-      <input data-k="neto" inputmode="decimal" placeholder="Neto" value="${toInput(line.neto)}"/>
+  <!-- Cantidad -->
+  <div class="cell-qty">
+    <input data-k="qty" inputmode="decimal" placeholder="Cant" value="${toInput(line.qty)}"/>
+  </div>
 
-      <input data-k="price" inputmode="decimal" placeholder="Precio" value="${toInput(line.price)}"/>
-      <input data-k="origin" placeholder="Origen" value="${escapeHtml(line.origin||"")}"/>
+  <!-- Precio -->
+  <div class="cell-price">
+    <input data-k="price" inputmode="decimal" placeholder="Precio" value="${toInput(line.price)}"/>
+  </div>
+
+  <!-- Importe -->
+  <div class="cell-amount money">${euro(line.amount||0)}</div>
+
+  <!-- Delete -->
+  <div class="cell-del">
+    <button class="icon-btn danger" title="Eliminar">✖</button>
+  </div>
+
+  <!-- Bruto -->
+  <div class="cell-bruto">
+    <input data-k="bruto" inputmode="decimal" placeholder="Bruto" value="${toInput(line.bruto)}"/>
+  </div>
+
+  <!-- Tara -->
+  <div class="cell-tara">
+    <input data-k="tara" inputmode="decimal" placeholder="Tara" value="${toInput(line.tara)}"/>
+  </div>
+
+  <!-- Neto -->
+  <div class="cell-neto">
+    <input data-k="neto" inputmode="decimal" placeholder="Neto" value="${toInput(line.neto)}"/>
+  </div>
+
+  <!-- Origen -->
+  <div class="cell-origin">
+    <input data-k="origin" placeholder="Origen" value="${escapeHtml(line.origin||"")}"/>
+  </div>
+`;
+
 
       <div class="money">${euro(line.amount||0)}</div>
 
