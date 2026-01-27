@@ -1,147 +1,572 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>ARSLAN — Facturas (Full Screen)</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ARSLAN • FACTURAS PRO — KIWI Edition</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+
+  <link rel="stylesheet" href="style.css">
+
+  <!-- jsPDF + AutoTable -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.5.29/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- QRCode -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <!-- Firebase (módulos) -->
+  <script type="module" src="app.js"></script>
 </head>
 
 <body>
-  <div class="app">
+  <div class="app-shell">
 
     <!-- TOP BAR -->
     <header class="topbar">
       <div class="brand">
-        <div class="logo">🥝</div>
-        <div>
-          <div class="title">ARSLAN</div>
-          <div class="subtitle">FACTURAS — Pantalla completa</div>
+        <div class="kiwi-dot"></div>
+        <div class="brand-text">
+          <div class="brand-title">ARSLAN • FACTURAS PRO</div>
+          <div class="brand-sub">KIWI Edition · Facturación + Offline + Nube opcional · PDF GRID + QR AEAT</div>
         </div>
       </div>
 
-      <nav class="tabs">
-        <button class="tab active" data-tab="facturas">🧾 Facturas</button>
-        <button class="tab" data-tab="productos">🏷️ Productos</button>
-      </nav>
+      <div class="top-actions">
+        <button id="btnFocus" class="btn ghost" title="Pantalla completa Facturas">🧾 Full</button>
+        <button id="btnSync" class="btn ghost" title="Sincronizar ahora (si hay login)">☁️ Sync</button>
+        <button id="btnToggleCloud" class="btn ghost" title="Abrir login nube (opcional)">🔐 Nube</button>
+
+        <button id="btnExportJson" class="btn ghost" title="Exportar JSON local">⬇️ JSON</button>
+        <label class="btn ghost file" title="Importar JSON (merge inteligente)">
+          ⬆️ Import
+          <input id="fileImportJson" type="file" accept="application/json">
+        </label>
+
+        <div class="user-pill" id="userPill">OFFLINE</div>
+      </div>
     </header>
 
     <!-- MAIN -->
     <main class="main">
 
-      <!-- FACTURAS -->
-      <section id="tab-facturas" class="screen active">
-        <div class="panel panel-header">
-          <div class="panel-row">
-            <div class="field">
-              <label>Cliente</label>
-              <input id="invCliente" class="input" placeholder="Ej: RIVIERA / BRASEROS / etc..." />
+      <!-- LEFT NAV -->
+      <aside class="nav">
+        <button class="nav-btn active" data-view="facturas">🧾 Facturas</button>
+        <button class="nav-btn" data-view="clientes">👤 Clientes</button>
+        <button class="nav-btn" data-view="catalogo">📦 Productos</button>
+        <button class="nav-btn pin-protect" data-view="contabilidad">📊 Contabilidad</button>
+        <button class="nav-btn pin-protect" data-view="ventas">💹 Ventas & Márgenes</button>
+        <button class="nav-btn pin-protect" data-view="ajustes">⚙️ Ajustes</button>
+      </aside>
+
+      <!-- CONTENT -->
+      <section class="content">
+
+        <!-- LOGIN NUBE (OPCIONAL) -->
+        <section class="panel" id="view-login" style="display:none;">
+          <div class="panel-header">
+            <h2>Nube (Opcional)</h2>
+            <div class="muted">Puedes usar el sistema sin nube. Si inicias sesión: Sync + PDFs guardados.</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card pad">
+              <div class="card-title">Iniciar sesión</div>
+              <div class="form">
+                <label>Email</label>
+                <input id="loginEmail" type="email" placeholder="tu@email.com">
+                <label>Contraseña</label>
+                <input id="loginPass" type="password" placeholder="••••••••">
+                <button id="btnLogin" class="btn primary">Entrar</button>
+                <div id="loginMsg" class="hint"></div>
+              </div>
             </div>
 
-            <div class="field small">
-              <label>Fecha</label>
-              <input id="invFecha" class="input" type="date" />
+            <div class="card pad">
+              <div class="card-title">Crear usuario</div>
+              <div class="form">
+                <label>Email</label>
+                <input id="regEmail" type="email" placeholder="nuevo@email.com">
+                <label>Contraseña</label>
+                <input id="regPass" type="password" placeholder="mínimo 6">
+                <button id="btnRegister" class="btn">Crear cuenta</button>
+                <div class="hint">Si compartes la misma cuenta en varios dispositivos tendrás “misma nube”.</div>
+                <div class="row gap mt10">
+                  <button id="btnBackOffline" class="btn ghost">Volver (OFFLINE)</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- FACTURAS -->
+        <section class="panel" id="view-facturas">
+          <div class="panel-header sticky">
+            <div class="header-left">
+              <h2>Facturas</h2>
+              <div class="muted" id="cloudStatus">Modo OFFLINE · Nube opcional</div>
             </div>
 
-            <div class="field small">
-              <label>Nº</label>
-              <input id="invNumero" class="input" placeholder="FA-..." />
-            </div>
-
-            <div class="actions">
-              <button id="btnAddLinea" class="btn primary">+ Añadir línea</button>
-              <button id="btnGuardarFactura" class="btn">💾 Guardar</button>
-              <button id="btnLimpiarFactura" class="btn danger">🧹 Limpiar</button>
+            <div class="header-actions">
+              <button id="btnNewInvoice" class="btn primary">+ Nueva</button>
+              <button id="btnDupInvoice" class="btn">⎘ Duplicar</button>
+              <button id="btnSaveInvoice" class="btn">💾 Guardar</button>
+              <button id="btnPdfInvoice" class="btn">🧾 PDF</button>
+              <button id="btnOpenPdf" class="btn ghost">👁 Ver PDF</button>
+              <button id="btnPdfCloud" class="btn">☁️ Subir PDF</button>
+              <button id="btnWhatsInvoice" class="btn ghost">🟢 WhatsApp</button>
             </div>
           </div>
 
-          <div class="hint">
-            ✅ Autocomplete recomendado (NO auto-sustituye). Usa <b>↓/↑</b> para elegir y <b>Enter</b> para seleccionar.
-          </div>
-        </div>
+          <div class="two-cols">
 
-        <!-- LISTA LINEAS -->
-        <div class="panel panel-lines">
-          <div class="lines-head">
-            <div class="col qty">Cant</div>
-            <div class="col name">Producto</div>
-            <div class="col unit">Unidad</div>
-            <div class="col kgbox">Kg/Caja</div>
-            <div class="col price">Precio</div>
-            <div class="col total">Total</div>
-            <div class="col del"></div>
+            <!-- LISTADO -->
+            <div class="col list">
+              <div class="card pad">
+                <div class="row gap">
+                  <input id="qInvoice" class="grow" placeholder="Buscar: cliente / nº / tag..." />
+                  <select id="fStatus">
+                    <option value="">Estado</option>
+                    <option value="pendiente">Pendiente</option>
+                    <option value="parcial">Parcial</option>
+                    <option value="pagada">Pagada</option>
+                  </select>
+                </div>
+
+                <div class="row gap mt8">
+                  <input id="fMonth" type="month" />
+                  <button id="btnClearFilters" class="btn ghost">Limpiar</button>
+                </div>
+              </div>
+
+              <div class="card pad mt10">
+                <div class="row space">
+                  <div class="card-title">Listado</div>
+                  <div class="muted" id="invCount">—</div>
+                </div>
+                <div id="invoiceList" class="listbox"></div>
+              </div>
+            </div>
+
+            <!-- EDITOR -->
+            <div class="col editor">
+              <div class="card pad">
+                <div class="row space wrap">
+                  <div class="title-big" id="invTitle">Nueva factura</div>
+                  <div class="row gap wrap">
+                    <div class="pill" id="invBadge">—</div>
+                    <div class="pill" id="invPaidBadge">Pagado: 0,00 €</div>
+                    <div class="pill" id="invDueBadge">Pendiente: 0,00 €</div>
+                  </div>
+                </div>
+
+                <div class="grid-4 mt10">
+                  <div class="field">
+                    <label>Nº factura</label>
+                    <input id="invNumber" placeholder="FA-YYYYMMDDHHMM" />
+                  </div>
+                  <div class="field">
+                    <label>Fecha</label>
+                    <input id="invDate" type="datetime-local" />
+                  </div>
+                  <div class="field">
+                    <label>Estado</label>
+                    <select id="invStatus">
+                      <option value="pendiente">Pendiente</option>
+                      <option value="parcial">Parcial</option>
+                      <option value="pagada">Pagada</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Método</label>
+                    <select id="invPay">
+                      <option value="efectivo">Efectivo</option>
+                      <option value="tarjeta">Tarjeta</option>
+                      <option value="transferencia">Transferencia</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="grid-3 mt10">
+                  <div class="field">
+                    <label>Cliente</label>
+                    <div class="ac-wrap">
+                      <input id="invClient" placeholder="Escribe cliente..." autocomplete="off" />
+                      <div id="acClients" class="ac"></div>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label>Tags (coma)</label>
+                    <input id="invTags" placeholder="Centro, Severo, Edificio..." />
+                  </div>
+                  <div class="field">
+                    <label>IVA</label>
+                    <select id="invVatMode">
+                      <option value="add">IVA 4% aparte</option>
+                      <option value="included">IVA incluido (mostrar cuota)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field mt10">
+                  <label>Observaciones</label>
+                  <input id="invNotes" placeholder="Notas internas..." />
+                </div>
+
+                <!-- PAGOS / COBROS (B) -->
+                <div class="card pad mt10">
+                  <div class="row space wrap">
+                    <div>
+                      <div class="card-title">Cobros / Pagos</div>
+                      <div class="muted">Pagos parciales: se calcula Pendiente y Estado automáticamente.</div>
+                    </div>
+                    <div class="row gap wrap">
+                      <button id="btnAddPayment" class="btn">+ Pago</button>
+                      <button id="btnMarkPaid" class="btn ghost">✅ Marcar pagada (total)</button>
+                    </div>
+                  </div>
+
+                  <div class="pay-head">
+                    <div>Fecha</div><div>Método</div><div>Importe</div><div>Nota</div><div></div>
+                  </div>
+                  <div id="payList" class="pay-list"></div>
+                </div>
+
+              </div>
+
+              <!-- GRID PRO: LINEAS -->
+              <div class="card pad mt10">
+                <div class="row space">
+                  <div>
+                    <div class="card-title">Líneas</div>
+                    <div class="muted">GRID PRO 1 línea: scroll horizontal si hace falta. Autocomplete manual en Producto.</div>
+                  </div>
+                  <div class="row gap">
+                    <button id="btnAddLine" class="btn">+ Línea</button>
+                    <button id="btnClearLines" class="btn ghost">Vaciar</button>
+                  </div>
+                </div>
+
+                <div class="grid-head">
+                  <div>Producto</div>
+                  <div>Modo</div>
+                  <div>Cant.</div>
+                  <div>Bruto</div>
+                  <div>Tara</div>
+                  <div>Neto</div>
+                  <div>Precio</div>
+                  <div>Origen</div>
+                  <div>Importe</div>
+                  <div></div>
+                </div>
+
+                <div id="lines" class="lines"></div>
+
+                <!-- Últimos precios SOLO pantalla (NO PDF) -->
+                <div class="hint mt10" id="lastPricesHint">—</div>
+              </div>
+
+              <!-- TOTALES -->
+              <div class="card pad mt10">
+                <div class="totals">
+                  <div class="tot-line"><span>Subtotal</span><b id="tSubtotal">0,00 €</b></div>
+                  <div class="tot-line"><span>IVA (4%)</span><b id="tVat">0,00 €</b></div>
+                  <div class="tot-line big"><span>Total</span><b id="tTotal">0,00 €</b></div>
+                  <div class="muted mt6" id="tVatNote">—</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- CLIENTES -->
+        <section class="panel" id="view-clientes" style="display:none;">
+          <div class="panel-header">
+            <h2>Clientes</h2>
+            <div class="header-actions">
+              <button id="btnNewClient" class="btn primary">+ Cliente</button>
+              <button id="btnSaveClient" class="btn">💾 Guardar</button>
+              <button id="btnImportClients" class="btn ghost">⬆️ Importar</button>
+            </div>
           </div>
 
-          <div id="lineasWrap" class="lines-wrap"></div>
-        </div>
+          <div class="two-cols">
+            <div class="col list">
+              <div class="card pad">
+                <input id="qClient" placeholder="Buscar cliente..." />
+              </div>
+              <div class="card pad mt10">
+                <div id="clientList" class="listbox"></div>
+              </div>
+            </div>
 
-        <!-- TOTALES -->
-        <div class="panel panel-footer">
-          <div class="totals">
-            <div class="totalbox">
-              <div class="tlabel">Subtotal</div>
-              <div id="subTotal" class="tvalue">0,00 €</div>
+            <div class="col editor">
+              <div class="card pad">
+                <div class="card-title">Ficha + Plantilla (A)</div>
+                <div class="grid-2 mt10">
+                  <div class="field"><label>Nombre</label><input id="cName"></div>
+                  <div class="field"><label>NIF/CIF</label><input id="cNif"></div>
+                  <div class="field"><label>Dirección</label><input id="cAddr"></div>
+                  <div class="field"><label>Ciudad / CP</label><input id="cCity"></div>
+                  <div class="field"><label>Teléfono</label><input id="cPhone"></div>
+                  <div class="field"><label>Email</label><input id="cEmail"></div>
+                </div>
+
+                <div class="grid-3 mt10">
+                  <div class="field">
+                    <label>Tags (coma)</label>
+                    <input id="cTags" placeholder="Braseros Centro, Severo..." />
+                  </div>
+                  <div class="field">
+                    <label>Preferencia IVA</label>
+                    <select id="cVatPref">
+                      <option value="">—</option>
+                      <option value="add">IVA 4% aparte</option>
+                      <option value="included">IVA incluido</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Método pago por defecto</label>
+                    <select id="cPayPref">
+                      <option value="">—</option>
+                      <option value="efectivo">Efectivo</option>
+                      <option value="tarjeta">Tarjeta</option>
+                      <option value="transferencia">Transferencia</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field mt10">
+                  <label>Nota plantilla (se pone en Observaciones)</label>
+                  <input id="cNoteTpl" placeholder="Ej: Entrega diaria / Horario / etc." />
+                </div>
+
+                <div class="row gap mt10">
+                  <button id="btnDeleteClient" class="btn danger">Eliminar</button>
+                </div>
+              </div>
             </div>
-            <div class="totalbox">
-              <div class="tlabel">IVA (%)</div>
-              <input id="invIva" class="input mini" type="number" step="0.01" value="0" />
-            </div>
-            <div class="totalbox">
-              <div class="tlabel">IVA €</div>
-              <div id="ivaEuro" class="tvalue">0,00 €</div>
-            </div>
-            <div class="totalbox strong">
-              <div class="tlabel">TOTAL</div>
-              <div id="grandTotal" class="tvalue big">0,00 €</div>
+          </div>
+        </section>
+
+        <!-- CATALOGO -->
+        <section class="panel" id="view-catalogo" style="display:none;">
+          <div class="panel-header">
+            <h2>Productos</h2>
+            <div class="header-actions">
+              <button id="btnAddProduct" class="btn primary">+ Producto</button>
+              <button id="btnSaveCatalog" class="btn">💾 Guardar</button>
             </div>
           </div>
 
-          <div class="footnote">
-            🔒 Todo se guarda en <b>localStorage</b> (después lo conectamos con nube real si quieres).
+          <div class="card pad">
+            <div class="row gap wrap">
+              <input id="qProd" class="grow" placeholder="Buscar producto..." />
+              <div class="muted">Historial (últimas 5) SOLO pantalla. Coste para márgenes SOLO pantalla.</div>
+            </div>
           </div>
-        </div>
+
+          <div class="card pad mt10">
+            <div class="cat-head">
+              <div>Producto</div>
+              <div>Modo</div>
+              <div>Venta €</div>
+              <div>Coste €</div>
+              <div>Tara</div>
+              <div>Kg/caja</div>
+              <div>Origen</div>
+              <div>Historial (5)</div>
+              <div></div>
+            </div>
+            <div id="catalogList" class="cat-list"></div>
+          </div>
+        </section>
+
+        <!-- CONTABILIDAD (PIN) -->
+        <section class="panel" id="view-contabilidad" style="display:none;">
+          <div class="panel-header">
+            <h2>Contabilidad</h2>
+            <div class="muted">Libro mensual + export AEAT friendly. (Se alimenta de facturas.)</div>
+          </div>
+
+          <div class="grid-3">
+            <div class="card pad">
+              <div class="card-title">Este mes</div>
+              <div class="kpi" id="kThisMonth">—</div>
+              <div class="muted" id="kThisMonth2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Pendiente</div>
+              <div class="kpi" id="kPending">—</div>
+              <div class="muted" id="kPending2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Pagado</div>
+              <div class="kpi" id="kPaid">—</div>
+              <div class="muted" id="kPaid2">—</div>
+            </div>
+          </div>
+
+          <div class="card pad mt10">
+            <div class="row gap wrap">
+              <input id="accMonth" type="month" />
+              <button id="btnAccBuild" class="btn primary">Actualizar</button>
+              <button id="btnAccExport" class="btn ghost">⬇️ CSV</button>
+              <button id="btnAccLedger" class="btn">📘 Libro mensual (AEAT)</button>
+              <button id="btnAccByClient" class="btn ghost">👤 Export por cliente</button>
+            </div>
+            <div id="accTable" class="acc-table mt10"></div>
+          </div>
+        </section>
+
+        <!-- VENTAS & MARGENES (PIN) -->
+        <section class="panel" id="view-ventas" style="display:none;">
+          <div class="panel-header">
+            <h2>Ventas & Márgenes</h2>
+            <div class="muted">Márgenes estimados usando Coste del catálogo (solo pantalla).</div>
+          </div>
+
+          <div class="card pad">
+            <div class="row gap wrap">
+              <input id="mMonth" type="month" />
+              <button id="btnMBuild" class="btn primary">Actualizar</button>
+              <button id="btnMExport" class="btn ghost">⬇️ CSV Márgenes</button>
+            </div>
+          </div>
+
+          <div class="grid-3">
+            <div class="card pad">
+              <div class="card-title">Ventas</div>
+              <div class="kpi" id="mSales">—</div>
+              <div class="muted" id="mSales2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Coste</div>
+              <div class="kpi" id="mCost">—</div>
+              <div class="muted" id="mCost2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Margen</div>
+              <div class="kpi" id="mMargin">—</div>
+              <div class="muted" id="mMargin2">—</div>
+            </div>
+          </div>
+
+          <div class="card pad mt10">
+            <div id="mTable" class="acc-table"></div>
+          </div>
+        </section>
+
+        <!-- AJUSTES (PIN) -->
+        <section class="panel" id="view-ajustes" style="display:none;">
+          <div class="panel-header">
+            <h2>Ajustes</h2>
+            <div class="header-actions">
+              <button id="btnLogout" class="btn danger">Salir nube</button>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card pad">
+              <div class="card-title">Proveedor (tus datos)</div>
+              <div class="form">
+                <label>Nombre</label><input id="sProvName" />
+                <label>NIF</label><input id="sProvNif" />
+                <label>Dirección</label><input id="sProvAddr" />
+                <label>Teléfono</label><input id="sProvPhone" />
+                <label>Email</label><input id="sProvEmail" />
+              </div>
+
+              <div class="card-title mt10">PIN PRO (protege Contabilidad/Ventas/Ajustes)</div>
+              <div class="form">
+                <label>PIN</label>
+                <input id="sPin" inputmode="numeric" placeholder="Ej: 8410" />
+                <div class="row gap mt10">
+                  <button id="btnSaveSettings" class="btn primary">Guardar</button>
+                  <button id="btnLockNow" class="btn ghost">Bloquear ahora</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card pad">
+              <div class="card-title">Sistema</div>
+              <div class="muted">
+                - OFFLINE por defecto (facturas libres)<br>
+                - Nube opcional: Auth + DB + Storage<br>
+                - Merge inteligente (no pisa si un dispositivo inicia “vacío”)<br>
+                - PDFs en nube: ver/descargar desde listado<br>
+              </div>
+              <div class="row gap mt10 wrap">
+                <button id="btnHardSync" class="btn">Sync completo</button>
+                <button id="btnResetLocal" class="btn ghost">Reset local</button>
+              </div>
+              <div class="hint mt10" id="sysMsg">—</div>
+            </div>
+          </div>
+        </section>
+
       </section>
-
-      <!-- PRODUCTOS -->
-      <section id="tab-productos" class="screen">
-        <div class="panel panel-header">
-          <div class="panel-row">
-            <div class="field grow">
-              <label>Buscar producto</label>
-              <input id="prodSearch" class="input" placeholder="Escribe: TOMATE, MANDARINA, KIWI..." />
-            </div>
-            <div class="actions">
-              <button id="btnNuevoProducto" class="btn primary">+ Nuevo</button>
-              <button id="btnExportProductos" class="btn">📤 Export JSON</button>
-              <button id="btnImportProductos" class="btn">📥 Import JSON</button>
-              <input id="importFile" type="file" accept="application/json" hidden />
-            </div>
-          </div>
-          <div class="hint">
-            Aquí pones <b>precio</b> y si es <b>caja</b> también <b>Kg por caja</b>. Se guarda historial (últimas 5).
-          </div>
-        </div>
-
-        <div class="panel panel-products">
-          <div class="products-head">
-            <div class="pcol pname">Producto</div>
-            <div class="pcol punit">Unidad</div>
-            <div class="pcol pkgbox">Kg/Caja</div>
-            <div class="pcol pprice">Precio</div>
-            <div class="pcol phist">Historial (últimas 5)</div>
-            <div class="pcol pbtn"></div>
-          </div>
-
-          <div id="productsWrap" class="products-wrap"></div>
-        </div>
-      </section>
-
     </main>
   </div>
 
-  <script src="app.js"></script>
+  <!-- MODAL PIN -->
+  <div id="pinModal" class="modal" style="display:none;">
+    <div class="modal-card">
+      <div class="row space">
+        <div>
+          <div class="modal-title">🔒 PIN requerido</div>
+          <div class="muted" id="pinModalMsg">Acceso protegido</div>
+        </div>
+        <button id="btnPinClose" class="btn ghost">✖</button>
+      </div>
+
+      <div class="mt10">
+        <label>Introduce PIN</label>
+        <input id="pinInput" inputmode="numeric" placeholder="PIN" />
+      </div>
+
+      <div class="row gap mt10">
+        <button id="btnPinOk" class="btn primary">Entrar</button>
+        <button id="btnPinCancel" class="btn ghost">Cancelar</button>
+      </div>
+
+      <div class="hint mt10" id="pinHint">—</div>
+    </div>
+  </div>
+
+  <!-- IMPORT CLIENTES MODAL -->
+  <div id="importClientsModal" class="modal" style="display:none;">
+    <div class="modal-card wide">
+      <div class="row space">
+        <div>
+          <div class="modal-title">⬆️ Importar clientes</div>
+          <div class="muted">Pega líneas tipo: Nombre | NIF | Dirección | Ciudad | Tel | Email | Tags</div>
+        </div>
+        <button id="btnImpClose" class="btn ghost">✖</button>
+      </div>
+
+      <div class="mt10">
+        <label>Texto</label>
+        <textarea id="impText" rows="10" placeholder="Ej:
+RIVIERA|B16794893|Paseo del Espolón|09003 Burgos|...|...|Centro, Severo
+..."></textarea>
+      </div>
+
+      <div class="row gap mt10 wrap">
+        <button id="btnImpDo" class="btn primary">Importar</button>
+        <button id="btnImpCancel" class="btn ghost">Cancelar</button>
+      </div>
+
+      <div class="hint mt10" id="impHint">—</div>
+    </div>
+  </div>
+
+  <!-- QR render container (oculto) -->
+  <div id="qrTmp" style="position:fixed; left:-9999px; top:-9999px;"></div>
 </body>
 </html>
