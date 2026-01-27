@@ -1,374 +1,536 @@
-:root{
-  --bg:#0b1220;
-  --panel:#0f1a2e;
-  --panel2:#0b1528;
-  --ink:#e6eefc;
-  --muted:#9fb0cf;
-  --line:#1e2c48;
-  --kiwi:#22c55e;
-  --kiwi2:#16a34a;
-  --bad:#ef4444;
-  --warn:#f59e0b;
-  --shadow: 0 8px 30px rgba(0,0,0,.35);
-  --radius: 18px;
-  --font: "Poppins", system-ui, -apple-system, Segoe UI, Roboto, Arial;
-}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ARSLAN • FACTURAS PRO — KIWI Edition</title>
 
-*{box-sizing:border-box}
-html,body{height:100%}
-body{
-  margin:0;
-  font-family:var(--font);
-  background: radial-gradient(1200px 700px at 20% 0%, rgba(34,197,94,.12), transparent 55%),
-              radial-gradient(1100px 650px at 100% 20%, rgba(99,102,241,.12), transparent 55%),
-              var(--bg);
-  color:var(--ink);
-}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
 
-.app{
-  height:100vh;
-  display:flex;
-  flex-direction:column;
-}
+  <link rel="stylesheet" href="style.css">
 
-.topbar{
-  position:sticky;
-  top:0;
-  z-index:50;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding:14px 16px;
-  border-bottom:1px solid rgba(255,255,255,.06);
-  background:rgba(10,16,30,.7);
-  backdrop-filter: blur(12px);
-}
+  <!-- jsPDF + AutoTable -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.5.29/dist/jspdf.plugin.autotable.min.js"></script>
 
-.brand{display:flex;align-items:center;gap:12px}
-.logo{
-  width:44px;height:44px;border-radius:14px;
-  display:grid;place-items:center;
-  background:linear-gradient(135deg, rgba(34,197,94,.25), rgba(34,197,94,.08));
-  border:1px solid rgba(34,197,94,.35);
-}
-.title{font-weight:800;letter-spacing:.2px}
-.subtitle{font-size:12px;color:var(--muted);margin-top:2px}
+  <!-- QRCode (para QR AEAT en PDF) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
-.tabs{display:flex;gap:10px}
-.tab{
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.05);
-  color:var(--ink);
-  padding:10px 12px;
-  border-radius:14px;
-  cursor:pointer;
-  font-weight:700;
-}
-.tab.active{
-  border-color: rgba(34,197,94,.5);
-  background:linear-gradient(135deg, rgba(34,197,94,.24), rgba(34,197,94,.10));
-}
+  <!-- App -->
+  <script type="module" src="app.js"></script>
+</head>
 
-.main{
-  flex:1;
-  display:flex;
-  min-height:0;
-}
+<body>
+  <div class="app-shell">
 
-.screen{
-  display:none;
-  flex:1;
-  padding:14px;
-  gap:12px;
-  min-height:0;
-  flex-direction:column;
-}
-.screen.active{display:flex}
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="kiwi-dot"></div>
+        <div class="brand-text">
+          <div class="brand-title">ARSLAN • FACTURAS PRO</div>
+          <div class="brand-sub">KIWI Edition · Local + Nube · PDF GRID · Cobros · Márgenes · QR AEAT</div>
+        </div>
+      </div>
 
-.panel{
-  background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-  border:1px solid rgba(255,255,255,.08);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding:14px;
-}
+      <div class="top-actions">
+        <button id="btnFocus" class="btn ghost" title="Pantalla completa Facturas">🧾 Full</button>
+        <button id="btnSync" class="btn ghost" title="Sincronizar (si hay sesión nube)">☁️ Sync</button>
 
-.panel-header .panel-row{
-  display:flex;
-  gap:12px;
-  align-items:flex-end;
-  flex-wrap:wrap;
-}
+        <button id="btnExportJson" class="btn ghost" title="Exportar JSON local">⬇️ JSON</button>
+        <label class="btn ghost file" title="Importar JSON (merge inteligente)">
+          ⬆️ Import
+          <input id="fileImportJson" type="file" accept="application/json">
+        </label>
 
-.field{display:flex;flex-direction:column;gap:6px;min-width:220px}
-.field.grow{flex:1;min-width:280px}
-.field.small{min-width:160px}
+        <div class="user-pill" id="userPill">Modo local</div>
+      </div>
+    </header>
 
-label{
-  font-size:12px;
-  color:var(--muted);
-  font-weight:600;
-}
+    <!-- MAIN -->
+    <main class="main">
 
-.input{
-  width:100%;
-  padding:12px 12px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(10,16,30,.45);
-  color:var(--ink);
-  outline:none;
-  font-weight:600;
-}
-.input:focus{
-  border-color: rgba(34,197,94,.55);
-  box-shadow: 0 0 0 3px rgba(34,197,94,.18);
-}
+      <!-- LEFT NAV -->
+      <aside class="nav">
+        <button class="nav-btn active" data-view="facturas">🧾 Facturas</button>
+        <button class="nav-btn" data-view="clientes">👤 Clientes</button>
+        <button class="nav-btn" data-view="catalogo">📦 Productos</button>
+        <button class="nav-btn" data-view="contabilidad">📊 Contabilidad</button>
+        <button class="nav-btn" data-view="ajustes">⚙️ Ajustes</button>
+      </aside>
 
-.input.mini{max-width:120px}
+      <!-- CONTENT -->
+      <section class="content">
 
-.actions{
-  display:flex;
-  gap:10px;
-  align-items:center;
-  flex-wrap:wrap;
-}
+        <!-- FACTURAS -->
+        <section class="panel" id="view-facturas">
+          <div class="panel-header sticky">
+            <div class="header-left">
+              <h2>Facturas</h2>
+              <div class="muted" id="cloudStatus">Local · sin nube</div>
+            </div>
 
-.btn{
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.06);
-  color:var(--ink);
-  padding:10px 12px;
-  border-radius:14px;
-  font-weight:800;
-  cursor:pointer;
-}
-.btn.primary{
-  border-color: rgba(34,197,94,.55);
-  background:linear-gradient(135deg, rgba(34,197,94,.35), rgba(34,197,94,.10));
-}
-.btn.danger{
-  border-color: rgba(239,68,68,.45);
-  background:linear-gradient(135deg, rgba(239,68,68,.25), rgba(239,68,68,.08));
-}
+            <div class="header-actions">
+              <button id="btnNewInvoice" class="btn primary">+ Nueva</button>
+              <button id="btnDupInvoice" class="btn">⎘ Duplicar</button>
+              <button id="btnSaveInvoice" class="btn">💾 Guardar</button>
+              <button id="btnPdfInvoice" class="btn">🧾 PDF</button>
+              <button id="btnPdfCloud" class="btn">☁️ Subir PDF</button>
+              <button id="btnWhatsInvoice" class="btn ghost">🟢 WhatsApp</button>
+            </div>
+          </div>
 
-.hint{
-  margin-top:10px;
-  font-size:12px;
-  color:var(--muted);
-}
+          <div class="two-cols">
 
-.panel-lines{
-  flex:1;
-  min-height:0;
-  display:flex;
-  flex-direction:column;
-}
+            <!-- LISTADO -->
+            <div class="col list">
+              <div class="card pad">
+                <div class="row gap">
+                  <input id="qInvoice" class="grow" placeholder="Buscar: cliente / nº / tag..." />
+                  <select id="fStatus">
+                    <option value="">Estado</option>
+                    <option value="pendiente">Pendiente</option>
+                    <option value="parcial">Parcial</option>
+                    <option value="pagada">Pagada</option>
+                  </select>
+                </div>
 
-.lines-head{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:10px 10px;
-  border-radius:14px;
-  background:rgba(255,255,255,.04);
-  border:1px solid rgba(255,255,255,.06);
-  font-size:12px;
-  color:var(--muted);
-  font-weight:800;
-}
+                <div class="row gap mt8">
+                  <input id="fMonth" type="month" />
+                  <button id="btnClearFilters" class="btn ghost">Limpiar</button>
+                </div>
+              </div>
 
-.lines-wrap{
-  flex:1;
-  min-height:0;
-  margin-top:10px;
-  overflow:auto;
-  padding-right:6px;
-}
+              <div class="card pad mt10">
+                <div class="row space">
+                  <div class="card-title">Listado</div>
+                  <div class="muted" id="invCount">—</div>
+                </div>
+                <div id="invoiceList" class="listbox"></div>
+              </div>
+            </div>
 
-.line-row{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:10px 10px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.08);
-  background:rgba(10,16,30,.35);
-  margin-bottom:10px;
+            <!-- EDITOR -->
+            <div class="col editor">
+              <div class="card pad">
+                <div class="row space wrap">
+                  <div class="title-big" id="invTitle">Nueva factura</div>
+                  <div class="pill" id="invBadge">—</div>
+                </div>
 
-  /* ✅ UNA SOLA LÍNEA SIEMPRE */
-  flex-wrap:nowrap;
-  overflow-x:auto;
-}
+                <div class="grid-4 mt10">
+                  <div class="field">
+                    <label>Nº factura</label>
+                    <input id="invNumber" placeholder="FA-YYYYMMDDHHMM" />
+                  </div>
+                  <div class="field">
+                    <label>Fecha</label>
+                    <input id="invDate" type="datetime-local" />
+                  </div>
+                  <div class="field">
+                    <label>Estado</label>
+                    <select id="invStatus">
+                      <option value="pendiente">Pendiente</option>
+                      <option value="parcial">Parcial</option>
+                      <option value="pagada">Pagada</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Método</label>
+                    <select id="invPay">
+                      <option value="efectivo">Efectivo</option>
+                      <option value="tarjeta">Tarjeta</option>
+                      <option value="transferencia">Transferencia</option>
+                      <option value="bizum">Bizum</option>
+                      <option value="otro">Otro</option>
+                    </select>
+                  </div>
+                </div>
 
-.col{white-space:nowrap}
-.col.qty{width:80px}
-.col.name{flex:1;min-width:360px}
-.col.unit{width:120px}
-.col.kgbox{width:120px}
-.col.price{width:120px}
-.col.total{width:130px;text-align:right}
-.col.del{width:50px}
+                <div class="grid-3 mt10">
+                  <div class="field">
+                    <label>Cliente</label>
+                    <div class="ac-wrap">
+                      <input id="invClient" placeholder="Escribe cliente..." autocomplete="off" />
+                      <div id="acClients" class="ac"></div>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label>Tags (coma)</label>
+                    <input id="invTags" placeholder="Centro, Severo, Edificio..." />
+                  </div>
+                  <div class="field">
+                    <label>IVA</label>
+                    <select id="invVatMode">
+                      <option value="add">IVA 4% aparte</option>
+                      <option value="included">IVA incluido (mostrar cuota)</option>
+                    </select>
+                  </div>
+                </div>
 
-.line-row input,
-.line-row select{
-  width:100%;
-  padding:10px 10px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(10,16,30,.45);
-  color:var(--ink);
-  outline:none;
-  font-weight:700;
-}
+                <div class="field mt10">
+                  <label>Observaciones</label>
+                  <input id="invNotes" placeholder="Notas internas..." />
+                </div>
+              </div>
 
-.line-row input:focus,
-.line-row select:focus{
-  border-color: rgba(34,197,94,.55);
-  box-shadow: 0 0 0 3px rgba(34,197,94,.16);
-}
+              <!-- COBROS (B) -->
+              <div class="card pad mt10">
+                <div class="row space wrap">
+                  <div>
+                    <div class="card-title">Cobros</div>
+                    <div class="muted">Pagos múltiples · Estado automático (Pendiente/Parcial/Pagada)</div>
+                  </div>
+                  <div class="row gap">
+                    <span class="badge" id="payPending">Pendiente: —</span>
+                    <span class="badge ok" id="payPaid">Pagado: —</span>
+                  </div>
+                </div>
 
-.badgeTotal{
-  font-weight:900;
-  font-size:14px;
-}
+                <div class="grid-4 mt10">
+                  <div class="field">
+                    <label>Importe pago</label>
+                    <input id="payAmount" inputmode="decimal" placeholder="0,00" />
+                  </div>
+                  <div class="field">
+                    <label>Método</label>
+                    <select id="payMethod">
+                      <option value="efectivo">Efectivo</option>
+                      <option value="tarjeta">Tarjeta</option>
+                      <option value="transferencia">Transferencia</option>
+                      <option value="bizum">Bizum</option>
+                      <option value="otro">Otro</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Fecha</label>
+                    <input id="payDate" type="date" />
+                  </div>
+                  <div class="field">
+                    <label>Acción</label>
+                    <button id="btnAddPayment" class="btn primary">+ Añadir pago</button>
+                  </div>
+                </div>
 
-.delBtn{
-  width:40px;height:40px;
-  border-radius:14px;
-  border:1px solid rgba(239,68,68,.45);
-  background:rgba(239,68,68,.10);
-  color:var(--ink);
-  cursor:pointer;
-  font-size:18px;
-}
+                <div class="field mt10">
+                  <label>Nota pago (opcional)</label>
+                  <input id="payNote" placeholder="Ej: transferencia 29/12..." />
+                </div>
 
-.panel-footer .totals{
-  display:flex;
-  gap:12px;
-  align-items:stretch;
-  flex-wrap:wrap;
-}
+                <div class="mt10" id="paymentsList"></div>
+              </div>
 
-.totalbox{
-  flex:1;
-  min-width:180px;
-  padding:12px;
-  border-radius:16px;
-  background:rgba(255,255,255,.04);
-  border:1px solid rgba(255,255,255,.06);
-}
-.totalbox.strong{
-  border-color: rgba(34,197,94,.5);
-  background:linear-gradient(135deg, rgba(34,197,94,.20), rgba(34,197,94,.06));
-}
-.tlabel{font-size:12px;color:var(--muted);font-weight:700}
-.tvalue{margin-top:6px;font-size:18px;font-weight:900}
-.tvalue.big{font-size:22px}
+              <!-- GRID PRO: LINEAS -->
+              <div class="card pad mt10">
+                <div class="row space">
+                  <div>
+                    <div class="card-title">Líneas</div>
+                    <div class="muted">GRID PRO 1 línea: scroll horizontal · Enter siguiente celda · Shift+Enter nueva línea</div>
+                  </div>
+                  <div class="row gap">
+                    <button id="btnAddLine" class="btn">+ Línea</button>
+                    <button id="btnClearLines" class="btn ghost">Vaciar</button>
+                  </div>
+                </div>
 
-.footnote{
-  margin-top:10px;
-  font-size:12px;
-  color:var(--muted);
-}
+                <div class="grid-head">
+                  <div>Producto</div>
+                  <div>Modo</div>
+                  <div>Cant.</div>
+                  <div>Bruto</div>
+                  <div>Tara</div>
+                  <div>Neto</div>
+                  <div>Precio</div>
+                  <div>Origen</div>
+                  <div>Importe</div>
+                  <div></div>
+                </div>
 
-/* PRODUCTOS */
-.panel-products{
-  flex:1;
-  min-height:0;
-  display:flex;
-  flex-direction:column;
-}
-.products-head{
-  display:flex;
-  gap:10px;
-  padding:10px 10px;
-  border-radius:14px;
-  background:rgba(255,255,255,.04);
-  border:1px solid rgba(255,255,255,.06);
-  font-size:12px;
-  color:var(--muted);
-  font-weight:900;
-}
-.products-wrap{
-  flex:1;
-  min-height:0;
-  margin-top:10px;
-  overflow:auto;
-  padding-right:6px;
-}
+                <div id="lines" class="lines"></div>
 
-.prod-row{
-  display:flex;
-  gap:10px;
-  align-items:flex-start;
-  padding:10px 10px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.08);
-  background:rgba(10,16,30,.35);
-  margin-bottom:10px;
-  flex-wrap:nowrap;
-  overflow-x:auto;
-}
+                <div class="hint mt10">
+                  ⏱️ “Últimos precios” solo se muestran en pantalla (tooltip), NO se imprimen en el PDF.
+                </div>
+              </div>
 
-.pcol{white-space:nowrap}
-.pcol.pname{flex:1;min-width:320px}
-.pcol.punit{width:140px}
-.pcol.pkgbox{width:120px}
-.pcol.pprice{width:140px}
-.pcol.phist{min-width:320px;flex:1}
-.pcol.pbtn{width:140px}
+              <!-- TOTALES -->
+              <div class="card pad mt10">
+                <div class="totals">
+                  <div class="tot-line"><span>Subtotal</span><b id="tSubtotal">0,00 €</b></div>
+                  <div class="tot-line"><span>IVA (4%)</span><b id="tVat">0,00 €</b></div>
+                  <div class="tot-line big"><span>Total</span><b id="tTotal">0,00 €</b></div>
+                  <div class="muted mt6" id="tVatNote">—</div>
+                </div>
+              </div>
 
-.hist{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  align-items:center;
-}
-.hist span{
-  display:inline-flex;
-  gap:6px;
-  align-items:center;
-  padding:6px 10px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.04);
-  font-size:12px;
-  font-weight:800;
-  color:var(--muted);
-}
+            </div>
+          </div>
+        </section>
 
-/* ✅ AUTOCOMPLETE DROPDOWN */
-.ac-wrap{position:relative}
-.ac-list{
-  position:absolute;
-  left:0; right:0;
-  top:calc(100% + 6px);
-  z-index:999;
-  background:rgba(8,12,22,.96);
-  border:1px solid rgba(255,255,255,.10);
-  border-radius:14px;
-  overflow:hidden;
-  max-height:240px;
-  overflow:auto;
-  box-shadow: var(--shadow);
-}
-.ac-item{
-  padding:10px 12px;
-  border-bottom:1px solid rgba(255,255,255,.06);
-  cursor:pointer;
-  font-weight:800;
-  color:var(--ink);
-}
-.ac-item:last-child{border-bottom:none}
-.ac-item:hover,
-.ac-item.active{
-  background:linear-gradient(135deg, rgba(34,197,94,.22), rgba(34,197,94,.06));
-}
+        <!-- CLIENTES -->
+        <section class="panel" id="view-clientes" style="display:none;">
+          <div class="panel-header">
+            <h2>Clientes</h2>
+            <div class="header-actions">
+              <button id="btnNewClient" class="btn primary">+ Cliente</button>
+              <button id="btnSaveClient" class="btn">💾 Guardar</button>
+            </div>
+          </div>
 
-@media (max-width: 900px){
-  .field{min-width:100%}
-  .actions{width:100%}
-  .col.name{min-width:260px}
-  .pcol.phist{min-width:240px}
-}
+          <div class="two-cols">
+            <div class="col list">
+              <div class="card pad">
+                <input id="qClient" placeholder="Buscar cliente..." />
+              </div>
+              <div class="card pad mt10">
+                <div id="clientList" class="listbox"></div>
+              </div>
+            </div>
+
+            <div class="col editor">
+              <div class="card pad">
+                <div class="card-title">Ficha</div>
+
+                <div class="grid-2 mt10">
+                  <div class="field"><label>Nombre</label><input id="cName"></div>
+                  <div class="field"><label>NIF/CIF</label><input id="cNif"></div>
+                  <div class="field"><label>Dirección</label><input id="cAddr"></div>
+                  <div class="field"><label>Ciudad / CP</label><input id="cCity"></div>
+                  <div class="field"><label>Teléfono</label><input id="cPhone"></div>
+                  <div class="field"><label>Email</label><input id="cEmail"></div>
+                </div>
+
+                <!-- A: Plantilla por cliente -->
+                <div class="card mt10 pad">
+                  <div class="card-title">Plantilla (A)</div>
+                  <div class="muted">Al elegir este cliente en una factura, se aplican estos defaults.</div>
+
+                  <div class="grid-3 mt10">
+                    <div class="field">
+                      <label>IVA preferido</label>
+                      <select id="cVatPref">
+                        <option value="">—</option>
+                        <option value="add">IVA 4% aparte</option>
+                        <option value="included">IVA incluido</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>Pago por defecto</label>
+                      <select id="cPayPref">
+                        <option value="">—</option>
+                        <option value="efectivo">Efectivo</option>
+                        <option value="tarjeta">Tarjeta</option>
+                        <option value="transferencia">Transferencia</option>
+                        <option value="bizum">Bizum</option>
+                        <option value="otro">Otro</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>Tags por defecto</label>
+                      <input id="cTags" placeholder="Braseros Centro, Severo..." />
+                    </div>
+                  </div>
+
+                  <div class="field mt10">
+                    <label>Notas por defecto</label>
+                    <input id="cNotesPref" placeholder="Ej: IVA incluido en los precios..." />
+                  </div>
+                </div>
+
+                <div class="row gap mt10">
+                  <button id="btnDeleteClient" class="btn danger">Eliminar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- CATALOGO -->
+        <section class="panel" id="view-catalogo" style="display:none;">
+          <div class="panel-header">
+            <h2>Productos</h2>
+            <div class="header-actions">
+              <button id="btnAddProduct" class="btn primary">+ Producto</button>
+              <button id="btnSaveCatalog" class="btn">💾 Guardar</button>
+            </div>
+          </div>
+
+          <div class="card pad">
+            <div class="row gap wrap">
+              <input id="qProd" class="grow" placeholder="Buscar producto..." />
+              <div class="muted">Historial: últimas 5 ediciones (solo pantalla)</div>
+            </div>
+          </div>
+
+          <div class="card pad mt10">
+            <div class="cat-head">
+              <div>Producto</div>
+              <div>Modo</div>
+              <div>Precio venta</div>
+              <div>Precio coste</div>
+              <div>Kg/caja</div>
+              <div>Origen</div>
+              <div>Historial (5)</div>
+              <div></div>
+            </div>
+            <div id="catalogList" class="cat-list"></div>
+          </div>
+        </section>
+
+        <!-- CONTABILIDAD (PIN) -->
+        <section class="panel" id="view-contabilidad" style="display:none;">
+          <div class="panel-header">
+            <h2>Contabilidad</h2>
+            <div class="muted">Ventas · Cobros · Pendientes · Márgenes (estimados)</div>
+          </div>
+
+          <div class="grid-4">
+            <div class="card pad">
+              <div class="card-title">Ventas (mes)</div>
+              <div class="kpi" id="kSales">—</div>
+              <div class="muted" id="kSales2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Cobrado (mes)</div>
+              <div class="kpi" id="kCollected">—</div>
+              <div class="muted" id="kCollected2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Pendiente total</div>
+              <div class="kpi" id="kPending">—</div>
+              <div class="muted" id="kPending2">—</div>
+            </div>
+            <div class="card pad">
+              <div class="card-title">Margen estimado</div>
+              <div class="kpi" id="kMargin">—</div>
+              <div class="muted" id="kMargin2">—</div>
+            </div>
+          </div>
+
+          <div class="card pad mt10">
+            <div class="row gap wrap">
+              <input id="accMonth" type="month" />
+              <button id="btnAccBuild" class="btn primary">Actualizar</button>
+
+              <button id="btnAccExport" class="btn ghost">⬇️ Export CSV</button>
+              <button id="btnLedgerExport" class="btn">📒 Libro mensual (AEAT)</button>
+            </div>
+
+            <div class="hint mt10">
+              📌 “Libro mensual (AEAT)” exporta columnas limpias (fecha, nº, cliente, base, IVA, total, estado, tags, pdfUrl).
+            </div>
+
+            <div id="accTable" class="acc-table mt10"></div>
+          </div>
+        </section>
+
+        <!-- AJUSTES -->
+        <section class="panel" id="view-ajustes" style="display:none;">
+          <div class="panel-header">
+            <h2>Ajustes</h2>
+            <div class="header-actions">
+              <button id="btnLogout" class="btn danger">Cerrar sesión nube</button>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card pad">
+              <div class="card-title">Proveedor (tus datos)</div>
+              <div class="form">
+                <label>Nombre</label><input id="sProvName" />
+                <label>NIF</label><input id="sProvNif" />
+                <label>Dirección</label><input id="sProvAddr" />
+                <label>Teléfono</label><input id="sProvPhone" />
+                <label>Email</label><input id="sProvEmail" />
+                <div class="row gap mt10">
+                  <button id="btnSaveSettings" class="btn primary">Guardar</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card pad">
+              <div class="card-title">Nube (opcional)</div>
+              <div class="muted">
+                ✅ Puedes usar el software SIN nube (local).<br>
+                Si inicias sesión, activas: Sync, PDFs en Storage, y datos compartidos entre dispositivos.
+              </div>
+
+              <div class="grid-2 mt10">
+                <div class="field">
+                  <label>Email</label>
+                  <input id="loginEmail" type="email" placeholder="tu@email.com">
+                </div>
+                <div class="field">
+                  <label>Contraseña</label>
+                  <input id="loginPass" type="password" placeholder="••••••••">
+                </div>
+              </div>
+
+              <div class="row gap mt10">
+                <button id="btnLogin" class="btn primary">Entrar nube</button>
+                <button id="btnRegister" class="btn">Crear cuenta</button>
+              </div>
+
+              <div class="hint mt10" id="loginMsg">—</div>
+
+              <hr class="sep" />
+
+              <div class="card-title">Seguridad (PIN)</div>
+              <div class="muted">Protege Contabilidad / Márgenes con PIN. Facturas siempre libre.</div>
+              <div class="grid-2 mt10">
+                <div class="field">
+                  <label>PIN contabilidad</label>
+                  <input id="sPin" type="password" inputmode="numeric" placeholder="****" />
+                </div>
+                <div class="field">
+                  <label>Confirmar PIN</label>
+                  <input id="sPin2" type="password" inputmode="numeric" placeholder="****" />
+                </div>
+              </div>
+              <div class="row gap mt10">
+                <button id="btnSavePin" class="btn">Guardar PIN</button>
+                <button id="btnLockAcc" class="btn ghost">Bloquear ahora</button>
+              </div>
+
+              <hr class="sep" />
+
+              <div class="card-title">Sistema</div>
+              <div class="row gap mt10">
+                <button id="btnHardSync" class="btn">Sync completo</button>
+                <button id="btnResetLocal" class="btn ghost">Reset local</button>
+              </div>
+              <div class="hint mt10" id="sysMsg">—</div>
+            </div>
+          </div>
+        </section>
+
+      </section>
+    </main>
+  </div>
+
+  <!-- PIN MODAL (Contabilidad) -->
+  <div class="modal" id="pinModal" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-title">🔒 Contabilidad protegida</div>
+      <div class="muted">Introduce el PIN para acceder a Contabilidad / Márgenes / Export AEAT.</div>
+
+      <div class="field mt10">
+        <label>PIN</label>
+        <input id="pinInput" type="password" inputmode="numeric" placeholder="****" />
+      </div>
+
+      <div class="row gap mt10">
+        <button id="btnPinOk" class="btn primary">Entrar</button>
+        <button id="btnPinCancel" class="btn ghost">Cancelar</button>
+      </div>
+
+      <div class="hint mt10" id="pinMsg">—</div>
+    </div>
+  </div>
+
+  <!-- QR render container (oculto) -->
+  <div id="qrTmp" style="position:fixed; left:-9999px; top:-9999px;"></div>
+</body>
+</html>
