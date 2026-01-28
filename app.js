@@ -973,57 +973,87 @@ function renderLines(inv){
 
   body.innerHTML = '';
 
-  inv.lines.forEach((ln, idx)=>{
-    // asegura ids
+  inv.lines.forEach((ln)=>{
     if(!ln.id) ln.id = uid('ln');
     if(!ln.mode) ln.mode = 'kg';
+    if(typeof ln._open !== 'boolean') ln._open = false;
 
     const p = ln.productKey ? state.products?.[ln.productKey] : null;
-
-    // hint precio último (solo pantalla)
     const last = getLastPriceHint(p, ln.mode);
 
-    const row = document.createElement('div');
-    row.className = 'lineRow';
-    row.dataset.id = ln.id;
+    const taraTotal = (ln.mode === 'ud') ? 0 : (toNum(ln.taraTotal) || (toNum(ln.tara) * (toNum(ln.cant) || 1)));
 
-    row.innerHTML = `
-      <div class="lineGridTop">
-        <div class="suggest">
-          <input class="input lnProd" placeholder="Producto" value="${escHtml(ln.productName||'')}" />
+    const card = document.createElement('div');
+    card.className = 'lineCard' + (ln._open ? ' open' : '');
+    card.dataset.id = ln.id;
+
+    card.innerHTML = `
+      <div class="lineTopRow">
+        <div class="suggest lineProdWrap fieldBox">
+          <div class="fieldLab">Producto</div>
+          <input class="input lnProd" placeholder="Escribe y elige con ↑ ↓ Enter" value="${escHtml(ln.productName||'')}" />
         </div>
 
-        <select class="input lnMode">
-          <option value="kg" ${ln.mode==='kg'?'selected':''}>kg</option>
-          <option value="caja" ${ln.mode==='caja'?'selected':''}>caja</option>
-          <option value="ud" ${ln.mode==='ud'?'selected':''}>ud</option>
-        </select>
+        <div class="fieldBox">
+          <div class="fieldLab">Modo</div>
+          <select class="input lnMode">
+            <option value="kg" ${ln.mode==='kg'?'selected':''}>kg</option>
+            <option value="caja" ${ln.mode==='caja'?'selected':''}>caja</option>
+            <option value="ud" ${ln.mode==='ud'?'selected':''}>ud</option>
+          </select>
+        </div>
 
-        <input class="input lnCant" placeholder="Cant." inputmode="decimal" value="${ln.cant?escHtml(String(ln.cant).replace('.',',')):''}" />
+        <div class="fieldBox">
+          <div class="fieldLab">Precio</div>
+          <input class="input lnPrice" inputmode="decimal" placeholder="€" value="${ln.price?escHtml(String(ln.price).replace('.',',')):''}" />
+        </div>
 
-        <input class="input lnPrice" placeholder="Precio" inputmode="decimal" value="${ln.price?escHtml(String(ln.price).replace('.',',')):''}" />
+        <div class="amountBox2">
+          <div class="fieldLab">Importe</div>
+          <div class="amountVal lnAmountVal">${escHtml(fmt2(ln.amount||0))} €</div>
+        </div>
 
-        <div class="amountBox lnAmount">${escHtml(fmt2(ln.amount||0))} €</div>
-
+        <button class="iconBtn lnMore" title="Más / menos">${ln._open ? '▴' : '▾'}</button>
         <button class="iconBtn lnDel" title="Eliminar">×</button>
       </div>
 
-      <div class="lineGridBottom">
-        <input class="input lnBruto" placeholder="Bruto (kg)" inputmode="decimal" value="${ln.bruto?escHtml(String(ln.bruto).replace('.',',')):''}" />
-        <input class="input lnTara" placeholder="Tara (kg)" inputmode="decimal" value="${ln.tara?escHtml(String(ln.tara).replace('.',',')):''}" />
-        <input class="input lnNeto" placeholder="Neto (kg)" inputmode="decimal" value="${ln.neto?escHtml(String(ln.neto).replace('.',',')):''}" />
-        <input class="input lnOrigin" placeholder="Origen" value="${escHtml(ln.origin||'')}" />
-        <div class="amountBox" style="text-align:left;font-weight:700;">
-          <div style="font-size:12px;">Último:</div>
-          <div style="font-size:12px;opacity:.75;">${escHtml(last)}</div>
+      <div class="lineBottomWrap">
+        <div class="fieldBox">
+          <div class="fieldLab">${ln.mode==='ud' ? 'Unidades' : 'Envases/Cajas'}</div>
+          <input class="input lnCant" inputmode="decimal" placeholder="Cant." value="${ln.cant?escHtml(String(ln.cant).replace('.',',')):''}" />
+        </div>
+
+        <div class="fieldBox">
+          <div class="fieldLab">Bruto (kg)</div>
+          <input class="input lnBruto" inputmode="decimal" placeholder="kg" value="${ln.bruto?escHtml(String(ln.bruto).replace('.',',')):''}" />
+        </div>
+
+        <div class="fieldBox">
+          <div class="fieldLab">Tara / envase (kg)</div>
+          <input class="input lnTara" inputmode="decimal" placeholder="kg" value="${ln.tara?escHtml(String(ln.tara).replace('.',',')):''}" />
+        </div>
+
+        <div class="fieldBox">
+          <div class="fieldLab">Neto (kg)</div>
+          <input class="input lnNeto" inputmode="decimal" placeholder="auto" value="${ln.neto?escHtml(String(ln.neto).replace('.',',')):''}" />
+        </div>
+
+        <div class="fieldBox">
+          <div class="fieldLab">Origen</div>
+          <input class="input lnOrigin" placeholder="Origen" value="${escHtml(ln.origin||'')}" />
+        </div>
+
+        <div class="fieldHint">
+          <span>Último (solo pantalla): <b>${escHtml(last)}</b></span>
+          <span>Tara total: <b class="lnTaraTotal">${escHtml(fmt2(taraTotal))}</b> kg</span>
         </div>
       </div>
     `;
 
-    body.appendChild(row);
+    body.appendChild(card);
 
-    // autocomplete: NO sustituye automático, solo al elegir
-    const inpProd = row.querySelector('.lnProd');
+    // Autocomplete (NO sustituye automático)
+    const inpProd = card.querySelector('.lnProd');
     attachAutocomplete(inpProd, {
       getItems: (q)=> suggestProducts(q),
       onPick: (it)=>{
@@ -1033,16 +1063,133 @@ function renderLines(inv){
         ln.productKey = prod.key;
         ln.productName = prod.name;
 
-        // Productos inteligentes:
-        // - modo/origen por defecto
         ln.mode = prod.defaultMode || ln.mode || 'kg';
         if(!ln.origin) ln.origin = prod.origin || '';
 
-        // - precio SOLO si está vacío/0
         if(!toNum(ln.price)){
           const px = priceForMode(prod, ln.mode);
           if(px > 0) ln.price = px;
         }
+
+        if(ln.mode === 'ud'){
+          ln.netoLocked = true;
+          ln.bruto = 0; ln.tara = 0;
+        }
+
+        calcLine(ln);
+        inv.updatedAt = Date.now();
+        saveLocal();
+
+        renderInvoiceUI();
+      }
+    });
+
+    bindLineEvents(inv, ln, card);
+  });
+}
+
+function bindLineEvents(inv, ln, card){
+  const elMode  = card.querySelector('.lnMode');
+  const elCant  = card.querySelector('.lnCant');
+  const elPrice = card.querySelector('.lnPrice');
+  const elBruto = card.querySelector('.lnBruto');
+  const elTara  = card.querySelector('.lnTara');
+  const elNeto  = card.querySelector('.lnNeto');
+  const elOrig  = card.querySelector('.lnOrigin');
+  const elDel   = card.querySelector('.lnDel');
+  const elMore  = card.querySelector('.lnMore');
+
+  const elAmount = card.querySelector('.lnAmountVal');
+  const elTaraTot= card.querySelector('.lnTaraTotal');
+
+  function applyModeUI(){
+    const mode = elMode.value;
+
+    const isUd = (mode === 'ud');
+
+    // En ud: deshabilitar bruto/tara/neto (neto = cant)
+    elBruto.disabled = isUd;
+    elTara.disabled  = isUd;
+    elNeto.disabled  = false; // neto puede quedar editable (pero lo bloqueamos en calcLine)
+
+    if(isUd){
+      elBruto.value = '';
+      elTara.value = '';
+    }
+  }
+
+  const sync = ()=>{
+    ln.mode  = elMode.value;
+    ln.cant  = toNum(elCant.value);
+    ln.price = toNum(elPrice.value);
+
+    ln.bruto = toNum(elBruto.value);
+    ln.tara  = toNum(elTara.value);
+
+    // neto manual => lock
+    const raw = (elNeto.value || '').trim();
+    if(raw !== ''){
+      ln.neto = toNum(raw);
+      ln.netoLocked = true;
+    }else{
+      ln.neto = 0;
+      ln.netoLocked = false;
+    }
+
+    ln.origin = elOrig.value || '';
+
+    applyModeUI();
+
+    // ✅ cálculo completo (incluye tara por envase × cant si usas el patch de taraTotal)
+    calcLine(ln);
+
+    // si auto neto, pintarlo
+    if(!ln.netoLocked && (ln.mode === 'kg' || ln.mode === 'caja')){
+      elNeto.value = ln.neto ? String(ln.neto).replace('.',',') : '';
+    }
+    if(ln.mode === 'ud'){
+      elNeto.value = ln.neto ? String(ln.neto).replace('.',',') : '';
+    }
+
+    const taraTotal = (ln.mode === 'ud') ? 0 : (toNum(ln.taraTotal) || (toNum(ln.tara) * (toNum(ln.cant) || 1)));
+    if(elTaraTot) elTaraTot.textContent = fmt2(taraTotal);
+
+    if(elAmount) elAmount.textContent = `${fmt2(ln.amount||0)} €`;
+
+    inv.updatedAt = Date.now();
+    recalcInvoiceTotalsAndUI(false);
+    saveLocal();
+  };
+
+  ['input','change'].forEach(ev=>{
+    elMode.addEventListener(ev, sync);
+    elCant.addEventListener(ev, sync);
+    elPrice.addEventListener(ev, sync);
+    elBruto.addEventListener(ev, sync);
+    elTara.addEventListener(ev, sync);
+    elNeto.addEventListener(ev, sync);
+    elOrig.addEventListener(ev, sync);
+  });
+
+  elDel.addEventListener('click', ()=>{
+    inv.lines = (inv.lines||[]).filter(x=> x.id !== ln.id);
+    if(inv.lines.length < 1) inv.lines = [makeEmptyLine()];
+    inv.updatedAt = Date.now();
+    saveLocal();
+    renderInvoiceUI();
+    renderInvoiceList();
+  });
+
+  elMore.addEventListener('click', ()=>{
+    ln._open = !ln._open;
+    inv.updatedAt = Date.now();
+    saveLocal();
+    renderInvoiceUI();
+  });
+
+  applyModeUI();
+}
+
 
         // - netoLocked: si cambia a ud, bloquea; si cambia a kg/caja, respeta
         if(ln.mode === 'ud'){
@@ -2231,7 +2378,6 @@ async function generatePDF(){
     return;
   }
 
-  // recalcula (por seguridad)
   (inv.lines||[]).forEach(ln => calcLine(ln));
   const t = computeInvoiceTotals(inv);
   const cli = getClientById(inv.clientId);
@@ -2239,135 +2385,274 @@ async function generatePDF(){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:'p', unit:'mm', format:'a4' });
 
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
   const M = 12;
+  const usableW = W - 2*M;
 
-  // estilos base
-  doc.setTextColor(0,0,0);
+  // ===== Header banda negra
+  doc.setFillColor(10,10,10);
+  doc.rect(0, 0, W, 22, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(14);
+  doc.text('FACTURA', M, 14);
 
-  // LOGO (opcional)
+  doc.setFontSize(11);
+  const num = inv.number || '';
+  const numW = doc.getTextWidth(num);
+  doc.text(num, W - M - numW, 14);
+
+  // ===== Logo (opcional) en header (esquina)
   const logo = state.settings.logoDataURL || '';
   const logoType = dataUrlToImageType(logo);
-
-  // cajas top
-  const topY = 12;
-  const boxH = 32;
-  const leftX = M;
-  const rightW = 70;
-  const leftW  = 70;
-  const rightX = pageW - M - rightW;
-  const midQRSize = 26;
-  const midX = (pageW - midQRSize) / 2;
-  const qrY = topY + 3;
-
-  // draw boxes
-  doc.setLineWidth(0.3);
-  doc.rect(leftX, topY, leftW, boxH);
-  doc.rect(rightX, topY, rightW, boxH);
-
-  // provider text (izq)
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  mmText(doc, 'FACTURA', leftX+8, topY+7, leftW-16);
-
-  // logo pequeño
   if(logo && logoType){
-    try{
-      doc.addImage(logo, logoType, leftX+2, topY+2, 8, 8);
-    }catch{}
-  }else{
-    // logo fallback (círculo)
-    doc.circle(leftX+6, topY+6, 3);
+    try{ doc.addImage(logo, logoType, W - M - 12, 5, 10, 10); }catch{}
   }
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  mmText(doc, state.provider.name || '', leftX+2, topY+13, leftW-4);
-  mmText(doc, state.provider.nif || '',  leftX+2, topY+18, leftW-4);
-  mmText(doc, state.provider.addr || '', leftX+2, topY+23, leftW-4);
-  mmText(doc, `${state.provider.phone || ''} · ${state.provider.email || ''}`, leftX+2, topY+28, leftW-4);
+  // ===== cajas: proveedor izq / QR centro / cliente der
+  doc.setTextColor(0,0,0);
+  const topY = 26;
+  const boxH = 34;
+  const leftW = 72;
+  const rightW = 72;
+  const leftX = M;
+  const rightX = W - M - rightW;
+  const qrSize = 26;
+  const qrX = (W - qrSize)/2;
+  const qrY = topY + 4;
 
-  // client (der)
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(10);
-  mmText(doc, 'CLIENTE', rightX+2, topY+7, rightW-4);
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(9);
-  mmText(doc, cli?.name || inv.clientNameCache || '', rightX+2, topY+13, rightW-4);
-  mmText(doc, cli?.nif || '', rightX+2, topY+18, rightW-4);
-  mmText(doc, cli?.addr || '', rightX+2, topY+23, rightW-4);
-  mmText(doc, `${cli?.phone||''} · ${cli?.email||''}`, rightX+2, topY+28, rightW-4);
+  doc.setLineWidth(0.3);
+  doc.setDrawColor(0,0,0);
 
-  // QR centro: genera imagen desde canvas del QR pantalla si existe
+  // sombras suaves (fake) con gris claro detrás
+  doc.setFillColor(248,248,248);
+  doc.rect(leftX+0.8, topY+0.8, leftW, boxH, 'F');
+  doc.rect(rightX+0.8, topY+0.8, rightW, boxH, 'F');
+
+  // cajas principales blancas
+  doc.setFillColor(255,255,255);
+  doc.rect(leftX, topY, leftW, boxH, 'F');
+  doc.rect(rightX, topY, rightW, boxH, 'F');
+
+  // Títulos
+  doc.setFont('helvetica','bold'); doc.setFontSize(9);
+  doc.text('EMISOR', leftX+2, topY+7);
+  doc.text('CLIENTE', rightX+2, topY+7);
+
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+  doc.text(state.provider.name || '', leftX+2, topY+13);
+  doc.text(state.provider.nif || '',  leftX+2, topY+18);
+  doc.text(state.provider.addr || '', leftX+2, topY+23);
+  doc.text(`${state.provider.phone||''}`, leftX+2, topY+28);
+
+  doc.text(cli?.name || inv.clientNameCache || '', rightX+2, topY+13);
+  doc.text(cli?.nif || '', rightX+2, topY+18);
+  doc.text(cli?.addr || '', rightX+2, topY+23);
+  doc.text(`${cli?.phone||''}`, rightX+2, topY+28);
+
+  // QR con marco
+  doc.setFillColor(255,255,255);
+  doc.rect(qrX-2, qrY-2, qrSize+4, qrSize+4, 'F');
+  doc.rect(qrX-2, qrY-2, qrSize+4, qrSize+4);
+
   let qrDataURL = '';
   try{
-    const qrBox = $('#qrBox');
-    const canvas = qrBox?.querySelector('canvas');
+    const canvas = $('#qrBox')?.querySelector('canvas');
     if(canvas) qrDataURL = canvas.toDataURL('image/png');
   }catch{}
+
   if(qrDataURL){
-    try{
-      doc.addImage(qrDataURL, 'PNG', midX, qrY, midQRSize, midQRSize);
-    }catch{
-      doc.rect(midX, qrY, midQRSize, midQRSize);
-    }
+    try{ doc.addImage(qrDataURL, 'PNG', qrX, qrY, qrSize, qrSize); }
+    catch{ doc.rect(qrX, qrY, qrSize, qrSize); }
   }else{
-    doc.rect(midX, qrY, midQRSize, midQRSize);
+    doc.rect(qrX, qrY, qrSize, qrSize);
   }
 
-  // meta debajo top
-  const metaY = topY + boxH + 8;
+  // ===== Meta row
+  let y = topY + boxH + 10;
   doc.setFont('helvetica','bold'); doc.setFontSize(9);
-  mmText(doc, `Nº: ${inv.number || ''}`, M, metaY, 80);
-  mmText(doc, `Fecha: ${inv.dateISO || ''}`, M+70, metaY, 60);
+  doc.text(`Fecha: ${inv.dateISO || ''}`, M, y);
+
   doc.setFont('helvetica','normal');
-  mmText(doc, inv.tags ? `Tags: ${inv.tags}` : '', M+120, metaY, pageW - (M+120) - M);
+  const tags = inv.tags ? `Tags: ${inv.tags}` : '';
+  if(tags){
+    const tw = doc.getTextWidth(tags);
+    doc.text(tags, W - M - tw, y);
+  }
 
-  // tabla GRID
-  const tableX = M;
-  let y = metaY + 6;
+  y += 8;
 
-  const col = [
-    { k:'product', w:50, t:'Producto' },
+  // ===== Tabla bonita (zebra)
+  const cols = [
+    { k:'product', w:74, t:'Producto' },
     { k:'mode',    w:10, t:'Modo' },
-    { k:'cant',    w:12, t:'Cant' },
-    { k:'bruto',   w:14, t:'Bruto' },
-    { k:'tara',    w:14, t:'Tara' },
-    { k:'neto',    w:14, t:'Neto' },
-    { k:'price',   w:14, t:'Precio' },
-    { k:'origin',  w:30, t:'Origen' },
-    { k:'amount',  w:16, t:'Importe' },
+    { k:'cant',    w:10, t:'Cant' },
+    { k:'bruto',   w:12, t:'Br' },
+    { k:'tara',    w:12, t:'Ta' },
+    { k:'neto',    w:12, t:'Ne' },
+    { k:'price',   w:12, t:'€' },
+    { k:'origin',  w:26, t:'Origen' },
+    { k:'amount',  w:18, t:'Importe' },
   ];
 
-  function drawRow(y, cells, isHeader=false){
-    const rowH = 7;
+  const tableX = M;
+  const rowH = 7;
+
+  function drawHeaderRow(y){
+    doc.setFillColor(245,245,245);
+    doc.rect(tableX, y, usableW, rowH, 'F');
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(8.5);
     let x = tableX;
-
-    if(isHeader){
-      doc.setFillColor(245,245,245);
-      doc.rect(tableX, y, col.reduce((a,c)=>a+c.w,0), rowH, 'F');
-      doc.setFont('helvetica','bold');
-      doc.setFontSize(8.5);
-    }else{
-      doc.setFont('helvetica','normal');
-      doc.setFontSize(8.5);
-    }
-
-    col.forEach((c, idx)=>{
+    cols.forEach(c=>{
       doc.rect(x, y, c.w, rowH);
-      const text = cells[idx] ?? '';
-      const padX = 1.2;
-      const textY = y + 4.8;
+      doc.text(c.t, x+1.2, y+4.8);
+      x += c.w;
+    });
+    return y + rowH;
+  }
+
+  function drawDataRow(y, r, zebra){
+    if(zebra){
+      doc.setFillColor(252,252,252);
+      doc.rect(tableX, y, usableW, rowH, 'F');
+    }
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(8.5);
+
+    let x = tableX;
+    cols.forEach((c, idx)=>{
+      doc.rect(x, y, c.w, rowH);
+      const text = String(r[idx] ?? '');
       if(c.k === 'amount'){
-        // derecha
-        const w = doc.getTextWidth(String(text));
-        doc.text(String(text), x + c.w - padX - w, textY);
+        const w = doc.getTextWidth(text);
+        doc.text(text, x + c.w - 1.2 - w, y + 4.8);
       }else{
-        mmText(doc, text, x + padX, textY, c.w - 2.2);
+        mmText(doc, text, x + 1.2, y + 4.8, c.w - 2.4);
       }
       x += c.w;
     });
+    return y + rowH;
+  }
+
+  y = drawHeaderRow(y);
+
+  const rows = (inv.lines||[])
+    .filter(ln => (ln.productName||ln.productKey))
+    .map(ln=>{
+      const mode = ln.mode || 'kg';
+      const taraTotal = (mode === 'ud') ? '' : fmt2(toNum(ln.taraTotal) || (toNum(ln.tara) * (toNum(ln.cant) || 1)));
+      const bruto = (mode === 'ud') ? '' : fmt2(toNum(ln.bruto));
+      const neto  = (mode === 'ud') ? fmt2(toNum(ln.cant)) : fmt2(toNum(ln.neto));
+      const cant  = fmt2(toNum(ln.cant));
+      const price = fmt2(toNum(ln.price));
+      const amount= fmt2(toNum(ln.amount));
+
+      return [
+        (ln.productName||''),
+        mode,
+        cant,
+        bruto,
+        taraTotal,
+        neto,
+        price,
+        (ln.origin||''),
+        amount
+      ];
+    });
+
+  const bottomLimit = H - 55;
+  let zebra = false;
+
+  for(const r of rows){
+    if(y > bottomLimit){
+      doc.addPage();
+      y = M;
+      y = drawHeaderRow(y);
+    }
+    zebra = !zebra;
+    y = drawDataRow(y, r, zebra);
+  }
+
+  // ===== Totales box pro
+  y += 10;
+  if(y > H - 45){ doc.addPage(); y = M; }
+
+  const boxW = 78;
+  const boxX = W - M - boxW;
+  const boxY = y;
+
+  doc.setFillColor(245,245,245);
+  doc.rect(boxX, boxY, boxW, 30, 'F');
+  doc.rect(boxX, boxY, boxW, 30);
+
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text(`Subtotal: ${fmt2(toNum(t.subtotal))} €`, boxX+3, boxY+8);
+  doc.text(inv.transport ? `Transporte: ${fmt2(toNum(t.transport))} €` : `Transporte: 0,00 €`, boxX+3, boxY+14);
+  doc.text(inv.ivaIncluido ? `IVA: incluido` : `IVA (${state.settings.ivaPercent||4}%): ${fmt2(toNum(t.iva))} €`, boxX+3, boxY+20);
+
+  doc.setFont('helvetica','bold');
+  doc.text(`TOTAL: ${fmt2(toNum(t.total))} €`, boxX+3, boxY+27);
+
+  // ===== Firma / sello
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text('Firma y sello:', M, boxY + 10);
+  doc.setLineWidth(0.3);
+  doc.line(M, boxY + 14, M + 80, boxY + 14);
+
+  // ===== Footer con páginas
+  const pages = doc.internal.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8);
+    doc.setTextColor(80,80,80);
+    const foot = inv.ivaIncluido ? 'IVA incluido en los precios.' : 'IVA no incluido en precios.';
+    doc.text(foot, M, H - 10);
+    const s = `Página ${p}/${pages}`;
+    const sw = doc.getTextWidth(s);
+    doc.text(s, W - M - sw, H - 10);
+  }
+
+  // ===== Blob + descarga
+  const pdfBlob = doc.output('blob');
+  const fileName = safeFileName(`${inv.number || 'FACTURA'}_${inv.dateISO || ''}.pdf`) || 'FACTURA.pdf';
+
+  inv.pdfLastGeneratedAt = Date.now();
+  inv.pdfFileName = fileName;
+  inv.updatedAt = Date.now();
+  saveLocal();
+  renderInvoiceList();
+
+  const url = URL.createObjectURL(pdfBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  toast('PDF PRO generado ✅');
+
+  // ===== Subir PDF a nube si hay login + storage
+  try{
+    if(state.cloud?.uid && state.cloud?.idToken && isFirebaseConfigured() && state.settings.firebase?.storageBucket){
+      const path = buildStoragePdfPath(inv, state.cloud.uid);
+      const dl = await uploadPdfToFirebaseStorage(pdfBlob, path, state.cloud.idToken, state.settings.firebase.storageBucket);
+      if(dl){
+        inv.pdfUrl = dl.url;
+        inv.pdfPath = dl.path;
+        inv.updatedAt = Date.now();
+        saveLocal();
+        await cloudPushInvoice(inv);
+        toast('PDF guardado en nube ☁️');
+      }
+    }
+  }catch(e){
+    console.warn('PDF cloud error', e);
+  }
+}
 
     return rowH;
   }
