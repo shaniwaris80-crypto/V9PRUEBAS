@@ -387,73 +387,76 @@ function guessKgPerBox(name){
 ========================= */
 function calcLine(ln){
   if(!ln) return ln;
-  const mode = ln.mode || 'kg';
-  const cant = toNum(ln.cant);
-  const bruto = toNum(ln.bruto);
-  const tara  = toNum(ln.tara);
-  let neto = toNum(ln.neto);
 
-  // flags para “no pisar” neto manual
+  const mode = ln.mode || 'kg';
+
+  // Cant = nº envases/cajas (para tara por envase)
+  const cant  = toNum(ln.cant);
+
+  const bruto = toNum(ln.bruto);
+  const taraU = toNum(ln.tara);      // 👈 tara POR ENVASE (kg)
+  let neto    = toNum(ln.neto);
+
   const locked = !!ln.netoLocked;
 
-  // neto auto por bruto/tara
-  const netoFromBruto = (bruto > 0 || tara > 0) ? Math.max(0, bruto - tara) : 0;
-
-  // product ref
   const p = ln.productKey ? state.products?.[ln.productKey] : null;
   const kgPerBox = toNum(p?.kgPerBox);
 
+  // ✅ Tara TOTAL (kg) = tara por envase × cant (si cant>0)
+  // Si cant está vacío, asume 1 envase
+  const envases = (cant > 0 ? cant : 1);
+  const taraTotal = (mode === 'ud') ? 0 : (taraU * envases);
+
+  // neto desde bruto/taraTotal
+  const netoFromBruto = (bruto > 0 || taraTotal > 0) ? Math.max(0, bruto - taraTotal) : 0;
+
   if(mode === 'ud'){
-    // ud: cant manda
+    // ud: neto = cant (unidades)
     neto = cant > 0 ? cant : 0;
     ln.bruto = 0; ln.tara = 0;
     ln.neto = r3(neto);
-    ln.netoLocked = true; // en ud siempre fijo
-  } else if(mode === 'kg'){
+    ln.netoLocked = true;
+    ln.taraTotal = 0;
+  }
+  else if(mode === 'kg'){
     if(!locked){
+      // si hay bruto, calcula neto con tara total
       if(netoFromBruto > 0) neto = netoFromBruto;
-      // si no hay bruto/tara, respeta neto tecleado
-    } else {
-      // locked: respeta neto aunque haya bruto/tara
+      // si no hay bruto, respeta neto manual
     }
     ln.neto = r3(neto);
-  } else {
-    // caja
+    ln.taraTotal = r3(taraTotal); // 👈 guardamos tara total para PDF/tabla
+  }
+  else {
+    // caja: neto auto por bruto-taraTotal o cant*kgPerBox
     if(!locked){
       if(netoFromBruto > 0) neto = netoFromBruto;
       else if(kgPerBox > 0 && cant > 0) neto = cant * kgPerBox;
-      // si no, respeta neto si ya existe
     }
     ln.neto = r3(neto);
+    ln.taraTotal = r3(taraTotal);
   }
 
-  // precio según modo
   const price = toNum(ln.price);
 
-  // importe por céntimos (sin error flotante)
+  // ✅ IMPORTE: ud => cant×precio ; kg/caja => neto×precio
   let amountC = 0;
-
   if(mode === 'ud'){
     amountC = mulQtyPriceToCents(cant, price);
-  } else if(mode === 'kg'){
-    amountC = mulQtyPriceToCents(ln.neto, price);
   } else {
-    // caja:
-    // si hay neto calculable > 0 => precio €/kg
-    // si no hay neto => precio €/caja
-    if(toNum(ln.neto) > 0) amountC = mulQtyPriceToCents(ln.neto, price);
-    else amountC = mulQtyPriceToCents(cant, price);
+    amountC = mulQtyPriceToCents(ln.neto, price);
   }
 
   ln.amount = centsToEUR(amountC);
 
-  // redondeos visuales
-  ln.cant = r3(cant);
+  ln.cant  = r3(cant);
   ln.bruto = r3(bruto);
-  ln.tara = r3(tara);
+  ln.tara  = r3(taraU);   // 👈 se mantiene como tara por envase (lo que tecleas)
   ln.price = r2(price);
+
   return ln;
 }
+
 
 /* =========================
    6) Totales factura (FIX)
@@ -2382,7 +2385,7 @@ async function generatePDF(){
         mode,
         (mode==='ud') ? fmtQty(ln.cant) : fmtQty(ln.cant),
         fmtQty(ln.bruto),
-        fmtQty(ln.tara),
+fmtQty(toNum(ln.taraTotal) || (toNum(ln.tara) * (toNum(ln.cant) || 1))),
         fmtQty(ln.neto),
         fmtQty(ln.price),
         (ln.origin||''),
