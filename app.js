@@ -2047,51 +2047,54 @@ function recalcLine(inv, l){
   // Calcular según modo
   const modo = l.modo || 'kg';
 
- if(modo === 'kg'){
-  // 🔥 FIX: si hay tara seleccionada y envases vacío, usar cantidad como nº envases (modo kg)
-  if(l.taraId && (!l.envases || num(l.envases) <= 0)){
-    // si el usuario escribe cantidad en modo kg, lo interpretamos como nº envases
-    if(num(l.cantidad) > 0) l.envases = clamp0(l.cantidad);
-  }
+const modo = (l.modo || 'kg');
 
-  // Tara auto si aplica (si no manual)
-  if(!l.taraManual && l.taraId){
-    const nEnv = num(l.envases);
-    if(nEnv > 0){
-      l.tara = clamp0(nEnv * getTaraPeso(l.taraId));
-    }
+// ---------- AUTO ENVASES ----------
+if(l.taraId && !l.taraManual){
+  // en CAJA: envases = cantidad siempre (si no hay)
+  if(modo === 'caja'){
+    if(num(l.envases) <= 0 && num(l.cantidad) > 0) l.envases = clamp0(l.cantidad);
   }
+  // en KG: si envases vacío y el usuario metió cantidad, úsalo como nº envases
+  if(modo === 'kg'){
+    if(num(l.envases) <= 0 && num(l.cantidad) > 0) l.envases = clamp0(l.cantidad);
+  }
+}
 
-  // Neto auto si no manual
+// ---------- TARA AUTO ----------
+if(l.taraId && !l.taraManual){
+  const nEnv = num(l.envases);
+  if(nEnv > 0){
+    l.tara = clamp0(nEnv * getTaraPeso(l.taraId));
+  }else{
+    // si no hay envases, tara 0 (evita quedarse con valores viejos)
+    l.tara = 0;
+  }
+}
+
+// ---------- NETO ----------
+if(modo === 'kg'){
+  // neto = bruto - tara (si no manual)
   if(!l.netoManual){
     l.neto = clamp0(num(l.bruto) - num(l.tara));
   }
-
+  // importe = neto * precio
   l.importe = clamp0(num(l.neto) * num(l.precio));
 }
-
-
-    // neto auto si no manual
-    if(!l.netoManual){
-      l.neto = clamp0(num(l.bruto) - num(l.tara));
-    }
-
-    l.importe = clamp0(num(l.neto) * num(l.precio));
+else if(modo === 'caja'){
+  // neto informativo si kg/caja (si no manual)
+  const p = findProductByLine(l);
+  if(p && num(p.kgCaja) > 0 && !l.netoManual){
+    l.neto = clamp0(num(l.cantidad) * num(p.kgCaja));
   }
-  else if(modo === 'caja'){
-    // importe = cantidad * precio/caja
-    l.importe = clamp0(num(l.cantidad) * num(l.precio));
+  // importe = cantidad * precio/caja
+  l.importe = clamp0(num(l.cantidad) * num(l.precio));
+}
+else {
+  // ud
+  l.importe = clamp0(num(l.cantidad) * num(l.precio));
+}
 
-    // neto informativo si kgCaja y no neto manual
-    const p = findProductByLine(l);
-    if(p && num(p.kgCaja)>0 && !l.netoManual){
-      l.neto = clamp0(num(l.cantidad) * num(p.kgCaja));
-    }
-    // tara en caja no afecta (solo peso tara se usa en kg), se mantiene por si quieres.
-  }
-  else { // ud
-    l.importe = clamp0(num(l.cantidad) * num(l.precio));
-  }
 
   // Validaciones recomendadas (B/W)
   const bruto = num(l.bruto);
