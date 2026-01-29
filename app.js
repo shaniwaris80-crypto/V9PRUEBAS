@@ -2479,20 +2479,25 @@ function updateQrFromInvoice(){
   }
 
   // Render QR (usando QRious si está cargado en index)
-  if(UI.qrCanvas && window.QRious){
-    try{
-      const q = new window.QRious({
-        element: UI.qrCanvas,
-        value: txt,
-        size: 210,
-        level: 'M'
-      });
-      void q;
-    }catch{
-      // si falla, no crashear
-    }
+// ✅ Render QR con qrcode.min.js (QRCode)
+if(UI.qrCanvas && window.QRCode){
+  try{
+    // limpia canvas
+    const ctx = UI.qrCanvas.getContext('2d');
+    ctx && ctx.clearRect(0,0,UI.qrCanvas.width, UI.qrCanvas.height);
+
+    window.QRCode.toCanvas(UI.qrCanvas, txt, {
+      width: 210,
+      margin: 1,
+      errorCorrectionLevel: 'M'
+    }, (err)=>{
+      if(err) console.warn('QR canvas error', err);
+    });
+  }catch(e){
+    console.warn('QR error', e);
   }
 }
+
 
 function copyQrText(){
   const inv = getInvoice(State.currentInvoiceId);
@@ -2651,17 +2656,22 @@ async function onMakePdf(uploadToCloud){
   // generar QR en dataURL (si QRious disponible); si no, texto
   const qrText = buildQrText(inv);
   const qrSize = 72;
-  let qrOk = false;
-  try{
-    if(window.QRious){
-      const tmp = document.createElement('canvas');
-      const q = new window.QRious({ element: tmp, value: qrText, size: 260, level:'M' });
-      void q;
-      const data = tmp.toDataURL('image/png');
-      doc.addImage(data, 'PNG', midX+18, boxY+26, qrSize, qrSize);
-      qrOk = true;
-    }
-  }catch{ qrOk=false; }
+let qrOk = false;
+try{
+  if(window.QRCode && window.QRCode.toDataURL){
+    const data = await window.QRCode.toDataURL(qrText, {
+      margin: 1,
+      width: 260,
+      errorCorrectionLevel: 'M'
+    });
+    doc.addImage(data, 'PNG', midX+18, boxY+26, qrSize, qrSize);
+    qrOk = true;
+  }
+}catch(e){
+  console.warn('QR PDF error', e);
+  qrOk = false;
+}
+
 
   doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
   const qrTxt = qrOk ? qrText : ('QR no disponible. Texto:\n'+qrText);
