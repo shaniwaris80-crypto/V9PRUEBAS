@@ -3900,25 +3900,3 @@ function tryOpenCloudPdf(inv){
     old();
   };
 })();
-
-/* ===========================
-   FINAL: asegurar render QR tras cambios relevantes
-=========================== */
-(function hookMinorRefresh(){
-  // al cambiar proveedor o ajustes, ya se actualiza.
-  // aquí solo refuerzo al volver a pestaña factura
-  document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState === 'visible'){
-      const inv = getInvoice(State.currentInvoiceId);
-      if(inv){
-        recalcInvoice(inv);
-        updateQrFromInvoice();
-      }
-    }
-  });
-})();
-
-/* =========================================================
-   FIN APP.JS — CIERRE PERFECTO
-   ========================================================= */
-})(); // end IIFE
