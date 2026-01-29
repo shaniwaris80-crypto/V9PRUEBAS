@@ -1675,12 +1675,22 @@ function cellCantidad(inv, line){
     line.cantidad = clamp0(inp.value);
     // modo caja -> envases=cantidad por defecto
     if(line.modo==='caja'){
-      line.envases = clamp0(line.cantidad);
-      // neto informativo si kgCaja
-      const p = findProductByLine(line);
-      if(p && num(p.kgCaja)>0 && !line.netoManual){
-        line.neto = clamp0(num(line.cantidad) * num(p.kgCaja));
-      }
+  line.envases = clamp0(line.cantidad);
+  const p = findProductByLine(line);
+  if(p && num(p.kgCaja)>0 && !line.netoManual){
+    line.neto = clamp0(num(line.cantidad) * num(p.kgCaja));
+  }
+} else if(line.modo==='kg'){
+  // 🔥 FIX: en modo kg, cantidad se usa como nº envases si hay tara seleccionada
+  if(line.taraId && !line.taraManual){
+    line.envases = clamp0(line.cantidad);
+    line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
+    if(!line.netoManual){
+      line.neto = clamp0(num(line.bruto) - num(line.tara));
+    }
+  }
+}
+
     }
     lineChanged(inv, line);
     recalcInvoice(inv);
@@ -2011,11 +2021,29 @@ function recalcLine(inv, l){
   // Calcular según modo
   const modo = l.modo || 'kg';
 
-  if(modo === 'kg'){
-    // tara auto si aplica (si no manual)
-    if(!l.taraManual && l.taraId && num(l.envases)>0){
-      l.tara = clamp0(num(l.envases) * getTaraPeso(l.taraId));
+ if(modo === 'kg'){
+  // 🔥 FIX: si hay tara seleccionada y envases vacío, usar cantidad como nº envases (modo kg)
+  if(l.taraId && (!l.envases || num(l.envases) <= 0)){
+    // si el usuario escribe cantidad en modo kg, lo interpretamos como nº envases
+    if(num(l.cantidad) > 0) l.envases = clamp0(l.cantidad);
+  }
+
+  // Tara auto si aplica (si no manual)
+  if(!l.taraManual && l.taraId){
+    const nEnv = num(l.envases);
+    if(nEnv > 0){
+      l.tara = clamp0(nEnv * getTaraPeso(l.taraId));
     }
+  }
+
+  // Neto auto si no manual
+  if(!l.netoManual){
+    l.neto = clamp0(num(l.bruto) - num(l.tara));
+  }
+
+  l.importe = clamp0(num(l.neto) * num(l.precio));
+}
+
 
     // neto auto si no manual
     if(!l.netoManual){
