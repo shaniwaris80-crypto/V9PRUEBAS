@@ -2082,7 +2082,7 @@ if(modo === 'kg'){
   l.importe = clamp0(num(l.neto) * num(l.precio));
 }
 else if(modo === 'caja'){
-  // neto informativo si kg/caja (si no manual)
+  // neto informativo si kg/caja del producto (si no manual)
   const p = findProductByLine(l);
   if(p && num(p.kgCaja) > 0 && !l.netoManual){
     l.neto = clamp0(num(l.cantidad) * num(p.kgCaja));
@@ -2090,6 +2090,11 @@ else if(modo === 'caja'){
   // importe = cantidad * precio/caja
   l.importe = clamp0(num(l.cantidad) * num(l.precio));
 }
+else {
+  // modo ud
+  l.importe = clamp0(num(l.cantidad) * num(l.precio));
+}
+
 else {
   // ud
   l.importe = clamp0(num(l.cantidad) * num(l.precio));
