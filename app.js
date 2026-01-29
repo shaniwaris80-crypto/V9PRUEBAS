@@ -2236,7 +2236,7 @@ function bootPart2(){
   toast('Paneles Clientes/Productos/Taras listos (PARTE 2/5)');
 }
 
-document.addEventListener('DOMContentLoaded', bootPart2);}
+document.addEventListener('DOMContentLoaded', bootPart2);
 /* =========================================================
 ;{ PARTE 3/5 — FACTU MIRAL (B/W PRO) — app.js
 ✅ Facturas: listado + búsqueda + filtros + abrir para editar
