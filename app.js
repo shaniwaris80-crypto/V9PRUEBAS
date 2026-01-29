@@ -3884,7 +3884,7 @@ function tryOpenCloudPdf(inv){
   return false;
 }
 
-//* ===========================
+/* ===========================
    FACTURAS LIST: botón Ver PDF usa cloud si existe
    (mejora: ya enlazado en 3B, aquí extendemos)
 =========================== */
@@ -3900,6 +3900,7 @@ function tryOpenCloudPdf(inv){
     old();
   };
 })();
+
 
 /* =========================================================
    FIN APP.JS — CIERRE IIFE PRINCIPAL
