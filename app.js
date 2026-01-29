@@ -3333,7 +3333,6 @@ function openPDFModal(url, subtitle=''){
     if (!CURRENT_PDF_URL) return;
     window.open(CURRENT_PDF_URL, '_blank', 'noopener');
   };
-
   // Share
   $('#btnPdfShare').onclick = async () => {
     try{
