@@ -3900,3 +3900,7 @@ function tryOpenCloudPdf(inv){
     old();
   };
 })();
+
+// ====== FIN PATCHES ======
+
+})(); // ✅ cierre IIFE principal (porque tu app.js empieza con (function(){ )
