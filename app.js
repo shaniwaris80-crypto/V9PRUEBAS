@@ -2094,10 +2094,7 @@ else {
   l.importe = clamp0(num(l.cantidad) * num(l.precio));
 }
 
-else {
-  // ud
-  l.importe = clamp0(num(l.cantidad) * num(l.precio));
-}
+
 
 
   // Validaciones recomendadas (B/W)
