@@ -1333,7 +1333,6 @@ window.FACTU_API = {
   newFacturaModel
 };
 
-})();
 const { $, $$, S, K, toast, confirmModal, setTab, uid, toNum, isoToday, formatDateES, weekdayES, formatEUR, loadJSON, saveJSON, calcTotales, paintTotales, updateQRTextStub, loadFacturaToUI, collectFacturaFromUI, saveCurrentFactura, newFacturaModel } = window.FACTU_API;
 
 /* =========================================================
@@ -3026,7 +3025,7 @@ function bootPart3(){
   toast('Facturas/Pagos/Ventas listos (PARTE 3/5)');
 }
 
-document.addEventListener('DOMContentLoaded', bootPart3);}
+document.addEventListener('DOMContentLoaded', bootPart3);
 /* =========================================================
 ;{PARTE 4/5 — FACTU MIRAL (B/W PRO) — app.js
 ✅ QR AEAT (texto configurable + render QR en canvas + copiar)
@@ -3940,7 +3939,7 @@ function bootPart4(){
   toast('QR/PDF/WhatsApp listos (PARTE 4/5)');
 }
 
-document.addEventListener('DOMContentLoaded', bootPart4);}
+document.addEventListener('DOMContentLoaded', bootPart4);
 ;{
 /* =========================================================
 PARTE 5/5 — FACTU MIRAL (B/W PRO) — app.js (FINAL)
