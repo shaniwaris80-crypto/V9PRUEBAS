@@ -1671,30 +1671,34 @@ function cellCantidad(inv, line){
   inp.dataset.role = 'cantidad';
   inp.dataset.line = line.id;
 
-  inp.addEventListener('input', ()=>{
-    line.cantidad = clamp0(inp.value);
-    // modo caja -> envases=cantidad por defecto
-    if(line.modo==='caja'){
-  line.envases = clamp0(line.cantidad);
-  const p = findProductByLine(line);
-  if(p && num(p.kgCaja)>0 && !line.netoManual){
-    line.neto = clamp0(num(line.cantidad) * num(p.kgCaja));
-  }
-} else if(line.modo==='kg'){
-  // 🔥 FIX: en modo kg, cantidad se usa como nº envases si hay tara seleccionada
-  if(line.taraId && !line.taraManual){
-    line.envases = clamp0(line.cantidad);
-    line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
-    if(!line.netoManual){
-      line.neto = clamp0(num(line.bruto) - num(line.tara));
-    }
-  }
-}
+inp.addEventListener('input', ()=>{
+  line.cantidad = clamp0(inp.value);
 
+  if(line.modo === 'caja'){
+    // modo caja: envases = cantidad
+    line.envases = clamp0(line.cantidad);
+
+    const p = findProductByLine(line);
+    if(p && num(p.kgCaja) > 0 && !line.netoManual){
+      line.neto = clamp0(num(line.cantidad) * num(p.kgCaja));
     }
-    lineChanged(inv, line);
-    recalcInvoice(inv);
-  });
+  }
+  else if(line.modo === 'kg'){
+    // 🔥 FIX: en modo kg, si hay tara seleccionada, cantidad se interpreta como nº envases
+    if(line.taraId && !line.taraManual){
+      line.envases = clamp0(line.cantidad);
+      line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
+
+      if(!line.netoManual){
+        line.neto = clamp0(num(line.bruto) - num(line.tara));
+      }
+    }
+  }
+
+  lineChanged(inv, line);
+  recalcInvoice(inv);
+});
+
 
   inp.addEventListener('keydown', (e)=> handleEnterFlow(e, line.id, 'cantidad'));
 
