@@ -1481,28 +1481,50 @@ function cellProducto(inv, line, idx){
     line.modo = p.modo || line.modo || 'kg';
     line.origen = p.origen || line.origen || '';
     if(line.modo === 'kg'){
-      // precio kg
-      line.precio = num(p.pKg) || num(line.precio) || 0;
-    }else if(line.modo === 'caja'){
-      line.precio = num(p.pCaja) || num(line.precio) || 0;
-      // neto informativo si kgCaja existe
-      if(num(p.kgCaja)>0){
-        line.netoManual = false;
-        line.neto = clamp0(num(line.cantidad) * num(p.kgCaja));
-      }
-    }else{
-      line.precio = num(p.pUd) || num(line.precio) || 0;
-    }
+  // modo kg
+  if(!line.taraManual && line.taraId && num(line.envases)>0){
+    line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
+  }
 
-    // tara por defecto del producto
-    if(p.taraId){
-      line.taraId = p.taraId;
-    }
+  if(!line.netoManual){
+    line.neto = clamp0(num(line.bruto) - num(line.tara));
+  }
 
-    // si modo caja, envases por defecto = cantidad
-    if(line.modo==='caja'){
-      if(!line.envases || line.envases<=0) line.envases = num(line.cantidad)||0;
-    }
+  // precio kg
+  const p = findProductByLine(line);
+  if(p && num(p.pKg)>0) line.precio = num(p.pKg);
+
+}
+else if(line.modo === 'caja'){
+  // modo caja
+  if(!line.envases || line.envases<=0){
+    line.envases = clamp0(line.cantidad);
+  }
+
+  // tara auto
+  if(line.taraId && !line.taraManual){
+    line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
+  }
+
+  // neto informativo si hay kgCaja
+  const p = findProductByLine(line);
+  if(p && num(p.kgCaja)>0 && !line.netoManual){
+    line.neto = clamp0(num(line.cantidad) * num(p.kgCaja));
+  }
+
+  // precio caja
+  if(p && num(p.pCaja)>0) line.precio = num(p.pCaja);
+
+}
+else{
+  // modo unidad
+  const p = findProductByLine(line);
+  if(p && num(p.pUd)>0) line.precio = num(p.pUd);
+}
+lineChanged(inv, line);
+renderLines(inv);
+recalcInvoice(inv);
+focusNextInRow(line.id, 'cantidad');
 
     // hint precios
     line._hint = buildLineHintFromProduct(p);
