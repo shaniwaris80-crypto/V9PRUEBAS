@@ -2093,10 +2093,6 @@ else {
   // modo ud
   l.importe = clamp0(num(l.cantidad) * num(l.precio));
 }
-
-
-
-
   // Validaciones recomendadas (B/W)
   const bruto = num(l.bruto);
   const tara = num(l.tara);
