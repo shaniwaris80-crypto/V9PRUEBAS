@@ -1770,19 +1770,32 @@ function cellTara(inv, line){
   sel.addEventListener('change', ()=>{
     line.taraId = sel.value || '';
     // si elige envase y tara NO manual -> recalcular tara desde envases
-    if(line.taraId && !line.taraManual){
-      if(num(line.envases)<=0){
-        // autorelleno recomendado: si modo=caja -> envases=cantidad
-        if(line.modo==='caja') line.envases = clamp0(line.cantidad);
-      }
-      if(num(line.envases)>0){
-        line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
-        // neto auto si no manual
-        if(!line.netoManual){
-          line.neto = clamp0(num(line.bruto) - num(line.tara));
-        }
-      }
+   if(line.taraId && !line.taraManual){
+  if(num(line.envases) <= 0){
+    // ✅ autorelleno recomendado:
+    // - si modo=caja -> envases=cantidad
+    // - si modo=kg  -> envases=cantidad (bultos)
+    if(line.modo === 'caja' || line.modo === 'kg') {
+      line.envases = clamp0(line.cantidad);
     }
+  }
+
+  if(num(line.envases) > 0){
+    line.tara = clamp0(num(line.envases) * getTaraPeso(line.taraId));
+
+    // ✅ neto auto si no manual
+    if(!line.netoManual){
+      line.neto = clamp0(num(line.bruto) - num(line.tara));
+    }
+  }else{
+    // (opcional, no rompe) si no hay envases, deja tara en 0
+    line.tara = line.taraManual ? line.tara : 0;
+    if(!line.netoManual){
+      line.neto = clamp0(num(line.bruto) - num(line.tara));
+    }
+  }
+}
+
     lineChanged(inv, line);
     renderLines(inv);
     recalcInvoice(inv);
