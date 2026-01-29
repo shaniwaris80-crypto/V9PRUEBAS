@@ -10,8 +10,7 @@ Core offline + seeds + tabs + factura base + GRID líneas + cálculos base
     Helpers DOM
   ---------------------------- */
   const $  = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
+¡
   /* ---------------------------
     Storage keys (versionadas)
   ---------------------------- */
@@ -3039,7 +3038,6 @@ const {
   uid, toNum, isoToday, formatDateES, weekdayES, formatEUR,
   loadJSON, saveJSON,
   calcTotales, paintTotales
-} = window.FACTU_API;
 
 /* =========================================================
   1) QR AEAT — texto configurable + QR real en canvas
@@ -3949,8 +3947,7 @@ PARTE 5/5 — FACTU MIRAL (B/W PRO) — app.js (FINAL)
 ========================================================= */
 
 const API = window.FACTU_API || {};
-const $ = API.$, $$ = API.$$;
-const S = API.S || {};
+¡const S = API.S || {};
 const K = API.K || {};
 
 const toast = API.toast || ((m)=>console.log(m));
