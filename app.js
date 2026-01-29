@@ -1333,7 +1333,6 @@ window.FACTU_API = {
   newFacturaModel
 };
 
-const { $, $$, S, K, toast, confirmModal, setTab, uid, toNum, isoToday, formatDateES, weekdayES, formatEUR, loadJSON, saveJSON, calcTotales, paintTotales, updateQRTextStub, loadFacturaToUI, collectFacturaFromUI, saveCurrentFactura, newFacturaModel } = window.FACTU_API;
 
 /* =========================================================
 ;{ PARTE 2/5 — FACTU MIRAL (B/W PRO) — app.js
@@ -2245,7 +2244,6 @@ document.addEventListener('DOMContentLoaded', bootPart2);
    - Efectivo + Tarjeta + Total + Gastos
 ========================================================= */
 
-const { $, $$, S, K, toast, confirmModal, setTab, uid, toNum, isoToday, formatDateES, weekdayES, formatEUR, loadJSON, saveJSON, calcTotales, paintTotales, updateQRTextStub, loadFacturaToUI, collectFacturaFromUI, saveCurrentFactura, newFacturaModel } = window.FACTU_API;
 
 /* ===========================
   SCAFFOLDING (si falta HTML)
@@ -5056,6 +5054,35 @@ function bootPart5(){
 
   toast('FACTU MIRAL listo ✅ (PARTE 5/5)');
 }
+/* ===== FACTU MIRAL — SAFE GLOBAL ALIASES (PEGAR AL FINAL) ===== */
+(() => {
+  const API = window.FACTU_API;
+  if (!API) return;
+
+  // Expone alias globales solo si no existen (evita choques)
+  window.$  = window.$  || API.$;
+  window.$$ = window.$$ || API.$$;
+
+  window.S  = window.S  || API.S;
+  window.K  = window.K  || API.K;
+
+  window.toast = window.toast || API.toast;
+  window.confirmModal = window.confirmModal || API.confirmModal;
+  window.setTab = window.setTab || API.setTab;
+
+  window.uid = window.uid || API.uid;
+  window.toNum = window.toNum || API.toNum;
+  window.isoToday = window.isoToday || API.isoToday;
+  window.formatDateES = window.formatDateES || API.formatDateES;
+  window.weekdayES = window.weekdayES || API.weekdayES;
+  window.formatEUR = window.formatEUR || API.formatEUR;
+
+  window.loadJSON = window.loadJSON || API.loadJSON;
+  window.saveJSON = window.saveJSON || API.saveJSON;
+
+  window.calcTotales = window.calcTotales || API.calcTotales;
+  window.paintTotales = window.paintTotales || API.paintTotales;
+})();
 
 document.addEventListener('DOMContentLoaded', bootPart5);
 
