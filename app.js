@@ -2047,7 +2047,6 @@ function recalcLine(inv, l){
   // Calcular según modo
   const modo = l.modo || 'kg';
 
-const modo = (l.modo || 'kg');
 
 // ---------- AUTO ENVASES ----------
 if(l.taraId && !l.taraManual){
