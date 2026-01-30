@@ -3369,16 +3369,57 @@ FM.cloud.uploadPDF = async function(blob){
   FM.cloud.initIfConfigured();
 })();
 /* =========================================================
-   FIX: SEED + RENDER PRODUCTS (sin errores aunque falte HTML)
-   - Crea OFFICIAL_PRODUCTS desde tu lista
-   - Si FM.db.productos está vacío -> seed y guarda
-   - Asegura KEY correcta (K.PROD)
-   - Crea datalist #dlProductos para autocomplete aunque no exista
+   FIX RENDER + SEED (PRODUCTOS / FACTURAS) — compatible con TU index.html
+   Usa: #productosBody y #facturasBody
 ========================================================= */
+(function FM_FIX_RENDER(){
+  // helpers safe
+  const $ = (s)=>document.querySelector(s);
+  const $$ = (s)=>Array.from(document.querySelectorAll(s));
+  const safe = (fn)=>{ try{ return fn(); }catch(e){ console.warn('[FM_FIX]', e); return null; } };
 
-// 1) Lista oficial (tu texto) -> parse robusto
-window.OFFICIAL_PRODUCTS = window.OFFICIAL_PRODUCTS || (function(){
-  const raw = `
+  // keys estables (si tu app ya define otras, NO pasa nada)
+  window.K_PRODUCTOS = window.K_PRODUCTOS || 'factumiral_productos';
+  window.K_FACTURAS  = window.K_FACTURAS  || 'factumiral_facturas';
+  window.K_CLIENTES  = window.K_CLIENTES  || 'factumiral_clientes';
+  window.K_TARAS     = window.K_TARAS     || 'factumiral_taras';
+  window.K_AJUSTES   = window.K_AJUSTES   || 'factumiral_ajustes';
+
+  // load/save si no existen (por si tu app.js no los dejó globales)
+  window.load = window.load || function(k,fallback){
+    try{ const v = JSON.parse(localStorage.getItem(k)||''); return (v ?? fallback); }catch{ return fallback; }
+  };
+  window.save = window.save || function(k,v){ localStorage.setItem(k, JSON.stringify(v)); };
+
+  // uid si no existe
+  window.uid = window.uid || function(){
+    return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9);
+  };
+
+  // escapeHtml si no existe
+  window.escapeHtml = window.escapeHtml || function(s){
+    return String(s??'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[m]));
+  };
+
+  // money si no existe (formato ES)
+  window.money = window.money || function(n){
+    const x = Number(n||0);
+    return x.toLocaleString('es-ES',{minimumFractionDigits:2, maximumFractionDigits:2});
+  };
+
+  // DB base
+  window.FM = window.FM || {};
+  FM.db = FM.db || {};
+  FM.db.productos = load(K_PRODUCTOS, Array.isArray(FM.db.productos)?FM.db.productos:[]);
+  FM.db.facturas  = load(K_FACTURAS,  Array.isArray(FM.db.facturas)?FM.db.facturas:[]);
+  FM.db.clientes  = load(K_CLIENTES,  Array.isArray(FM.db.clientes)?FM.db.clientes:[]);
+  FM.db.taras     = load(K_TARAS,     Array.isArray(FM.db.taras)?FM.db.taras:[]);
+  FM.db.ajustes   = load(K_AJUSTES,   FM.db.ajustes||{});
+
+  // 1) LISTA OFICIAL: si no existe en runtime, la creamos aquí (multilínea -> array)
+  const OFFICIAL_RAW = (window.OFFICIAL_PRODUCTS && window.OFFICIAL_PRODUCTS.join)
+    ? ''
+    : `
 GRANNY FRANCIA
 MANZANA PINK LADY
 MANDARINA COLOMBE
@@ -3557,119 +3598,117 @@ UVA ROJA PRIMERA
 UVA BLANCA PRIMERA
 `.trim();
 
-  const list = raw
-    .split('\n')
-    .map(x => x.trim())
-    .filter(Boolean)
-    .map(x => x.toUpperCase());
+  const officialList = (window.OFFICIAL_PRODUCTS && window.OFFICIAL_PRODUCTS.join)
+    ? window.OFFICIAL_PRODUCTS
+    : Array.from(new Set(OFFICIAL_RAW.split('\n').map(s=>s.trim()).filter(Boolean).map(s=>s.toUpperCase())));
 
-  // unique
-  return Array.from(new Set(list));
-})();
-
-// 2) Asegura KEY de productos SIEMPRE (por si cambió en tu app)
-(function ensureProductKey(){
-  window.K = window.K || {};
-  // si existe K_PRODUCTOS (global tuyo), úsalo; si no, crea una estable
-  K.PROD = K.PROD || window.K_PRODUCTOS || 'factumiral_productos';
-})();
-
-// 3) Seed si está vacío + guardar
-function seedProductosIfEmpty(){
-  FM.db = FM.db || {};
-  if(!Array.isArray(FM.db.productos)) FM.db.productos = [];
-
-  // recarga desde storage por seguridad
-  const loaded = load(K.PROD, null);
-  if(Array.isArray(loaded)) FM.db.productos = loaded;
-
-  if(FM.db.productos.length > 0) return;
-
-  const seed = (window.OFFICIAL_PRODUCTS || []).map(nombre => ({
-    id: uid(),
-    nombre,
-    modo: 'kg',
-    kgCaja: 0,
-    pKg: 0,
-    pCaja: 0,
-    pUd: 0,
-    coste: 0,
-    origen: '',
-    envaseId: '',
-    hist: []
-  }));
-
-  FM.db.productos = seed;
-  save(K.PROD, FM.db.productos);
-}
-
-// 4) Datalist para autocomplete (aunque tu HTML no lo tenga)
-function ensureProductosDatalist(){
-  let dl = document.getElementById('dlProductos');
-  if(!dl){
-    dl = document.createElement('datalist');
-    dl.id = 'dlProductos';
-    document.body.appendChild(dl);
+  // 2) SEED productos si está vacío
+  function seedProductos(){
+    if(Array.isArray(FM.db.productos) && FM.db.productos.length) return;
+    FM.db.productos = officialList.map(n=>({
+      id: uid(),
+      nombre: n,
+      modo: 'kg',
+      kgCaja: 0,
+      pKg: 0, pCaja: 0, pUd: 0,
+      coste: 0,
+      origen: '',
+      envaseId: '',
+      hist: []
+    }));
+    save(K_PRODUCTOS, FM.db.productos);
   }
 
-  const prods = (FM.db.productos || []).map(p => p.nombre).filter(Boolean);
-  dl.innerHTML = prods.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+  // 3) RENDER productos en TU tbody real: #productosBody
+  FM.renderProductos = function(){
+    const body = $('#productosBody');
+    if(!body) return;
+    const q = ($('#productosBuscar')?.value || '').trim().toUpperCase();
 
-  // asigna list="dlProductos" a inputs de producto si existen
-  document.querySelectorAll('input.jsProd').forEach(inp=>{
-    inp.setAttribute('list','dlProductos');
-  });
-}
+    const rows = (FM.db.productos||[])
+      .filter(p=> !q || (p.nombre||'').toUpperCase().includes(q))
+      .slice(0, 2000)
+      .map(p=>{
+        const hist = Array.isArray(p.hist) ? p.hist.slice(0,5).map(h=>`${money(h.p||0)} (${h.d||''})`).join(' · ') : '';
+        return `
+          <tr>
+            <td><b>${escapeHtml(p.nombre||'')}</b></td>
+            <td class="mono">${escapeHtml((p.modo||'kg').toUpperCase())}</td>
+            <td class="mono">${money(p.kgCaja||0)}</td>
+            <td class="mono">${money(p.pKg||0)}</td>
+            <td class="mono">${money(p.pCaja||0)}</td>
+            <td class="mono">${money(p.pUd||0)}</td>
+            <td class="mono">${money(p.coste||0)}</td>
+            <td>${escapeHtml(p.origen||'')}</td>
+            <td>${escapeHtml(p.envaseId||'')}</td>
+            <td class="mono">${escapeHtml(hist||'')}</td>
+            <td class="mono">—</td>
+          </tr>
+        `;
+      }).join('');
 
-// 5) Render mínimo de “Productos” aunque el ID sea distinto
-function renderProductosHard(){
-  const prods = (FM.db.productos || []);
-  const idsTry = ['productosList','listProductos','productosTabla','tabProductos','productosWrap'];
-  let host = null;
-  for(const id of idsTry){
-    host = document.getElementById(id);
-    if(host) break;
+    body.innerHTML = rows || `<tr><td colspan="11" class="muted">Sin productos</td></tr>`;
+  };
+
+  // 4) RENDER facturas en TU tbody real: #facturasBody
+  FM.renderFacturas = function(){
+    const body = $('#facturasBody');
+    if(!body) return;
+
+    const q = ($('#facturasBuscar')?.value || '').trim().toUpperCase();
+    const list = (FM.db.facturas || []).slice().sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
+
+    const rows = list
+      .filter(f=>{
+        if(!q) return true;
+        const s = `${f.numero||''} ${f.clienteNombre||''} ${f.tags||''} ${f.fechaES||f.fecha||''}`.toUpperCase();
+        return s.includes(q);
+      })
+      .map(f=>`
+        <tr>
+          <td class="mono"><b>${escapeHtml(f.numero||'')}</b></td>
+          <td class="mono">${escapeHtml(f.fechaES||f.fecha||'')}</td>
+          <td>${escapeHtml(f.clienteNombre||'')}</td>
+          <td>${escapeHtml(f.tags||'')}</td>
+          <td class="mono">${money(f.total||0)} €</td>
+          <td>${escapeHtml(f.estado||'')}</td>
+          <td class="mono">—</td>
+        </tr>
+      `).join('');
+
+    body.innerHTML = rows || `<tr><td colspan="7" class="muted">Sin facturas</td></tr>`;
+  };
+
+  // 5) HOOKS: refrescar al buscar + al entrar en tabs
+  function hookSearch(){
+    $('#productosBuscar')?.addEventListener('input', ()=>FM.renderProductos());
+    $('#facturasBuscar')?.addEventListener('input', ()=>FM.renderFacturas());
   }
-  if(!host) return; // si no hay contenedor, no se rompe (pero no se verá)
 
-  host.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead><tr><th>Producto</th><th>Modo</th><th>€/kg</th><th>€/caja</th><th>€/ud</th></tr></thead>
-        <tbody>
-          ${prods.slice(0,1200).map(p=>`
-            <tr>
-              <td><b>${escapeHtml(p.nombre||'')}</b></td>
-              <td class="mono">${escapeHtml((p.modo||'kg').toUpperCase())}</td>
-              <td class="mono">${money(p.pKg||0)}</td>
-              <td class="mono">${money(p.pCaja||0)}</td>
-              <td class="mono">${money(p.pUd||0)}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-// 6) BOOT: correr siempre
-(function bootProductsFix(){
-  try{
-    seedProductosIfEmpty();
-    ensureProductosDatalist();
-
-    // pinta si el tab ya está abierto o existe contenedor
-    renderProductosHard();
-
-    // debug silencioso
-    console.log('[FACTU MIRAL FIX] Productos:', (FM.db.productos||[]).length, 'Key:', K.PROD);
-  }catch(e){
-    console.warn('[FACTU MIRAL FIX] fallo products fix', e);
+  function hookTabs(){
+    // si tu app ya maneja tabs, esto solo añade refresco al click
+    $('#tabBtnProductos')?.addEventListener('click', ()=>safe(()=>FM.renderProductos()));
+    $('#tabBtnFacturas')?.addEventListener('click', ()=>safe(()=>FM.renderFacturas()));
   }
+
+  // 6) BOOT
+  function boot(){
+    seedProductos();
+    // asegura arrays
+    if(!Array.isArray(FM.db.facturas)) FM.db.facturas = [];
+    save(K_FACTURAS, FM.db.facturas);
+
+    hookSearch();
+    hookTabs();
+
+    // render inicial (por si ya estás en esos tabs)
+    FM.renderProductos();
+    FM.renderFacturas();
+
+    console.log('[FACTU MIRAL] FIX OK | productos:', FM.db.productos.length, 'facturas:', FM.db.facturas.length);
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', boot, {once:true});
+  } else boot();
 })();
-
-/* =========================================================
-CIERRE FINAL DEL APP.JS (SI ESTÁS PEGANDO 3A+3B+3C EN ORDEN)
-========================================================= */
-})(); // FIN APP.JS (cierre IIFE)
-
