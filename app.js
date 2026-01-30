@@ -3711,4 +3711,267 @@ UVA BLANCA PRIMERA
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', boot, {once:true});
   } else boot();
+/* =========================================================
+   PRODUCTOS EDITABLES — compatible con TU index.html
+   IDs: #productosBody #productosBuscar #btnProductosNuevo #btnProductosGuardar #btnProductosEliminar
+        #proEdNombre #proEdModo #proEdKgCaja #proEdPkg #proEdPcaja #proEdPud #proEdCoste #proEdOrigen #proEdEnvase
+========================================================= */
+(function FM_PRODUCTOS_EDIT(){
+  const $ = (s)=>document.querySelector(s);
+  const esc = (s)=> (window.escapeHtml ? escapeHtml(s) : String(s??''));
+  const num = (v)=> {
+    if(v===null || v===undefined) return 0;
+    const s = String(v).trim().replace(',', '.');
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // keys/DB
+  window.K_PRODUCTOS = window.K_PRODUCTOS || 'factumiral_productos';
+  window.K_TARAS     = window.K_TARAS     || 'factumiral_taras';
+  window.load = window.load || function(k,f){ try{ const v=JSON.parse(localStorage.getItem(k)||''); return v ?? f; }catch{ return f; } };
+  window.save = window.save || function(k,v){ localStorage.setItem(k, JSON.stringify(v)); };
+  window.uid  = window.uid  || function(){ return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9); };
+
+  window.FM = window.FM || {};
+  FM.db = FM.db || {};
+  FM.db.productos = load(K_PRODUCTOS, Array.isArray(FM.db.productos)?FM.db.productos:[]);
+  FM.db.taras     = load(K_TARAS, Array.isArray(FM.db.taras)?FM.db.taras:[]);
+
+  FM.state = FM.state || {};
+  FM.state.selProdId = FM.state.selProdId || null;
+
+  function getProd(id){
+    return (FM.db.productos||[]).find(p=>p.id===id) || null;
+  }
+
+  function fillEnvasesSelect(selectedId){
+    const sel = $('#proEdEnvase');
+    if(!sel) return;
+    const taras = Array.isArray(FM.db.taras) ? FM.db.taras : [];
+    sel.innerHTML = `<option value="">— Sin envase —</option>` + taras.map(t=>{
+      return `<option value="${esc(t.id)}">${esc(t.nombre||'')} · ${num(t.peso||t.pesoKg||t.tara||t.kg||0).toFixed(2)} kg</option>`;
+    }).join('');
+    sel.value = selectedId || '';
+  }
+
+  function renderHistorial(p){
+    const box = $('#proEdHistorial');
+    if(!box) return;
+    const hist = Array.isArray(p?.hist) ? p.hist.slice(0,5) : [];
+    if(!hist.length){ box.textContent = '—'; return; }
+    box.innerHTML = hist.map(h=>{
+      const d = esc(h.d || h.fecha || '');
+      const pr = (window.money ? money(h.p||0) : (h.p||0));
+      const modo = esc((h.m || h.modo || '').toUpperCase());
+      return `<div class="histItem"><span class="mono">${d}</span> · <b>${pr}</b> <span class="muted">${modo}</span></div>`;
+    }).join('');
+  }
+
+  function loadEditor(id){
+    const p = getProd(id);
+    FM.state.selProdId = p ? p.id : null;
+
+    $('#proEdNombre').value = p?.nombre || '';
+    $('#proEdModo').value   = p?.modo || 'kg';
+    $('#proEdKgCaja').value = (p?.kgCaja ?? 0) || '';
+    $('#proEdPkg').value    = (p?.pKg ?? 0) || '';
+    $('#proEdPcaja').value  = (p?.pCaja ?? 0) || '';
+    $('#proEdPud').value    = (p?.pUd ?? 0) || '';
+    $('#proEdCoste').value  = (p?.coste ?? 0) || '';
+    $('#proEdOrigen').value = p?.origen || '';
+
+    fillEnvasesSelect(p?.envaseId || '');
+    renderHistorial(p || {hist:[]});
+
+    // feedback visual (marca fila seleccionada)
+    document.querySelectorAll('#productosBody tr').forEach(tr=>{
+      tr.classList.toggle('is-selected', tr.dataset.id === FM.state.selProdId);
+    });
+  }
+
+  function clearEditor(){
+    FM.state.selProdId = null;
+    $('#proEdNombre').value = '';
+    $('#proEdModo').value   = 'kg';
+    $('#proEdKgCaja').value = '';
+    $('#proEdPkg').value    = '';
+    $('#proEdPcaja').value  = '';
+    $('#proEdPud').value    = '';
+    $('#proEdCoste').value  = '';
+    $('#proEdOrigen').value = '';
+    fillEnvasesSelect('');
+    $('#proEdHistorial').textContent = '—';
+    document.querySelectorAll('#productosBody tr').forEach(tr=>tr.classList.remove('is-selected'));
+    $('#proEdNombre')?.focus();
+  }
+
+  function readEditor(){
+    const nombre = ($('#proEdNombre').value || '').trim().toUpperCase();
+    return {
+      nombre,
+      modo: ($('#proEdModo').value || 'kg'),
+      kgCaja: num($('#proEdKgCaja').value),
+      pKg: num($('#proEdPkg').value),
+      pCaja: num($('#proEdPcaja').value),
+      pUd: num($('#proEdPud').value),
+      coste: num($('#proEdCoste').value),
+      origen: ($('#proEdOrigen').value || '').trim(),
+      envaseId: ($('#proEdEnvase').value || '').trim()
+    };
+  }
+
+  // ✅ Render tabla con botón Editar (y selección por click)
+  FM.renderProductos = function(){
+    const body = $('#productosBody');
+    if(!body) return;
+
+    const q = ($('#productosBuscar')?.value || '').trim().toUpperCase();
+    const list = (FM.db.productos || [])
+      .filter(p=> !q || (p.nombre||'').toUpperCase().includes(q))
+      .slice(0, 2500);
+
+    body.innerHTML = list.map(p=>{
+      const hist = Array.isArray(p.hist) && p.hist.length ? `${p.hist.length}×` : '—';
+      return `
+        <tr data-id="${esc(p.id)}" class="${p.id===FM.state.selProdId?'is-selected':''}">
+          <td><b>${esc(p.nombre||'')}</b></td>
+          <td class="mono">${esc((p.modo||'kg').toUpperCase())}</td>
+          <td class="mono">${(window.money?money(p.kgCaja||0):(p.kgCaja||0))}</td>
+          <td class="mono">${(window.money?money(p.pKg||0):(p.pKg||0))}</td>
+          <td class="mono">${(window.money?money(p.pCaja||0):(p.pCaja||0))}</td>
+          <td class="mono">${(window.money?money(p.pUd||0):(p.pUd||0))}</td>
+          <td class="mono">${(window.money?money(p.coste||0):(p.coste||0))}</td>
+          <td>${esc(p.origen||'')}</td>
+          <td class="mono">${esc(p.envaseId||'')}</td>
+          <td class="mono">${esc(hist)}</td>
+          <td class="mono">
+            <button class="btn btn--ghost btn--xs jsEditProd" type="button">Editar</button>
+          </td>
+        </tr>
+      `;
+    }).join('') || `<tr><td colspan="11" class="muted">Sin productos</td></tr>`;
+
+    // hooks fila + botón editar
+    body.querySelectorAll('tr[data-id]').forEach(tr=>{
+      tr.addEventListener('click', (e)=>{
+        const id = tr.dataset.id;
+        // si clic en botón, también vale
+        if(id) loadEditor(id);
+      });
+    });
+    body.querySelectorAll('.jsEditProd').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        const tr = btn.closest('tr[data-id]');
+        if(tr?.dataset?.id) loadEditor(tr.dataset.id);
+      });
+    });
+
+    // si no hay selección y hay lista, preselecciona primero (opcional)
+    if(!FM.state.selProdId && list.length){
+      loadEditor(list[0].id);
+    } else {
+      // refresca highlight
+      document.querySelectorAll('#productosBody tr').forEach(tr=>{
+        tr.classList.toggle('is-selected', tr.dataset.id === FM.state.selProdId);
+      });
+    }
+  };
+
+  // ✅ Guardar
+  function onGuardar(){
+    const data = readEditor();
+    if(!data.nombre){
+      alert('Falta el nombre del producto.');
+      $('#proEdNombre')?.focus();
+      return;
+    }
+
+    // evita duplicados (nombre)
+    const dup = (FM.db.productos||[]).find(p=>p.nombre===data.nombre && p.id!==FM.state.selProdId);
+    if(dup){
+      alert('Ya existe un producto con ese nombre.');
+      return;
+    }
+
+    if(FM.state.selProdId){
+      const p = getProd(FM.state.selProdId);
+      if(!p) return;
+      Object.assign(p, data);
+    } else {
+      FM.db.productos.unshift({
+        id: uid(),
+        ...data,
+        hist: []
+      });
+      FM.state.selProdId = FM.db.productos[0].id;
+    }
+
+    save(K_PRODUCTOS, FM.db.productos);
+    FM.renderProductos();
+    loadEditor(FM.state.selProdId);
+  }
+
+  // ✅ Nuevo
+  function onNuevo(){
+    clearEditor();
+  }
+
+  // ✅ Eliminar (protección simple: no eliminar si usado en facturas, si tienes facturas en FM.db.facturas)
+  function onEliminar(){
+    if(!FM.state.selProdId) return;
+    const p = getProd(FM.state.selProdId);
+    if(!p) return;
+
+    // protección si existen facturas y el producto aparece en líneas
+    const facts = Array.isArray(FM.db.facturas) ? FM.db.facturas : load(window.K_FACTURAS||'factumiral_facturas', []);
+    const usado = (facts||[]).some(f=>{
+      const lines = f.lineas || f.items || [];
+      return Array.isArray(lines) && lines.some(l => (l.producto||l.nombre||'').toUpperCase() === (p.nombre||'').toUpperCase());
+    });
+    if(usado){
+      alert('No se puede eliminar: el producto está usado en facturas.');
+      return;
+    }
+
+    if(!confirm(`Eliminar producto:\n${p.nombre}\n\n¿Seguro?`)) return;
+    FM.db.productos = (FM.db.productos||[]).filter(x=>x.id!==FM.state.selProdId);
+    save(K_PRODUCTOS, FM.db.productos);
+    clearEditor();
+    FM.renderProductos();
+  }
+
+  // hooks botones + búsqueda + recarga envases
+  function hooks(){
+    $('#btnProductosGuardar')?.addEventListener('click', onGuardar);
+    $('#btnProductosNuevo')?.addEventListener('click', onNuevo);
+    $('#btnProductosEliminar')?.addEventListener('click', onEliminar);
+
+    $('#productosBuscar')?.addEventListener('input', ()=>FM.renderProductos());
+
+    // si editas taras, repuebla el select
+    document.addEventListener('FM_TARAS_CHANGED', ()=>{
+      FM.db.taras = load(K_TARAS, FM.db.taras||[]);
+      fillEnvasesSelect($('#proEdEnvase')?.value || '');
+    });
+
+    // Enter en nombre => guardar rápido
+    $('#proEdNombre')?.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter'){ e.preventDefault(); onGuardar(); }
+    });
+  }
+
+  function boot(){
+    hooks();
+    // render inicial
+    FM.renderProductos();
+    fillEnvasesSelect($('#proEdEnvase')?.value || '');
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', boot, {once:true});
+  } else boot();
+
 })();
+
