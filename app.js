@@ -977,6 +977,47 @@ Archivo: app.js  (PEGAR 3A + 3B + 3C EN ORDEN, SIN CAMBIAR)
   }else{
     init();
   }
+/* =========================
+   PATCH CARGA: PRODUCTOS + FACTURAS
+   - Evita que queden en blanco si la KEY no existe o si no se ejecutó seed
+========================= */
+(function patchLoadCore(){
+  // 1) Asegurar objeto K (keys) si no existe o cambió nombre
+  window.K = window.K || {};
+  K.PROD    = K.PROD    || K_PRODUCTOS  || 'factumiral_productos';
+  K.FACT    = K.FACT    || K_FACTURAS   || 'factumiral_facturas';
+  K.CLIENTE = K.CLIENTE || K_CLIENTES   || 'factumiral_clientes';
+  K.TARAS   = K.TARAS   || 'factumiral_taras';
+  K.AJUSTES = K.AJUSTES || 'factumiral_ajustes';
+  K.VENTAS  = K.VENTAS  || 'factumiral_ventas';
+
+  // 2) Cargar desde LocalStorage SIEMPRE (y si no hay, fallback)
+  FM.db = FM.db || {};
+  FM.db.productos = load(K.PROD, Array.isArray(FM.db.productos) ? FM.db.productos : []);
+  FM.db.facturas  = load(K.FACT, Array.isArray(FM.db.facturas) ? FM.db.facturas : []);
+  FM.db.clientes  = load(K.CLIENTE, Array.isArray(FM.db.clientes) ? FM.db.clientes : []);
+  FM.db.taras     = load(K.TARAS, Array.isArray(FM.db.taras) ? FM.db.taras : []);
+  FM.db.ajustes   = load(K.AJUSTES, FM.db.ajustes || {});
+  FM.db.ventas    = load(K.VENTAS, Array.isArray(FM.db.ventas) ? FM.db.ventas : []);
+
+  // 3) Seed productos si está vacío (tu lista oficial)
+  const seed = (arr)=> Array.from(new Set(arr.map(x=>String(x).trim()).filter(Boolean)))
+    .map(n=>({ id: uid(), nombre: n.toUpperCase(), modo:'kg', kgCaja:0, pKg:0, pCaja:0, pUd:0, coste:0, origen:'', envaseId:'', hist:[] }));
+
+  if(!Array.isArray(FM.db.productos) || FM.db.productos.length === 0){
+    if(Array.isArray(window.OFFICIAL_PRODUCTS) && window.OFFICIAL_PRODUCTS.length){
+      FM.db.productos = seed(window.OFFICIAL_PRODUCTS);
+      save(K.PROD, FM.db.productos);
+    }
+  }
+
+  // 4) Asegurar facturas array
+  if(!Array.isArray(FM.db.facturas)) FM.db.facturas = [];
+  save(K.FACT, FM.db.facturas); // asegura key creada
+
+  // 5) Debug visible (solo consola)
+  console.log('[FACTU MIRAL] productos:', FM.db.productos.length, 'facturas:', FM.db.facturas.length);
+})();
 
 /* =========================================================
 PARTE 3B/3 — FACTU MIRAL (B/W PRO)
@@ -1787,6 +1828,14 @@ FM.renderLists = function(){
     next?.select?.();
   });
 })();
+// Fuerza refresco del listado tras guardar
+const _oldSaveFactura = saveFactura;
+saveFactura = function(){
+  _oldSaveFactura();
+  // recarga desde storage por seguridad
+  FM.db.facturas = load(K.FACT, FM.db.facturas || []);
+  FM.renderLists?.();
+};
 
 /* =========================
    FIN PARTE 3B (NO CIERRES AQUÍ)
