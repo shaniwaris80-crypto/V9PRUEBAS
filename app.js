@@ -3368,6 +3368,305 @@ FM.cloud.uploadPDF = async function(blob){
   // init cloud opcional sin crashear
   FM.cloud.initIfConfigured();
 })();
+/* =========================================================
+   FIX: SEED + RENDER PRODUCTS (sin errores aunque falte HTML)
+   - Crea OFFICIAL_PRODUCTS desde tu lista
+   - Si FM.db.productos está vacío -> seed y guarda
+   - Asegura KEY correcta (K.PROD)
+   - Crea datalist #dlProductos para autocomplete aunque no exista
+========================================================= */
+
+// 1) Lista oficial (tu texto) -> parse robusto
+window.OFFICIAL_PRODUCTS = window.OFFICIAL_PRODUCTS || (function(){
+  const raw = `
+GRANNY FRANCIA
+MANZANA PINK LADY
+MANDARINA COLOMBE
+KIWI ZESPRI GOLD
+PARAGUAYO
+KIWI TOMASIN PLANCHA
+PERA RINCON DEL SOTO
+MELOCOTON PRIMERA
+AGUACATE GRANEL
+MARACUYÁ
+MANZANA GOLDEN 24
+PLATANO CANARIO PRIMERA
+MANDARINA HOJA
+MANZANA GOLDEN 20
+NARANJA TOMASIN
+NECTARINA
+NUECES
+SANDIA
+LIMON SEGUNDA
+MANZANA FUJI
+NARANJA MESA SONRISA
+JENGIBRE
+BATATA
+AJO PRIMERA
+CEBOLLA NORMAL
+CALABAZA GRANDE
+PATATA LAVADA
+TOMATE CHERRY RAMA
+TOMATE CHERRY PERA
+TOMATE DANIELA
+TOMATE ROSA PRIMERA
+CEBOLLINO
+TOMATE ASURCADO MARRON
+TOMATE RAMA
+PIMIENTO PADRON
+ZANAHORIA
+PEPINO
+CEBOLLETA
+PUERROS
+BROCOLI
+JUDIA VERDE
+BERENJENA
+PIMIENTO ITALIANO VERDE
+PIMIENTO ITALIANO ROJO
+CHAMPIÑON
+UVA ROJA
+UVA BLANCA
+ALCACHOFA
+CALABACIN
+COLIFLOR
+BATAVIA
+ICEBERG
+MANDARINA SEGUNDA
+MANZANA GOLDEN 28
+NARANJA ZUMO
+KIWI SEGUNDA
+MANZANA ROYAL GALA 24
+PLATANO CANARIO SUELTO
+CEREZA
+FRESAS
+ARANDANOS
+ESPINACA
+PEREJIL
+CILANTRO
+ACELGAS
+PIMIENTO VERDE
+PIMIENTO ROJO
+MACHO VERDE
+MACHO MADURO
+YUCA
+AVOCADO
+CEBOLLA ROJA
+MENTA
+HABANERO
+RABANITOS
+POMELO
+PAPAYA
+REINETA 28
+NISPERO
+ALBARICOQUE
+TOMATE PERA
+TOMATE BOLA
+TOMATE PINK
+VALVENOSTA GOLDEN
+MELOCOTON ROJO
+MELON GALIA
+APIO
+NARANJA SANHUJA
+LIMON PRIMERA
+MANGO
+MELOCOTON AMARILLO
+VALVENOSTA ROJA
+PIÑA
+NARANJA HOJA
+PERA CONFERENCIA SEGUNDA
+CEBOLLA DULCE
+TOMATE ASURCADO AZUL
+ESPARRAGOS BLANCOS
+ESPARRAGOS TRIGUEROS
+REINETA PRIMERA
+AGUACATE PRIMERA
+COCO
+NECTARINA SEGUNDA
+REINETA 24
+NECTARINA CARNE BLANCA
+GUINDILLA
+REINETA VERDE
+PATATA 25KG
+PATATA 5 KG
+TOMATE RAFF
+REPOLLO
+KIWI ZESPRI
+PARAGUAYO SEGUNDA
+MELON
+REINETA 26
+TOMATE ROSA
+MANZANA CRIPS
+ALOE VERA PIEZAS
+TOMATE ENSALADA
+PATATA 10KG
+MELON BOLLO
+CIRUELA ROJA
+LIMA
+GUINEO VERDE
+SETAS
+BANANA
+BONIATO
+FRAMBUESA
+BREVAS
+PERA AGUA
+YAUTIA
+YAME
+OKRA
+MANZANA MELASSI
+CACAHUETE
+SANDIA NEGRA
+SANDIA RAYADA
+HIGOS
+KUMATO
+KIWI CHILE
+MELOCOTON AMARILLO SEGUNDA
+HIERBABUENA
+REMOLACHA
+LECHUGA ROMANA
+KAKI
+CIRUELA CLAUDIA
+PERA LIMONERA
+CIRUELA AMARILLA
+HIGOS BLANCOS
+UVA ALVILLO
+LIMON EXTRA
+PITAHAYA ROJA
+HIGO CHUMBO
+CLEMENTINA
+GRANADA
+NECTARINA PRIMERA BIS
+CHIRIMOYA
+UVA CHELVA
+PIMIENTO CALIFORNIA VERDE
+KIWI TOMASIN
+PIMIENTO CALIFORNIA ROJO
+MANDARINA SATSUMA
+CASTAÑA
+MANZANA KANZI
+PERA ERCOLINA
+NABO
+UVA ALVILLO NEGRA
+CHAYOTE
+ROYAL GALA 28
+MANDARINA PRIMERA
+PIMIENTO PINTON
+MELOCOTON AMARILLO DE CALANDA
+HINOJOS
+MANDARINA DE HOJA
+UVA ROJA PRIMERA
+UVA BLANCA PRIMERA
+`.trim();
+
+  const list = raw
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean)
+    .map(x => x.toUpperCase());
+
+  // unique
+  return Array.from(new Set(list));
+})();
+
+// 2) Asegura KEY de productos SIEMPRE (por si cambió en tu app)
+(function ensureProductKey(){
+  window.K = window.K || {};
+  // si existe K_PRODUCTOS (global tuyo), úsalo; si no, crea una estable
+  K.PROD = K.PROD || window.K_PRODUCTOS || 'factumiral_productos';
+})();
+
+// 3) Seed si está vacío + guardar
+function seedProductosIfEmpty(){
+  FM.db = FM.db || {};
+  if(!Array.isArray(FM.db.productos)) FM.db.productos = [];
+
+  // recarga desde storage por seguridad
+  const loaded = load(K.PROD, null);
+  if(Array.isArray(loaded)) FM.db.productos = loaded;
+
+  if(FM.db.productos.length > 0) return;
+
+  const seed = (window.OFFICIAL_PRODUCTS || []).map(nombre => ({
+    id: uid(),
+    nombre,
+    modo: 'kg',
+    kgCaja: 0,
+    pKg: 0,
+    pCaja: 0,
+    pUd: 0,
+    coste: 0,
+    origen: '',
+    envaseId: '',
+    hist: []
+  }));
+
+  FM.db.productos = seed;
+  save(K.PROD, FM.db.productos);
+}
+
+// 4) Datalist para autocomplete (aunque tu HTML no lo tenga)
+function ensureProductosDatalist(){
+  let dl = document.getElementById('dlProductos');
+  if(!dl){
+    dl = document.createElement('datalist');
+    dl.id = 'dlProductos';
+    document.body.appendChild(dl);
+  }
+
+  const prods = (FM.db.productos || []).map(p => p.nombre).filter(Boolean);
+  dl.innerHTML = prods.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+
+  // asigna list="dlProductos" a inputs de producto si existen
+  document.querySelectorAll('input.jsProd').forEach(inp=>{
+    inp.setAttribute('list','dlProductos');
+  });
+}
+
+// 5) Render mínimo de “Productos” aunque el ID sea distinto
+function renderProductosHard(){
+  const prods = (FM.db.productos || []);
+  const idsTry = ['productosList','listProductos','productosTabla','tabProductos','productosWrap'];
+  let host = null;
+  for(const id of idsTry){
+    host = document.getElementById(id);
+    if(host) break;
+  }
+  if(!host) return; // si no hay contenedor, no se rompe (pero no se verá)
+
+  host.innerHTML = `
+    <div class="tableWrap">
+      <table class="simpleTable">
+        <thead><tr><th>Producto</th><th>Modo</th><th>€/kg</th><th>€/caja</th><th>€/ud</th></tr></thead>
+        <tbody>
+          ${prods.slice(0,1200).map(p=>`
+            <tr>
+              <td><b>${escapeHtml(p.nombre||'')}</b></td>
+              <td class="mono">${escapeHtml((p.modo||'kg').toUpperCase())}</td>
+              <td class="mono">${money(p.pKg||0)}</td>
+              <td class="mono">${money(p.pCaja||0)}</td>
+              <td class="mono">${money(p.pUd||0)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// 6) BOOT: correr siempre
+(function bootProductsFix(){
+  try{
+    seedProductosIfEmpty();
+    ensureProductosDatalist();
+
+    // pinta si el tab ya está abierto o existe contenedor
+    renderProductosHard();
+
+    // debug silencioso
+    console.log('[FACTU MIRAL FIX] Productos:', (FM.db.productos||[]).length, 'Key:', K.PROD);
+  }catch(e){
+    console.warn('[FACTU MIRAL FIX] fallo products fix', e);
+  }
+})();
 
 /* =========================================================
 CIERRE FINAL DEL APP.JS (SI ESTÁS PEGANDO 3A+3B+3C EN ORDEN)
