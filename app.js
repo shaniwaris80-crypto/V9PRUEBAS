@@ -3398,4 +3398,4 @@ Archivo: app.js  (CONTINUACIÓN)
     });
 
     toast('FACTU MIRAL completo (PDF+Contabilidad+Ventas)');
-  };
+})(); // ✅ cierre final IIFE FACTU MIRAL
