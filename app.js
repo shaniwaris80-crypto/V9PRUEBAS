@@ -3959,3 +3959,136 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }
 
 })();
+/* =========================================================
+   PATCH — FIX INPUT PRECIO EN GRID (iOS + decimales + no salto)
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  const parseNum = (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    const s = String(v).trim().replace(',', '.');
+    if (!s) return null;
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+  };
+
+  const fmt2es = (n) => {
+    if (!isFinite(n)) return '';
+    // 2 decimales y coma
+    return n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  function applyPrecioInputFix(input){
+    if (!input || input.__precioFixed) return;
+    input.__precioFixed = true;
+
+    // 1) Hacerlo "text" para permitir coma sin errores (iOS/ES)
+    try { input.type = 'text'; } catch {}
+
+    // 2) Teclado decimal móvil
+    input.setAttribute('inputmode', 'decimal');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('pattern', '[0-9]*[.,]?[0-9]*');
+
+    // 3) Mientras escribe: permitir solo dígitos + 1 coma/punto (sin formatear)
+    input.addEventListener('input', () => {
+      let v = input.value ?? '';
+      // quitar espacios
+      v = v.replace(/\s+/g, '');
+
+      // permitir solo números y separadores
+      v = v.replace(/[^\d.,-]/g, '');
+
+      // si hay más de un separador decimal, dejar el primero
+      const parts = v.split(/[.,]/);
+      if (parts.length > 2) {
+        v = parts[0] + ',' + parts.slice(1).join(''); // junta el resto
+      }
+      input.value = v;
+    }, { passive: true });
+
+    // 4) Al salir del campo: normaliza a 2 decimales (si hay número)
+    input.addEventListener('blur', () => {
+      const n = parseNum(input.value);
+      if (n === null) return;
+      input.value = fmt2es(n);
+    }, { passive: true });
+  }
+
+  function scanGridAndFix(){
+    // tu precio suele tener clase ".precio"
+    $$('#gridBody .precio').forEach(applyPrecioInputFix);
+  }
+
+  // A) Aplicar ya
+  scanGridAndFix();
+
+  // B) Aplicar a nuevas filas (cuando añades líneas)
+  const grid = $('#gridBody');
+  if (grid && !grid.__precioObserver){
+    grid.__precioObserver = true;
+    const mo = new MutationObserver(() => scanGridAndFix());
+    mo.observe(grid, { childList: true, subtree: true });
+  }
+
+  /* =========================
+     FIX: NO SALTAR AL ESCRIBIR NÚMEROS EN PRECIO
+     - Solo avanzar con Enter
+     - Bloquea cualquier handler global que haga "jump" con dígitos
+  ========================= */
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (!t) return;
+
+    // Solo en precio (grid)
+    const isPrecio = t.classList && t.classList.contains('precio');
+    if (!isPrecio) return;
+
+    // Si el core tiene "teclado pro" que avanza al escribir números,
+    // aquí lo cortamos: dejamos escribir normal.
+    const k = e.key;
+
+    // Permitimos escritura normal: NO hacemos nada con dígitos, coma o punto.
+    // Pero evitamos que otros listeners (del core) actúen sobre esas teclas.
+    if (/^\d$/.test(k) || k === ',' || k === '.' || k === 'Backspace' || k === 'Delete' || k === 'ArrowLeft' || k === 'ArrowRight') {
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // Enter = avanzar (si tu core ya lo hace, esto lo refuerza sin romper)
+    if (k === 'Enter') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      // buscar el siguiente input dentro de la misma fila y luego siguiente fila
+      const row = t.closest('.gridRow');
+      if (!row) return;
+
+      const focusables = $$('input, select, textarea, button', row)
+        .filter(el => !el.disabled && el.offsetParent !== null);
+
+      const idx = focusables.indexOf(t);
+      if (idx >= 0 && idx < focusables.length - 1) {
+        focusables[idx + 1].focus();
+      } else {
+        // si es el último, ir a la siguiente fila primer campo
+        const nextRow = row.nextElementSibling;
+        if (nextRow && nextRow.classList.contains('gridRow')) {
+          const next = $('input, select, textarea', nextRow);
+          next && next.focus();
+        }
+      }
+    }
+  }, true); // CAPTURING: gana a listeners del core
+
+})();
+
