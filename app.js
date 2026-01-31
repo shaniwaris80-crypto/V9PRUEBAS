@@ -5711,4 +5711,100 @@ PIMIENTO PADRON x2 @5,99"></textarea>
   else init();
 
 })();
+/* =========================================================
+   HOTFIX — Chips de precio aplican y FUERZAN recálculo (SAFE)
+   Pegar AL FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  function findPrecioInput(row){
+    const ins = $$('input', row);
+    // por class/name/id/placeholder/dataset
+    return ins.find(i => {
+      const ph = (i.placeholder||'').toLowerCase();
+      const nm = (i.name||'').toLowerCase();
+      const id = (i.id||'').toLowerCase();
+      const cl = (i.className||'').toLowerCase();
+      const df = (i.dataset?.field||'').toLowerCase();
+      const dk = (i.dataset?.k||'').toLowerCase();
+      return ph.includes('precio') || nm.includes('precio') || id.includes('precio') || cl.includes('precio') || df==='precio' || dk==='precio';
+    }) || null;
+  }
+
+  function findBuddyInput(row, precioEl){
+    // Campo que tu core seguro escucha: cantidad/bruto o cualquier num distinto de precio
+    const ins = $$('input', row).filter(i => i !== precioEl && !i.disabled);
+    // prioridad: cantidad, bruto
+    const byKey = (i, key) => {
+      const ph = (i.placeholder||'').toLowerCase();
+      const nm = (i.name||'').toLowerCase();
+      const id = (i.id||'').toLowerCase();
+      const cl = (i.className||'').toLowerCase();
+      const df = (i.dataset?.field||'').toLowerCase();
+      const dk = (i.dataset?.k||'').toLowerCase();
+      return ph.includes(key) || nm.includes(key) || id.includes(key) || cl.includes(key) || df===key || dk===key;
+    };
+    return ins.find(i => byKey(i,'cantidad')) ||
+           ins.find(i => byKey(i,'bruto')) ||
+           ins.find(i => (i.className||'').includes('input--num')) ||
+           ins[0] || null;
+  }
+
+  function forceRecalc(row, precioEl){
+    const buddy = findBuddyInput(row, precioEl);
+    // disparar eventos que suelen usar los cores de grid
+    if (buddy) {
+      buddy.dispatchEvent(new Event('input', { bubbles:true }));
+      buddy.dispatchEvent(new Event('change', { bubbles:true }));
+      buddy.dispatchEvent(new KeyboardEvent('keyup', { bubbles:true, key:'0' }));
+    } else {
+      // fallback: intenta disparar change sobre selects
+      row.querySelectorAll('select').forEach(s=>{
+        s.dispatchEvent(new Event('change', { bubbles:true }));
+      });
+    }
+  }
+
+  function sanitizeToES(v){
+    v = String(v ?? '').trim();
+    if (!v) return '';
+    v = v.replace(/\s+/g,'').replace(/[^\d.,-]/g,'');
+    v = v.replaceAll('.', ',');
+    const i = v.indexOf(',');
+    if (i !== -1) v = v.slice(0,i+1) + v.slice(i+1).replaceAll(',', '');
+    return v;
+  }
+
+  // ✅ Delegación: cualquier click en .fm-chip aplica precio y recalcula
+  document.addEventListener('click', (e) => {
+    const chip = e.target?.closest?.('.fm-chip');
+    if (!chip) return;
+
+    const row = chip.closest('.gridRow,.row');
+    if (!row) return;
+
+    const precioEl = findPrecioInput(row);
+    if (!precioEl) return;
+
+    const value = sanitizeToES(chip.textContent || chip.dataset?.price || '');
+    if (!value) return;
+
+    // aplicar
+    try { precioEl.type = 'text'; } catch {}
+    precioEl.setAttribute('inputmode','decimal');
+    precioEl.removeAttribute('pattern');
+    precioEl.value = value;
+
+    // dispara input en precio (por si tu core sí lo escucha)
+    precioEl.dispatchEvent(new Event('input', { bubbles:true }));
+    precioEl.dispatchEvent(new Event('change', { bubbles:true }));
+
+    // ✅ y lo más importante: forzar recalc por buddy
+    forceRecalc(row, precioEl);
+  }, true);
+
+})();
 
