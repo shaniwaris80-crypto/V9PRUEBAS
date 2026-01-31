@@ -4246,4 +4246,114 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }
 
 })();
+/* =========================================================
+   PATCH LAYOUT — META no pisa CLIENTE (Factura screen)
+   Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+  const $ = (s, r=document) => r.querySelector(s);
+
+  const pickCard = (idSel) => {
+    const el = $(idSel);
+    if (!el) return null;
+    return el.closest('.card,.panel,.box,.paper,.section,.tile') || el.parentElement;
+  };
+
+  const rectsOverlap = (a,b) => {
+    if (!a || !b) return false;
+    const A = a.getBoundingClientRect();
+    const B = b.getBoundingClientRect();
+    return !(A.right < B.left || A.left > B.right || A.bottom < B.top || A.top > B.bottom);
+  };
+
+  function fixHeaderLayout(){
+    const metaCard   = pickCard('#facNumero') || pickCard('#facFecha');
+    const clienteCard= pickCard('#cliNombre');
+    const provCard   = pickCard('#provNombre');
+    const qrCanvas   = $('#qrCanvas');
+
+    if (!metaCard || !clienteCard || !provCard) return;
+
+    // Si NO hay solape, igual aplicamos la mejora (segura) pero sin mover demasiado
+    const needsFix = rectsOverlap(metaCard, clienteCard) || rectsOverlap(metaCard, provCard);
+
+    // Buscar contenedor común (donde estén las 3 cajas)
+    const root = metaCard.parentElement;
+    if (!root) return;
+
+    // Evitar duplicar
+    if (root.querySelector(':scope > .fm-invHeader')) {
+      // solo aseguramos estilos anti-absolute
+      metaCard.classList.add('fm-metaCard');
+      metaCard.style.position = 'static';
+      metaCard.style.top = metaCard.style.right = metaCard.style.left = metaCard.style.bottom = 'auto';
+      return;
+    }
+
+    if (!needsFix) {
+      // Aun así, cortar el absoluto si existe
+      metaCard.classList.add('fm-metaCard');
+      metaCard.style.position = 'static';
+      metaCard.style.top = metaCard.style.right = metaCard.style.left = metaCard.style.bottom = 'auto';
+      return;
+    }
+
+    // Crear estructura PRO
+    const header = document.createElement('div');
+    header.className = 'fm-invHeader';
+
+    const metaRow = document.createElement('div');
+    metaRow.className = 'fm-invMeta';
+
+    const grid = document.createElement('div');
+    grid.className = 'fm-invGrid';
+
+    // Marcar meta card
+    metaCard.classList.add('fm-metaCard');
+
+    // Intentar detectar caja QR (si existe wrapper); si no, creamos uno pequeño
+    let qrBox = qrCanvas ? (qrCanvas.closest('.card,.panel,.box,.paper,.section,.tile') || null) : null;
+    if (!qrBox && qrCanvas) {
+      qrBox = document.createElement('div');
+      qrBox.className = 'card';
+      qrBox.style.border = '1px solid #111';
+      qrBox.style.borderRadius = '14px';
+      qrBox.style.padding = '10px';
+      qrBox.style.background = '#fff';
+      qrBox.appendChild(qrCanvas);
+    }
+
+    // Insertar header antes del primer bloque
+    const first = provCard;
+    root.insertBefore(header, first);
+
+    // Mover meta arriba
+    metaRow.appendChild(metaCard);
+
+    // Mover grid: prov | qr | cliente
+    grid.appendChild(provCard);
+    if (qrBox) grid.appendChild(qrBox);
+    grid.appendChild(clienteCard);
+
+    header.appendChild(metaRow);
+    header.appendChild(grid);
+
+    // Cortar cualquier absolute que pudiera causar solape
+    metaCard.style.position = 'static';
+    metaCard.style.top = metaCard.style.right = metaCard.style.left = metaCard.style.bottom = 'auto';
+    metaCard.style.zIndex = 'auto';
+  }
+
+  // Ejecutar cuando cargue y también después de cambiar tamaño (móvil/rotación)
+  const run = () => setTimeout(fixHeaderLayout, 80);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run, { once:true });
+  } else {
+    run();
+  }
+  window.addEventListener('resize', run, { passive:true });
+})();
+
 
