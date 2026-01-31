@@ -1303,4 +1303,57 @@ textarea{ resize: vertical; }
   #contabDashboard .kpis{ grid-template-columns: 1fr; }
   #contabDashboard .barRow{ grid-template-columns: 58px 1fr 76px; }
 }
+/* =========================================================
+   PATCH — CLIENTE: nombres largos a 2ª línea y sin overflow
+   Pegar al FINAL de style.css
+========================================================= */
+
+/* 1) Cualquier texto dentro de tarjetas/cajas: permitir wrap */
+.card, .panel, .box, .paper, .section, .tile{
+  overflow: hidden; /* evita que se salga visualmente */
+}
+
+/* 2) Campos de texto (inputs): que ocupen 100% y no empujen */
+#cliNombre, #cliNif, #cliDir, #cliTel, #cliEmail{
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* 3) Si el nombre del cliente se muestra en un “label” o bloque */
+.fm-clientName,
+.clienteNombre,
+#clienteNombreView,
+.client-name,
+[data-cli-name]{
+  display: block;
+  white-space: normal !important;   /* permite salto de línea */
+  overflow-wrap: anywhere;          /* corta si hay palabra larga */
+  word-break: break-word;           /* compat */
+  line-height: 1.25;
+  max-width: 100%;
+}
+
+/* 4) Si tu layout usa filas flex, permitir que el texto haga wrap */
+.fm-invGrid > *{
+  min-width: 0; /* CLAVE en grids/flex: deja que el texto se ajuste */
+}
+
+/* 5) Inputs (cuando el nombre es larguísimo): que no “rompa” el grid */
+input[type="text"], input[type="email"], input[type="tel"], textarea{
+  min-width: 0;
+}
+
+/* 6) Ajuste específico del cuadro cliente: que pueda crecer */
+.fm-clientCard,
+#boxCliente,
+#clienteCard,
+[data-box="cliente"]{
+  height: auto;
+}
+
+/* 7) Móvil: un pelín más de alto en inputs para que se vea cómodo */
+@media (max-width: 560px){
+  #cliNombre{ padding-top: 12px; padding-bottom: 12px; }
+}
 
