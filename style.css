@@ -1343,4 +1343,142 @@ textarea{ resize: vertical; }
 
 /* por si tu core usa absolute en algún wrapper */
 .fm-metaCard *{ position: static; }
+/* =========================================================
+   FACTU MIRAL — PRO PATCH PACK CSS v2.0 (SAFE)
+   Pegar AL FINAL de style.css
+========================================================= */
+
+/* Chips últimos precios */
+.fm-chips{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.fm-chip{
+  border:1px solid rgba(0,0,0,.18);
+  background:#fff;
+  border-radius:999px;
+  padding:4px 8px;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+  user-select:none;
+}
+.fm-chip:hover{ background:#f3f3f3; }
+
+/* Warnings línea */
+.fm-rowWarn{
+  margin-top:6px;
+  font-size:12px;
+  font-weight:800;
+  color: rgba(0,0,0,.75);
+  background:#f6f6f6;
+  border:1px solid rgba(0,0,0,.12);
+  border-radius:10px;
+  padding:6px 8px;
+}
+.fm-bad{
+  outline: 2px solid rgba(0,0,0,.45);
+  outline-offset: 2px;
+  border-radius: 10px;
+  background: #f6f6f6;
+}
+
+/* Botones inyectados */
+.fm-miniBtn{
+  border:1px solid rgba(0,0,0,.18);
+  background:#fff;
+  border-radius:12px;
+  padding:6px 10px;
+  font-weight:900;
+  cursor:pointer;
+}
+.fm-miniBtn:hover{ background:#f3f3f3; }
+.fm-miniBtn.primary{
+  border-color:#111;
+  background:#111;
+  color:#fff;
+}
+.fm-miniBtn.primary:hover{ background:#000; }
+
+/* Modal pegado masivo */
+.fm-modalBack{
+  position:fixed; inset:0;
+  background: rgba(0,0,0,.45);
+  z-index: 9999;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 16px;
+}
+.fm-modal{
+  width: min(760px, 96vw);
+  background:#fff;
+  border:1px solid #111;
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.22);
+  overflow:hidden;
+}
+.fm-modalHead{
+  padding: 12px 14px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  border-bottom:1px solid rgba(0,0,0,.10);
+}
+.fm-modalTitle{ font-weight: 900; }
+.fm-modalBody{ padding: 12px 14px; display:grid; gap:10px; }
+.fm-modalBody textarea{
+  width: 100%;
+  min-height: 220px;
+  border:1px solid rgba(0,0,0,.18);
+  border-radius: 12px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  outline:none;
+}
+.fm-modalFoot{
+  padding: 12px 14px;
+  border-top:1px solid rgba(0,0,0,.10);
+  display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;
+}
+
+/* Sticky totales móvil */
+.fm-stickyTotals{
+  position: sticky;
+  bottom: 10px;
+  z-index: 30;
+  background:#fff;
+  border:1px solid #111;
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.16);
+}
+
+/* Toasts (si tu app ya tiene, no molesta) */
+#toasts{ position:fixed; right:12px; bottom:12px; z-index:10000; display:grid; gap:10px; }
+.toast{
+  background:#fff;
+  border:1px solid rgba(0,0,0,.18);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.14);
+  transition: opacity .3s ease;
+}
+.toast__title{ font-weight:900; font-size:13px; margin-bottom:2px; }
+.toast__msg{ font-weight:700; font-size:12px; opacity:.75; }
+
+/* Banner Undo (borrar línea) */
+.fm-undo{
+  position:fixed;
+  left:12px; right:12px; bottom:12px;
+  z-index:10001;
+  background:#fff;
+  border:1px solid #111;
+  border-radius: 16px;
+  padding: 10px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.22);
+}
+.fm-undo strong{ font-weight:900; }
+.fm-undo .muted{ opacity:.70; font-weight:700; }
 
