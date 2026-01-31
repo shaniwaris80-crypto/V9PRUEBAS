@@ -1,7 +1,7 @@
 /* =========================================================
-PARTE 3A/3 — FACTU MIRAL (B/W PRO)
+PARTE 3A/5 — FACTU MIRAL (B/W PRO)
 Archivo: app.js  (PEGAR 3A + 3B + 3C EN ORDEN, SIN CAMBIAR)
-- 3A: base app + storage + helpers + precarga + tabs + estado inicial + grid base
+- 3A: base app + storage + helpers + defaults + tabs + modales + PIN + import/export + backup/restore
 ========================================================= */
 
 (() => {
@@ -14,173 +14,102 @@ Archivo: app.js  (PEGAR 3A + 3B + 3C EN ORDEN, SIN CAMBIAR)
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const on = (el, ev, fn, opts) => el && el.addEventListener(ev, fn, opts);
   const setText = (el, t) => { if (el) el.textContent = (t ?? ''); };
+
   const escapeHtml = (s) => (s ?? '').toString()
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'","&#039;");
 
   /* =========================
-     FORMATOS
+     HELPERS DATA / FORMAT
   ========================= */
-  const pad2 = (n) => String(n).padStart(2,'0');
-  const now = () => new Date();
-  const toISODate = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
-  const isoToES = (iso) => {
-    if(!iso) return '—';
-    const [y,m,d] = iso.split('-');
-    if(!y||!m||!d) return '—';
+  const uid = () => {
+    // UID corto pero estable para uso local
+    return 'id_' + Math.random().toString(16).slice(2) + Date.now().toString(16);
+  };
+
+  const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+  const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+
+  const toNum = (v) => {
+    if (v === null || v === undefined) return 0;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+    const s = String(v).trim().replace(',', '.');
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const fmtEuro = (n) => {
+    const x = round2(toNum(n));
+    try {
+      return x.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
+    } catch {
+      return `${x.toFixed(2).replace('.', ',')} €`;
+    }
+  };
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const isoToday = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+  };
+  const ddmmyyyy = (iso) => {
+    if (!iso) return '';
+    const [y,m,d] = String(iso).split('-');
+    if (!y || !m || !d) return '';
     return `${d}/${m}/${y}`;
   };
-  const num = (v) => {
-    const x = (v === '' || v == null) ? 0 : Number(String(v).replace(',','.'));
-    return Number.isFinite(x) ? x : 0;
+  const dayNameES = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso + 'T00:00:00');
+    const names = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+    return names[d.getDay()] || '';
   };
-  const money = (v) => {
-    const x = num(v);
-    return x.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-  const round2 = (v) => Math.round(num(v) * 100) / 100;
 
-  /* =========================
-     UID / IDs
-  ========================= */
-  const uid = () => (
-    'id_' + Math.random().toString(16).slice(2) + '_' + Date.now().toString(16)
-  );
-
-  const makeInvoiceNumber = (d = new Date()) => {
-    const y = d.getFullYear();
-    const mo = pad2(d.getMonth()+1);
-    const da = pad2(d.getDate());
-    const hh = pad2(d.getHours());
-    const mm = pad2(d.getMinutes());
-    return `FA-${y}${mo}${da}${hh}${mm}`;
+  const downloadText = (filename, text, mime = 'application/json') => {
+    const blob = new Blob([text], { type: mime });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 50);
   };
 
   /* =========================
-     LOCAL STORAGE (OFFLINE FIRST)
+     STORAGE KEYS (LOCAL)
   ========================= */
   const K = {
-    PROV:    'factumiral_proveedor_v1',
-    CLIENTE: 'factumiral_clientes_v1',
-    PROD:    'factumiral_productos_v1',
-    TARAS:   'factumiral_taras_v1',
-    FACT:    'factumiral_facturas_v1',
-    AJUST:   'factumiral_ajustes_v1',
-    VENTAS:  'factumiral_ventas_v1'
+    AJUSTES:   'factu_miral_ajustes_v1',
+    CLIENTES:  'factu_miral_clientes_v1',
+    PRODUCTOS: 'factu_miral_productos_v1',
+    TARAS:     'factu_miral_taras_v1',
+    FACTURAS:  'factu_miral_facturas_v1',
+    VENTAS:    'factu_miral_ventas_v1',
+    LOCK:      'factu_miral_lock_v1',
   };
 
   const load = (key, fallback) => {
-    try{
+    try {
       const raw = localStorage.getItem(key);
-      if(!raw) return fallback;
-      return JSON.parse(raw);
-    }catch{
+      if (!raw) return fallback;
+      const v = JSON.parse(raw);
+      return (v ?? fallback);
+    } catch {
       return fallback;
     }
   };
 
-  const save = (key, val) => {
-    try{
-      localStorage.setItem(key, JSON.stringify(val));
-      return true;
-    }catch{
-      return false;
-    }
+  const save = (key, v) => {
+    localStorage.setItem(key, JSON.stringify(v));
   };
 
   /* =========================
-     TOASTS
+     DEFAULTS (PROVEEDOR / CLIENTES / PRODUCTOS)
   ========================= */
-  function toast(title, msg, type='ok', ms=2400){
-    const wrap = $('#toasts');
-    if(!wrap) return;
-    const el = document.createElement('div');
-    el.className = `toast toast--${type}`;
-    el.innerHTML = `<div class="toast__title">${escapeHtml(title)}</div><div class="toast__msg">${escapeHtml(msg)}</div>`;
-    wrap.appendChild(el);
-    setTimeout(() => {
-      el.style.opacity = '0';
-      el.style.transform = 'translateY(6px)';
-      setTimeout(()=> el.remove(), 220);
-    }, ms);
-  }
-
-  /* =========================
-     MODALS (PDF / PIN)
-  ========================= */
-  function openModal(id){
-    const m = $(id);
-    if(!m) return;
-    m.classList.add('is-open');
-    m.setAttribute('aria-hidden','false');
-  }
-  function closeModal(id){
-    const m = $(id);
-    if(!m) return;
-    m.classList.remove('is-open');
-    m.setAttribute('aria-hidden','true');
-  }
-  function bindModalBasics(){
-    $$('.modal').forEach(m=>{
-      on(m, 'click', (e)=>{
-        const t = e.target;
-        if(t && t.dataset && t.dataset.close === '1'){
-          closeModal('#'+m.id);
-        }
-      });
-    });
-    on($('#btnPdfCerrar'), 'click', ()=> closeModal('#pdfModal'));
-    on($('#btnPinCerrar'), 'click', ()=> closeModal('#pinModal'));
-  }
-
-  /* =========================
-     ESTADO APP (GLOBAL)
-  ========================= */
-  const FM = {
-    version: '1.0',
-    unlocked: { cont: false, ventas: false }, // session only
-    db: {
-      proveedor: null,
-      clientes: [],
-      productos: [],
-      taras: [],
-      facturas: [],
-      ajustes: null,
-      ventas: []
-    },
-    ui: {
-      activeTab: 'tabFactura',
-      editing: {
-        clienteId: null,
-        productoId: null,
-        taraId: null,
-        facturaId: null,
-        ventaId: null
-      }
-    },
-
-    // ---- stubs (se completan en 3B/3C) ----
-    recalcInvoice: () => {},
-    renderInvoice: () => {},
-    renderLists: () => {},
-    renderQR: () => {},
-    renderPDF: async () => { throw new Error('PDF no inicializado'); },
-    whatsappText: () => '',
-    cloud: {
-      configured: false,
-      loggedIn: false,
-      initIfConfigured: async () => {},
-      syncAll: async () => {},
-      uploadPDF: async () => null
-    }
-  };
-
-  window.FM = FM; // para que 3B/3C amplíen sin romper cierres
-
-  /* =========================
-     DATOS DEFAULT (PROVEEDOR/CLIENTES/PRODUCTOS)
-  ========================= */
-  const DEFAULT_PROVEEDOR = {
+  const DEFAULT_PROVIDER = {
     nombre: 'Mohammad Arslan Waris',
     nif: 'X6389988J',
     dir: 'Calle San Pablo 17, 09003 Burgos',
@@ -188,3790 +117,4373 @@ Archivo: app.js  (PEGAR 3A + 3B + 3C EN ORDEN, SIN CAMBIAR)
     email: 'shaniwaris80@gmail.com'
   };
 
+  // Clientes precargados (los que pediste)
   const DEFAULT_CLIENTES = [
-    {id:uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos', pago:'Efectivo'},
-    {id:uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos'},
-    {id:uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', tel:'947 20 35 51'},
-    {id:uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda, 17 Bajo, 09002 Burgos', tel:'947 277 977', email:'bertiz.miranda@gmail.com'},
-    {id:uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos'},
-    {id:uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos'},
-    {id:uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos'},
-    {id:uid(), nombre:'Restauración Hermanos Marijuán S.L.U. (Restaurante Los Braseros)', nif:'B09425059', dir:'Carretera Logroño Km 102, 09193 Castrillo del Val, Burgos', email:'info@restaurantelosbraseros.com'},
-    {id:uid(), nombre:'Alameda Peralta Carlos y otros C.B.', nif:'E09578345', dir:'C/ La Puebla, 6, 09004 Burgos (España)', email:'info@hotelcordon.com'}
-  ].map(c => ({
-    id: c.id,
-    nombre: c.nombre || '',
-    alias: c.alias || '',
-    nif: c.nif || '',
-    dir: c.dir || '',
-    tel: c.tel || '',
-    email: c.email || '',
-    notas: c.notas || '',
-    tpl: {
-      ivaIncluido: false,
-      transporte: false,
-      pago: (c.pago || ''),
-      tags: '',
-      notaStd: ''
-    }
-  }));
+    {id: uid(), nombre:'Adnan Asif', nif:'X7128589S', dir:'C/ Padre Flórez 3, Burgos', pago:'efectivo', tel:'', email:'', alias:'', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Golden Garden — David Herrera Estalayo', nif:'71281665L', dir:'Trinidad, 12, 09003 Burgos', pago:'', tel:'', email:'', alias:'Golden Garden', notas:'IVA incluido en los precios (sin desglose)', tpl:{ivaIncluido:true, transporte:false, tagsAuto:'', notasStd:'IVA incluido en los precios.'}},
+    {id: uid(), nombre:'Cuevas Palacios Restauración S.L. (Con/sentidos)', nif:'B10694792', dir:'C/ San Lesmes, 1 – 09004 Burgos', pago:'', tel:'947 20 35 51', email:'', alias:'Con/sentidos', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Al Pan Pan Burgos, S.L.', nif:'B09569344', dir:'C/ Miranda, 17 Bajo, 09002 Burgos', pago:'', tel:'947 277 977', email:'bertiz.miranda@gmail.com', alias:'', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Alesal Pan / Café de Calle San Lesmes — Alesal Pan y Café S.L.', nif:'B09582420', dir:'C/ San Lesmes 1, Burgos', pago:'', tel:'', email:'', alias:'ALESAL PAN', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Riviera — CONOR ESY SLU', nif:'B16794893', dir:'Paseo del Espolón, 09003 Burgos', pago:'', tel:'', email:'', alias:'RIVIERA', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Café Bar Nuovo (Einy Mercedes Olivo Jiménez)', nif:'120221393', dir:'C/ San Juan de Ortega 14, 09007 Burgos', pago:'', tel:'', email:'', alias:'CAFE BAR NUOVO', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Restauración Hermanos Marijuán S.L.U. (Restaurante Los Braseros)', nif:'B09425059', dir:'Carretera Logroño Km 102, 09193 Castrillo del Val, Burgos', pago:'', tel:'', email:'info@restaurantelosbraseros.com', alias:'Los Braseros', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+    {id: uid(), nombre:'Alameda Peralta Carlos y otros C.B.', nif:'E09578345', dir:'C/ La Puebla, 6, 09004 Burgos (España)', pago:'', tel:'', email:'info@hotelcordon.com', alias:'Hotel Cordón', notas:'', tpl:{ivaIncluido:false, transporte:false, tagsAuto:'', notasStd:''}},
+  ];
 
+  // Productos que SIEMPRE deben estar cargados (tu lista completa)
   const DEFAULT_PRODUCT_NAMES = [
-    "GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA",
-    "PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ","MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA",
-    "MANDARINA HOJA","MANZANA GOLDEN 20","NARANJA TOMASIN","NECTARINA","NUECES","SANDIA","LIMON SEGUNDA","MANZANA FUJI",
-    "NARANJA MESA SONRISA","JENGIBRE","BATATA","AJO PRIMERA","CEBOLLA NORMAL","CALABAZA GRANDE","PATATA LAVADA",
-    "TOMATE CHERRY RAMA","TOMATE CHERRY PERA","TOMATE DANIELA","TOMATE ROSA PRIMERA","CEBOLLINO","TOMATE ASURCADO MARRON",
-    "TOMATE RAMA","PIMIENTO PADRON","ZANAHORIA","PEPINO","CEBOLLETA","PUERROS","BROCOLI","JUDIA VERDE","BERENJENA",
-    "PIMIENTO ITALIANO VERDE","PIMIENTO ITALIANO ROJO","CHAMPIÑON","UVA ROJA","UVA BLANCA","ALCACHOFA","CALABACIN","COLIFLOR",
-    "BATAVIA","ICEBERG","MANDARINA SEGUNDA","MANZANA GOLDEN 28","NARANJA ZUMO","KIWI SEGUNDA","MANZANA ROYAL GALA 24",
-    "PLATANO CANARIO SUELTO","CEREZA","FRESAS","ARANDANOS","ESPINACA","PEREJIL","CILANTRO","ACELGAS","PIMIENTO VERDE",
-    "PIMIENTO ROJO","MACHO VERDE","MACHO MADURO","YUCA","AVOCADO","CEBOLLA ROJA","MENTA","HABANERO","RABANITOS","POMELO",
-    "PAPAYA","REINETA 28","NISPERO","ALBARICOQUE","TOMATE PERA","TOMATE BOLA","TOMATE PINK","VALVENOSTA GOLDEN",
-    "MELOCOTON ROJO","MELON GALIA","APIO","NARANJA SANHUJA","LIMON PRIMERA","MANGO","MELOCOTON AMARILLO","VALVENOSTA ROJA",
-    "PIÑA","NARANJA HOJA","PERA CONFERENCIA SEGUNDA","CEBOLLA DULCE","TOMATE ASURCADO AZUL","ESPARRAGOS BLANCOS",
-    "ESPARRAGOS TRIGUEROS","REINETA PRIMERA","AGUACATE PRIMERA","COCO","NECTARINA SEGUNDA","REINETA 24",
-    "NECTARINA CARNE BLANCA","GUINDILLA","REINETA VERDE","PATATA 25KG","PATATA 5 KG","TOMATE RAFF","REPOLLO","KIWI ZESPRI",
-    "PARAGUAYO SEGUNDA","MELON","REINETA 26","TOMATE ROSA","MANZANA CRIPS","ALOE VERA PIEZAS","TOMATE ENSALADA",
-    "PATATA 10KG","MELON BOLLO","CIRUELA ROJA","LIMA","GUINEO VERDE","SETAS","BANANA","BONIATO","FRAMBUESA","BREVAS",
-    "PERA AGUA","YAUTIA","YAME","OKRA","MANZANA MELASSI","CACAHUETE","SANDIA NEGRA","SANDIA RAYADA","HIGOS","KUMATO",
-    "KIWI CHILE","MELOCOTON AMARILLO SEGUNDA","HIERBABUENA","REMOLACHA","LECHUGA ROMANA","CEREZA","KAKI","CIRUELA CLAUDIA",
-    "PERA LIMONERA","CIRUELA AMARILLA","HIGOS BLANCOS","UVA ALVILLO","LIMON EXTRA","PITAHAYA ROJA","HIGO CHUMBO",
-    "CLEMENTINA","GRANADA","NECTARINA PRIMERA BIS","CHIRIMOYA","UVA CHELVA","PIMIENTO CALIFORNIA VERDE","KIWI TOMASIN",
-    "PIMIENTO CALIFORNIA ROJO","MANDARINA SATSUMA","CASTAÑA","CAKI","MANZANA KANZI","PERA ERCOLINA","NABO",
-    "UVA ALVILLO NEGRA","CHAYOTE","ROYAL GALA 28","MANDARINA PRIMERA","PIMIENTO PINTON","MELOCOTON AMARILLO DE CALANDA",
-    "HINOJOS","MANDARINA DE HOJA","UVA ROJA PRIMERA","UVA BLANCA PRIMERA"
+    "GRANNY FRANCIA","MANZANA PINK LADY","MANDARINA COLOMBE","KIWI ZESPRI GOLD","PARAGUAYO","KIWI TOMASIN PLANCHA","PERA RINCON DEL SOTO","MELOCOTON PRIMERA","AGUACATE GRANEL","MARACUYÁ",
+    "MANZANA GOLDEN 24","PLATANO CANARIO PRIMERA","MANDARINA HOJA","MANZANA GOLDEN 20","NARANJA TOMASIN","NECTARINA","NUECES","SANDIA","LIMON SEGUNDA","MANZANA FUJI",
+    "NARANJA MESA SONRISA","JENGIBRE","BATATA","AJO PRIMERA","CEBOLLA NORMAL","CALABAZA GRANDE","PATATA LAVADA","TOMATE CHERRY RAMA","TOMATE CHERRY PERA","TOMATE DANIELA","TOMATE ROSA PRIMERA",
+    "CEBOLLINO","TOMATE ASURCADO MARRON","TOMATE RAMA","PIMIENTO PADRON","ZANAHORIA","PEPINO","CEBOLLETA","PUERROS","BROCOLI","JUDIA VERDE","BERENJENA","PIMIENTO ITALIANO VERDE",
+    "PIMIENTO ITALIANO ROJO","CHAMPIÑON","UVA ROJA","UVA BLANCA","ALCACHOFA","CALABACIN","COLIFLOR","BATAVIA","ICEBERG","MANDARINA SEGUNDA","MANZANA GOLDEN 28","NARANJA ZUMO","KIWI SEGUNDA",
+    "MANZANA ROYAL GALA 24","PLATANO CANARIO SUELTO","CEREZA","FRESAS","ARANDANOS","ESPINACA","PEREJIL","CILANTRO","ACELGAS","PIMIENTO VERDE","PIMIENTO ROJO","MACHO VERDE","MACHO MADURO",
+    "YUCA","AVOCADO","CEBOLLA ROJA","MENTA","HABANERO","RABANITOS","POMELO","PAPAYA","REINETA 28","NISPERO","ALBARICOQUE","TOMATE PERA","TOMATE BOLA","TOMATE PINK","VALVENOSTA GOLDEN",
+    "MELOCOTON ROJO","MELON GALIA","APIO","NARANJA SANHUJA","LIMON PRIMERA","MANGO","MELOCOTON AMARILLO","VALVENOSTA ROJA","PIÑA","NARANJA HOJA","PERA CONFERENCIA SEGUNDA","CEBOLLA DULCE",
+    "TOMATE ASURCADO AZUL","ESPARRAGOS BLANCOS","ESPARRAGOS TRIGUEROS","REINETA PRIMERA","AGUACATE PRIMERA","COCO","NECTARINA SEGUNDA","REINETA 24","NECTARINA CARNE BLANCA","GUINDILLA",
+    "REINETA VERDE","PATATA 25KG","PATATA 5 KG","TOMATE RAFF","REPOLLO","KIWI ZESPRI","PARAGUAYO SEGUNDA","MELON","REINETA 26","TOMATE ROSA","MANZANA CRIPS",
+    "ALOE VERA PIEZAS","TOMATE ENSALADA","PATATA 10KG","MELON BOLLO","CIRUELA ROJA","LIMA","GUINEO VERDE","SETAS","BANANA","BONIATO","FRAMBUESA","BREVAS","PERA AGUA","YAUTIA","YAME",
+    "OKRA","MANZANA MELASSI","CACAHUETE","SANDIA NEGRA","SANDIA RAYADA","HIGOS","KUMATO","KIWI CHILE","MELOCOTON AMARILLO SEGUNDA","HIERBABUENA","REMOLACHA","LECHUGA ROMANA","CEREZA",
+    "KAKI","CIRUELA CLAUDIA","PERA LIMONERA","CIRUELA AMARILLA","HIGOS BLANCOS","UVA ALVILLO","LIMON EXTRA","PITAHAYA ROJA","HIGO CHUMBO","CLEMENTINA","GRANADA","NECTARINA PRIMERA BIS",
+    "CHIRIMOYA","UVA CHELVA","PIMIENTO CALIFORNIA VERDE","KIWI TOMASIN","PIMIENTO CALIFORNIA ROJO","MANDARINA SATSUMA","CASTAÑA","CAKI","MANZANA KANZI","PERA ERCOLINA","NABO",
+    "UVA ALVILLO NEGRA","CHAYOTE","ROYAL GALA 28","MANDARINA PRIMERA","PIMIENTO PINTON","MELOCOTON AMARILLO DE CALANDA","HINOJOS","MANDARINA DE HOJA","UVA ROJA PRIMERA","UVA BLANCA PRIMERA"
   ];
 
-  const DEFAULT_PRODUCTOS = DEFAULT_PRODUCT_NAMES.map(n => ({
-    id: uid(),
-    nombre: n,
-    modo: 'kg',
-    kgCaja: 0,
-    pKg: 0,
-    pCaja: 0,
-    pUd: 0,
-    coste: 0,
-    origen: '',
-    envaseId: '',
-    hist: [] // últimas 5 (solo pantalla)
-  }));
+  const makeDefaultProductos = () => {
+    // Producto completo: modos/precios/kgCaja/origen/coste/taraDefault/historial
+    // (precios en blanco por defecto)
+    const unique = [];
+    const seen = new Set();
+    for (const name of DEFAULT_PRODUCT_NAMES) {
+      const k = String(name || '').trim();
+      if (!k) continue;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      unique.push({
+        id: uid(),
+        nombre: k,
+        modo: 'kg',
+        kgCaja: 0,
+        precioKg: 0,
+        precioCaja: 0,
+        precioUd: 0,
+        coste: 0,
+        origen: '',
+        taraDefault: '',
+        historial: [] // últimos 5 (solo pantalla)
+      });
+    }
+    return unique;
+  };
 
-  const DEFAULT_TARAS = [
-    { id: uid(), nombre: 'Caja plástico ESMO', peso: 0.30, notas: '' },
-    { id: uid(), nombre: 'Caja plástico Montenegro', peso: 0.30, notas: '' },
-    { id: uid(), nombre: 'Baúl Hnos viejo', peso: 1.80, notas: '' }
-  ];
-
+  /* =========================
+     AJUSTES DEFAULT
+  ========================= */
   const DEFAULT_AJUSTES = {
     ivaPct: 4,
     transportePct: 10,
-    pinCont: '',               // configurable en Ajustes
-    qrBase: 'NIF={NIF};NUM={NUM};FECHA={FECHA};TOTAL={TOTAL}',
+    pin: '8410',
+    qrPlantilla: 'NIF={NIF}&NUM={NUM}&FECHA={FECHA}&TOTAL={TOTAL}',
+    proveedor: { ...DEFAULT_PROVIDER },
     firebase: {
-      apiKey:'', authDomain:'', databaseURL:'', projectId:'', appId:'', storageBucket:''
+      apiKey: '', authDomain: '', databaseURL: '',
+      projectId: '', appId: '', storageBucket: ''
     }
   };
 
   /* =========================
-     SEED / LOAD DB
+     STATE (APP)
   ========================= */
-  function seedIfEmpty(){
-    const prov = load(K.PROV, null);
-    const cli  = load(K.CLIENTE, null);
-    const prod = load(K.PROD, null);
-    const tar  = load(K.TARAS, null);
-    const fac  = load(K.FACT, null);
-    const aj   = load(K.AJUST, null);
-    const ven  = load(K.VENTAS, null);
+  const S = {
+    ajustes: load(K.AJUSTES, { ...DEFAULT_AJUSTES }),
+    clientes: load(K.CLIENTES, []),
+    productos: load(K.PRODUCTOS, []),
+    taras: load(K.TARAS, []),
+    facturas: load(K.FACTURAS, []),
+    ventas: load(K.VENTAS, []),
 
-    if(!prov){ save(K.PROV, DEFAULT_PROVEEDOR); }
-    if(!Array.isArray(cli) || cli.length===0){ save(K.CLIENTE, DEFAULT_CLIENTES); }
-    if(!Array.isArray(prod) || prod.length===0){ save(K.PROD, DEFAULT_PRODUCTOS); }
-    if(!Array.isArray(tar) || tar.length===0){ save(K.TARAS, DEFAULT_TARAS); }
-    if(!Array.isArray(fac)){ save(K.FACT, []); }
-    if(!aj){ save(K.AJUST, DEFAULT_AJUSTES); }
-    if(!Array.isArray(ven)){ save(K.VENTAS, []); }
-  }
+    // Locks
+    lock: load(K.LOCK, {
+      contabilidadUnlocked: false,
+      ventasUnlocked: false,
+      lastUnlockAt: 0
+    }),
 
-  function loadDB(){
-    FM.db.proveedor = load(K.PROV, structuredClone(DEFAULT_PROVEEDOR));
-    FM.db.clientes  = load(K.CLIENTE, structuredClone(DEFAULT_CLIENTES));
-    FM.db.productos = load(K.PROD, structuredClone(DEFAULT_PRODUCTOS));
-    FM.db.taras     = load(K.TARAS, structuredClone(DEFAULT_TARAS));
-    FM.db.facturas  = load(K.FACT, []);
-    FM.db.ajustes   = load(K.AJUST, structuredClone(DEFAULT_AJUSTES));
-    FM.db.ventas    = load(K.VENTAS, []);
+    // UI selections
+    activeTab: 'tabFactura',
+    selClienteId: '',
+    selProductoId: '',
+    selTaraId: '',
+    selFacturaId: '',
+
+    // PDF runtime (se rellena luego)
+    lastPdfBlobUrl: '',
+
+    // Cloud runtime
+    cloud: {
+      configured: false,
+      ready: false,
+      user: null,
+      status: 'OFF'
+    }
+  };
+
+  /* =========================
+     ENSURE DEFAULTS (SIN BORRAR DATOS)
+  ========================= */
+  function ensureDefaults(){
+    // Ajustes
+    if (!S.ajustes || typeof S.ajustes !== 'object') S.ajustes = { ...DEFAULT_AJUSTES };
+    if (!S.ajustes.proveedor) S.ajustes.proveedor = { ...DEFAULT_PROVIDER };
+    if (!S.ajustes.firebase) S.ajustes.firebase = { ...DEFAULT_AJUSTES.firebase };
+
+    // Clientes
+    if (!Array.isArray(S.clientes)) S.clientes = [];
+    if (S.clientes.length === 0) {
+      S.clientes = JSON.parse(JSON.stringify(DEFAULT_CLIENTES));
+    }
+
+    // Productos
+    if (!Array.isArray(S.productos)) S.productos = [];
+    // SIEMPRE cargar estos productos si faltan
+    const must = new Set(DEFAULT_PRODUCT_NAMES.map(x => String(x).trim()).filter(Boolean));
+    const have = new Set(S.productos.map(p => String(p?.nombre || '').trim()).filter(Boolean));
+
+    if (S.productos.length === 0) {
+      S.productos = makeDefaultProductos();
+    } else {
+      // añadir los que falten, sin duplicar
+      for (const n of must) {
+        if (!have.has(n)) {
+          S.productos.push({
+            id: uid(),
+            nombre: n,
+            modo: 'kg',
+            kgCaja: 0,
+            precioKg: 0,
+            precioCaja: 0,
+            precioUd: 0,
+            coste: 0,
+            origen: '',
+            taraDefault: '',
+            historial: []
+          });
+        }
+      }
+    }
+
+    // Taras
+    if (!Array.isArray(S.taras)) S.taras = [];
+
+    // Facturas
+    if (!Array.isArray(S.facturas)) S.facturas = [];
+
+    // Ventas
+    if (!Array.isArray(S.ventas)) S.ventas = [];
+
+    // Lock
+    if (!S.lock || typeof S.lock !== 'object') {
+      S.lock = { contabilidadUnlocked:false, ventasUnlocked:false, lastUnlockAt:0 };
+    }
   }
 
   function persistAll(){
-    save(K.PROV, FM.db.proveedor);
-    save(K.CLIENTE, FM.db.clientes);
-    save(K.PROD, FM.db.productos);
-    save(K.TARAS, FM.db.taras);
-    save(K.FACT, FM.db.facturas);
-    save(K.AJUST, FM.db.ajustes);
-    save(K.VENTAS, FM.db.ventas);
+    save(K.AJUSTES, S.ajustes);
+    save(K.CLIENTES, S.clientes);
+    save(K.PRODUCTOS, S.productos);
+    save(K.TARAS, S.taras);
+    save(K.FACTURAS, S.facturas);
+    save(K.VENTAS, S.ventas);
+    save(K.LOCK, S.lock);
   }
 
   /* =========================
-     UI: TABS
+     TOAST
   ========================= */
-  function setActiveTab(id){
-    FM.ui.activeTab = id;
-    $$('.pane').forEach(p => p.classList.toggle('is-active', p.id === id));
-    $$('.tab').forEach(b => b.classList.toggle('is-active', b.dataset.tab === id));
+  let toastTimer = null;
+  function toast(msg, ms=1600){
+    const el = $('#toast');
+    if (!el) return;
+    el.textContent = msg ?? '';
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), ms);
   }
 
-  function bindTabs(){
-    $$('.tab').forEach(btn=>{
-      on(btn,'click', ()=>{
-        const tabId = btn.dataset.tab;
-        if(tabId === 'tabContabilidad'){
-          if(!FM.unlocked.cont){ return requestPIN('cont'); }
+  /* =========================
+     MODALS
+  ========================= */
+  function openModal(id){
+    const m = $('#' + id);
+    if (!m) return;
+    m.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeModal(id){
+    const m = $('#' + id);
+    if (!m) return;
+    m.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  function wireModalClosers(){
+    $$('[data-close="pin"]').forEach(el => on(el, 'click', () => closeModal('pinModal')));
+    $$('[data-close="pdf"]').forEach(el => on(el, 'click', () => closeModal('pdfModal')));
+
+    on($('#btnPinCancel'), 'click', () => closeModal('pinModal'));
+  }
+
+  /* =========================
+     TABS
+  ========================= */
+  function setActiveTab(tabId){
+    S.activeTab = tabId;
+    // tabs buttons
+    $$('.tab').forEach(b => {
+      const is = b.getAttribute('data-tab') === tabId;
+      b.classList.toggle('isActive', is);
+      b.setAttribute('aria-selected', is ? 'true' : 'false');
+    });
+    // pages
+    $$('.tabPage').forEach(p => p.classList.toggle('isActive', p.id === tabId));
+  }
+
+  function wireTabs(){
+    $$('.tab').forEach(btn => {
+      on(btn, 'click', () => {
+        const id = btn.getAttribute('data-tab');
+        if (!id) return;
+
+        // Si es pestaña protegida, pedir PIN si está bloqueada
+        if (id === 'tabContabilidad' && !S.lock.contabilidadUnlocked) {
+          openPin('contabilidad');
+          return;
         }
-        if(tabId === 'tabVentas'){
-          if(!FM.unlocked.ventas){ return requestPIN('ventas'); }
+        if (id === 'tabVentas' && !S.lock.ventasUnlocked) {
+          openPin('ventas');
+          return;
         }
-        setActiveTab(tabId);
-        // render listados al entrar (se completará en 3B/3C)
-        FM.renderLists();
+        setActiveTab(id);
+        afterTabChanged();
       });
     });
   }
 
+  function afterTabChanged(){
+    // Llamadas a funciones de render específicas (definidas en 3B/3C)
+    if (S.activeTab === 'tabFacturas' && typeof window.FACTU_renderFacturas === 'function') {
+      window.FACTU_renderFacturas();
+    }
+    if (S.activeTab === 'tabClientes' && typeof window.FACTU_renderClientes === 'function') {
+      window.FACTU_renderClientes();
+    }
+    if (S.activeTab === 'tabProductos' && typeof window.FACTU_renderProductos === 'function') {
+      window.FACTU_renderProductos();
+    }
+    if (S.activeTab === 'tabTaras' && typeof window.FACTU_renderTaras === 'function') {
+      window.FACTU_renderTaras();
+    }
+    if (S.activeTab === 'tabContabilidad' && typeof window.FACTU_renderContabilidad === 'function') {
+      window.FACTU_renderContabilidad();
+    }
+    if (S.activeTab === 'tabVentas' && typeof window.FACTU_renderVentas === 'function') {
+      window.FACTU_renderVentas();
+    }
+  }
+
   /* =========================
-     PIN MODAL
+     PIN / LOCKS
   ========================= */
-  let pinMode = null; // 'cont' | 'ventas'
-  function requestPIN(mode){
-    pinMode = mode;
-    setText($('#pinTitle'), mode === 'ventas' ? 'Ventas diarias 🔒' : 'Contabilidad 🔒');
-    setText($('#pinHint'), mode === 'ventas'
-      ? 'Introduce el PIN 8410 para acceder a Ventas.'
-      : 'Introduce el PIN configurado para acceder a Contabilidad.'
-    );
-    setText($('#pinWarn'), '');
-    $('#pinInput').value = '';
-    openModal('#pinModal');
-    setTimeout(()=> $('#pinInput')?.focus(), 50);
+  let pinTarget = 'contabilidad';
+
+  function openPin(target){
+    pinTarget = target || 'contabilidad';
+    setText($('#pinMsg'), '');
+    const inp = $('#pinInput');
+    if (inp) inp.value = '';
+    openModal('pinModal');
+    setTimeout(() => inp && inp.focus(), 50);
   }
 
-  function bindPIN(){
-    on($('#btnPinOk'),'click', ()=> checkPIN());
-    on($('#pinInput'),'keydown',(e)=>{
-      if(e.key === 'Enter') checkPIN();
+  function wirePin(){
+    on($('#btnLockPanel'), 'click', () => {
+      openPin('contabilidad');
     });
 
-    on($('#btnLockContabilidad'),'click', ()=>{
-      FM.unlocked.cont = false;
-      toast('Bloqueado','Contabilidad bloqueada.','warn');
-      setActiveTab('tabFactura');
-    });
-
-    on($('#btnLockVentas'),'click', ()=>{
-      FM.unlocked.ventas = false;
-      toast('Bloqueado','Ventas bloqueadas.','warn');
-      setActiveTab('tabFactura');
-    });
-  }
-
-  function checkPIN(){
-    const pin = ($('#pinInput')?.value || '').trim();
-    if(pinMode === 'ventas'){
-      if(pin === '8410'){
-        FM.unlocked.ventas = true;
-        closeModal('#pinModal');
-        toast('Acceso','Ventas desbloqueadas.','ok');
-        setActiveTab('tabVentas');
-        FM.renderLists();
-      }else{
-        setText($('#pinWarn'), 'PIN incorrecto.');
-        toast('Error','PIN incorrecto.','danger');
+    on($('#btnPinOk'), 'click', () => {
+      const v = String($('#pinInput')?.value ?? '').trim();
+      if (!v) {
+        setText($('#pinMsg'), 'Introduce el PIN.');
+        return;
       }
-      return;
-    }
+      if (v !== String(S.ajustes.pin || '8410')) {
+        setText($('#pinMsg'), 'PIN incorrecto.');
+        return;
+      }
+      // OK
+      S.lock.lastUnlockAt = Date.now();
+      if (pinTarget === 'contabilidad') S.lock.contabilidadUnlocked = true;
+      if (pinTarget === 'ventas') S.lock.ventasUnlocked = true;
 
-    // contabilidad: pin configurable
-    const target = (FM.db.ajustes?.pinCont || '').trim();
-    if(!target){
-      setText($('#pinWarn'), 'No hay PIN configurado en Ajustes.');
-      toast('Aviso','Configura el PIN en Ajustes primero.','warn');
-      return;
-    }
-    if(pin === target){
-      FM.unlocked.cont = true;
-      closeModal('#pinModal');
-      toast('Acceso','Contabilidad desbloqueada.','ok');
-      setActiveTab('tabContabilidad');
-      FM.renderLists();
-    }else{
-      setText($('#pinWarn'), 'PIN incorrecto.');
-      toast('Error','PIN incorrecto.','danger');
+      save(K.LOCK, S.lock);
+      closeModal('pinModal');
+
+      // Ir a la pestaña solicitada
+      if (pinTarget === 'contabilidad') setActiveTab('tabContabilidad');
+      if (pinTarget === 'ventas') setActiveTab('tabVentas');
+      toast('Acceso desbloqueado');
+      afterTabChanged();
+    });
+
+    // Enter en el input
+    on($('#pinInput'), 'keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        $('#btnPinOk')?.click();
+      }
+    });
+
+    on($('#btnBloquearContabilidad'), 'click', () => {
+      S.lock.contabilidadUnlocked = false;
+      save(K.LOCK, S.lock);
+      toast('Contabilidad bloqueada');
+      setActiveTab('tabFactura');
+    });
+
+    on($('#btnBloquearVentas'), 'click', () => {
+      S.lock.ventasUnlocked = false;
+      save(K.LOCK, S.lock);
+      toast('Ventas bloqueadas');
+      setActiveTab('tabFactura');
+    });
+  }
+
+  /* =========================
+     QUICK SEARCH / SHORTCUTS
+  ========================= */
+  function wireShortcuts(){
+    on(document, 'keydown', (e) => {
+      const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+      const ctrl = isMac ? e.metaKey : e.ctrlKey;
+
+      // Ctrl/Cmd+S: guardar factura
+      if (ctrl && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (typeof window.FACTU_guardarFactura === 'function') {
+          window.FACTU_guardarFactura();
+          toast('Guardado');
+        } else {
+          toast('Función guardar pendiente (pega 3B/3C)');
+        }
+      }
+
+      // Ctrl/Cmd+P: PDF
+      if (ctrl && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (typeof window.FACTU_generarPDF === 'function') {
+          window.FACTU_generarPDF();
+        } else {
+          toast('PDF pendiente (pega 3B/3C)');
+        }
+      }
+
+      // Ctrl/Cmd+F: buscar en listados
+      if (ctrl && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        focusSearchForActiveTab();
+      }
+    });
+
+    on($('#btnQuickSearch'), 'click', () => focusSearchForActiveTab());
+  }
+
+  function focusSearchForActiveTab(){
+    const map = {
+      tabFacturas: '#buscarFacturas',
+      tabClientes: '#buscarClientes',
+      tabProductos: '#buscarProductos',
+      tabTaras: '#buscarTaras'
+    };
+    const sel = map[S.activeTab];
+    const el = sel ? $(sel) : null;
+    if (el) {
+      el.focus();
+      el.select?.();
+    } else {
+      toast('Búsqueda disponible en Facturas/Clientes/Productos/Taras');
     }
   }
 
   /* =========================
-     FACTURA: ESTADO BASE
+     AJUSTES UI (bind inputs)
   ========================= */
-  function blankFactura(){
-    const d = now();
-    const fechaISO = toISODate(d);
+  function bindAjustesUI(){
+    // Inputs Ajustes
+    const iva = $('#ajIva');
+    const tr  = $('#ajTransporte');
+    const pin = $('#ajPin');
+    const qr  = $('#ajQrPlantilla');
+
+    if (iva) iva.value = String(S.ajustes.ivaPct ?? 4);
+    if (tr)  tr.value  = String(S.ajustes.transportePct ?? 10);
+    if (pin) pin.value = String(S.ajustes.pin ?? '8410');
+    if (qr)  qr.value  = String(S.ajustes.qrPlantilla ?? DEFAULT_AJUSTES.qrPlantilla);
+
+    on(iva, 'input', () => {
+      S.ajustes.ivaPct = clamp(toNum(iva.value), 0, 40);
+      save(K.AJUSTES, S.ajustes);
+    });
+    on(tr, 'input', () => {
+      S.ajustes.transportePct = clamp(toNum(tr.value), 0, 40);
+      save(K.AJUSTES, S.ajustes);
+    });
+    on(pin, 'input', () => {
+      S.ajustes.pin = String(pin.value || '').trim() || '8410';
+      save(K.AJUSTES, S.ajustes);
+    });
+    on(qr, 'input', () => {
+      S.ajustes.qrPlantilla = String(qr.value || '').trim() || DEFAULT_AJUSTES.qrPlantilla;
+      save(K.AJUSTES, S.ajustes);
+    });
+
+    // Firebase fields
+    const f = S.ajustes.firebase || (S.ajustes.firebase = { ...DEFAULT_AJUSTES.firebase });
+    const fbApiKey = $('#fbApiKey');
+    const fbAuthDomain = $('#fbAuthDomain');
+    const fbDatabaseURL = $('#fbDatabaseURL');
+    const fbProjectId = $('#fbProjectId');
+    const fbAppId = $('#fbAppId');
+    const fbStorageBucket = $('#fbStorageBucket');
+
+    if (fbApiKey) fbApiKey.value = f.apiKey || '';
+    if (fbAuthDomain) fbAuthDomain.value = f.authDomain || '';
+    if (fbDatabaseURL) fbDatabaseURL.value = f.databaseURL || '';
+    if (fbProjectId) fbProjectId.value = f.projectId || '';
+    if (fbAppId) fbAppId.value = f.appId || '';
+    if (fbStorageBucket) fbStorageBucket.value = f.storageBucket || '';
+
+    const bindFb = (el, k) => on(el, 'input', () => {
+      S.ajustes.firebase[k] = String(el.value || '').trim();
+      save(K.AJUSTES, S.ajustes);
+      updateCloudStatus();
+    });
+
+    bindFb(fbApiKey, 'apiKey');
+    bindFb(fbAuthDomain, 'authDomain');
+    bindFb(fbDatabaseURL, 'databaseURL');
+    bindFb(fbProjectId, 'projectId');
+    bindFb(fbAppId, 'appId');
+    bindFb(fbStorageBucket, 'storageBucket');
+
+    // Botón Probar Cloud (la implementación real en 3C, aquí no rompe)
+    on($('#btnProbarCloud'), 'click', () => {
+      if (typeof window.FACTU_cloudTest === 'function') {
+        window.FACTU_cloudTest();
+      } else {
+        toast('Cloud se activa en 3C (Firebase opcional)');
+      }
+    });
+    on($('#btnLoginCloud'), 'click', () => {
+      if (typeof window.FACTU_cloudLogin === 'function') {
+        window.FACTU_cloudLogin();
+      } else {
+        toast('Login Cloud en 3C');
+      }
+    });
+    on($('#btnLogoutCloud'), 'click', () => {
+      if (typeof window.FACTU_cloudLogout === 'function') {
+        window.FACTU_cloudLogout();
+      } else {
+        toast('Logout Cloud en 3C');
+      }
+    });
+
+    // Backups
+    on($('#btnBackupAll'), 'click', () => backupAll());
+    on($('#btnRestoreAll'), 'click', () => $('#fileRestoreAll')?.click());
+    on($('#fileRestoreAll'), 'change', (e) => restoreAllFromFile(e));
+
+    // Reset demo defaults / Hard reset
+    on($('#btnResetDemo'), 'click', () => {
+      // Recargar defaults SIN tocar facturas/ventas (solo repone faltantes)
+      ensureDefaults();
+      persistAll();
+      toast('Defaults recargados');
+      refreshAllUI();
+    });
+
+    on($('#btnHardReset'), 'click', () => {
+      if (!confirm('Reset TOTAL: borra clientes/productos/taras/facturas/ventas/ajustes. ¿Seguro?')) return;
+      localStorage.removeItem(K.AJUSTES);
+      localStorage.removeItem(K.CLIENTES);
+      localStorage.removeItem(K.PRODUCTOS);
+      localStorage.removeItem(K.TARAS);
+      localStorage.removeItem(K.FACTURAS);
+      localStorage.removeItem(K.VENTAS);
+      localStorage.removeItem(K.LOCK);
+
+      S.ajustes = { ...DEFAULT_AJUSTES, proveedor: { ...DEFAULT_PROVIDER }, firebase: { ...DEFAULT_AJUSTES.firebase } };
+      S.clientes = JSON.parse(JSON.stringify(DEFAULT_CLIENTES));
+      S.productos = makeDefaultProductos();
+      S.taras = [];
+      S.facturas = [];
+      S.ventas = [];
+      S.lock = { contabilidadUnlocked:false, ventasUnlocked:false, lastUnlockAt:0 };
+      persistAll();
+      toast('Reset total realizado');
+      refreshAllUI();
+      setActiveTab('tabFactura');
+    });
+  }
+
+  function backupAll(){
+    const pack = {
+      meta: { app:'FACTU MIRAL', ver:'1.0', ts: new Date().toISOString() },
+      ajustes: S.ajustes,
+      clientes: S.clientes,
+      productos: S.productos,
+      taras: S.taras,
+      facturas: S.facturas,
+      ventas: S.ventas
+    };
+    downloadText(`factu_miral_backup_${Date.now()}.json`, JSON.stringify(pack, null, 2));
+    toast('Backup descargado');
+  }
+
+  async function restoreAllFromFile(e){
+    const f = e?.target?.files?.[0];
+    if (!f) return;
+    try {
+      const txt = await f.text();
+      const pack = JSON.parse(txt);
+      if (!pack || typeof pack !== 'object') throw new Error('Formato inválido');
+
+      // Restaurar con validaciones mínimas
+      if (pack.ajustes) S.ajustes = pack.ajustes;
+      if (Array.isArray(pack.clientes)) S.clientes = pack.clientes;
+      if (Array.isArray(pack.productos)) S.productos = pack.productos;
+      if (Array.isArray(pack.taras)) S.taras = pack.taras;
+      if (Array.isArray(pack.facturas)) S.facturas = pack.facturas;
+      if (Array.isArray(pack.ventas)) S.ventas = pack.ventas;
+
+      ensureDefaults(); // asegura que SIEMPRE estén los productos/cliente mínimos
+      persistAll();
+      toast('Restore OK');
+      refreshAllUI();
+    } catch (err) {
+      console.error(err);
+      toast('Error restaurando backup');
+    } finally {
+      e.target.value = '';
+    }
+  }
+
+  /* =========================
+     EXPORT / IMPORT (CLIENTES / PRODUCTOS / TARAS)
+  ========================= */
+  function wireImportExport(){
+    // CLIENTES
+    on($('#btnExportClientes'), 'click', () => {
+      downloadText(`factu_miral_clientes_${Date.now()}.json`, JSON.stringify(S.clientes, null, 2));
+      toast('Clientes exportados');
+    });
+    on($('#btnImportClientes'), 'click', () => $('#fileImportClientes')?.click());
+    on($('#fileImportClientes'), 'change', async (e) => {
+      const f = e?.target?.files?.[0]; if (!f) return;
+      try{
+        const txt = await f.text();
+        const arr = JSON.parse(txt);
+        if (!Array.isArray(arr)) throw new Error('No es array');
+        // merge por NIF+nombre si existe; si no, agrega
+        const key = (c) => `${String(c?.nif||'').trim()}|${String(c?.nombre||'').trim()}`.toLowerCase();
+        const map = new Map(S.clientes.map(c => [key(c), c]));
+        for (const c of arr){
+          const k = key(c);
+          if (!k || k === '|') continue;
+          if (!map.has(k)){
+            map.set(k, { id: uid(), ...c });
+          } else {
+            // si existe, actualiza (sin perder id)
+            const old = map.get(k);
+            map.set(k, { ...old, ...c, id: old.id });
+          }
+        }
+        S.clientes = Array.from(map.values());
+        save(K.CLIENTES, S.clientes);
+        toast('Clientes importados');
+        if (typeof window.FACTU_renderClientes === 'function') window.FACTU_renderClientes();
+        fillClienteSelector();
+      } catch(err){
+        console.error(err);
+        toast('Error importando clientes');
+      } finally {
+        e.target.value = '';
+      }
+    });
+
+    // PRODUCTOS
+    on($('#btnExportProductos'), 'click', () => {
+      downloadText(`factu_miral_productos_${Date.now()}.json`, JSON.stringify(S.productos, null, 2));
+      toast('Productos exportados');
+    });
+    on($('#btnImportProductos'), 'click', () => $('#fileImportProductos')?.click());
+    on($('#fileImportProductos'), 'change', async (e) => {
+      const f = e?.target?.files?.[0]; if (!f) return;
+      try{
+        const txt = await f.text();
+        const arr = JSON.parse(txt);
+        if (!Array.isArray(arr)) throw new Error('No es array');
+        const key = (p) => String(p?.nombre||'').trim().toLowerCase();
+        const map = new Map(S.productos.map(p => [key(p), p]));
+        for (const p of arr){
+          const k = key(p);
+          if (!k) continue;
+          if (!map.has(k)){
+            map.set(k, {
+              id: uid(),
+              nombre: String(p.nombre||'').trim(),
+              modo: p.modo || 'kg',
+              kgCaja: toNum(p.kgCaja),
+              precioKg: toNum(p.precioKg),
+              precioCaja: toNum(p.precioCaja),
+              precioUd: toNum(p.precioUd),
+              coste: toNum(p.coste),
+              origen: p.origen || '',
+              taraDefault: p.taraDefault || '',
+              historial: Array.isArray(p.historial) ? p.historial.slice(0,5) : []
+            });
+          } else {
+            const old = map.get(k);
+            map.set(k, {
+              ...old,
+              ...p,
+              id: old.id,
+              nombre: old.nombre,
+              kgCaja: toNum(p.kgCaja ?? old.kgCaja),
+              precioKg: toNum(p.precioKg ?? old.precioKg),
+              precioCaja: toNum(p.precioCaja ?? old.precioCaja),
+              precioUd: toNum(p.precioUd ?? old.precioUd),
+              coste: toNum(p.coste ?? old.coste),
+              historial: Array.isArray(p.historial) ? p.historial.slice(0,5) : (old.historial || [])
+            });
+          }
+        }
+        S.productos = Array.from(map.values());
+        ensureDefaults(); // vuelve a asegurar los obligatorios
+        save(K.PRODUCTOS, S.productos);
+        toast('Productos importados');
+        if (typeof window.FACTU_renderProductos === 'function') window.FACTU_renderProductos();
+        fillProductoDatalistCache();
+        fillTaraDefaultSelect();
+      } catch(err){
+        console.error(err);
+        toast('Error importando productos');
+      } finally {
+        e.target.value = '';
+      }
+    });
+
+    // TARAS
+    on($('#btnExportTaras'), 'click', () => {
+      downloadText(`factu_miral_taras_${Date.now()}.json`, JSON.stringify(S.taras, null, 2));
+      toast('Taras exportadas');
+    });
+    on($('#btnImportTaras'), 'click', () => $('#fileImportTaras')?.click());
+    on($('#fileImportTaras'), 'change', async (e) => {
+      const f = e?.target?.files?.[0]; if (!f) return;
+      try{
+        const txt = await f.text();
+        const arr = JSON.parse(txt);
+        if (!Array.isArray(arr)) throw new Error('No es array');
+        const key = (t) => String(t?.nombre||'').trim().toLowerCase();
+        const map = new Map(S.taras.map(t => [key(t), t]));
+        for (const t of arr){
+          const k = key(t);
+          if (!k) continue;
+          if (!map.has(k)){
+            map.set(k, { id: uid(), nombre:String(t.nombre||'').trim(), peso: toNum(t.peso), notas: t.notas || '' });
+          } else {
+            const old = map.get(k);
+            map.set(k, { ...old, ...t, id: old.id, nombre: old.nombre, peso: toNum(t.peso ?? old.peso) });
+          }
+        }
+        S.taras = Array.from(map.values());
+        save(K.TARAS, S.taras);
+        toast('Taras importadas');
+        if (typeof window.FACTU_renderTaras === 'function') window.FACTU_renderTaras();
+        fillTaraDefaultSelect();
+      } catch(err){
+        console.error(err);
+        toast('Error importando taras');
+      } finally {
+        e.target.value = '';
+      }
+    });
+  }
+
+  /* =========================
+     SELECTORES (cliente / tara default)
+  ========================= */
+  function fillClienteSelector(){
+    const sel = $('#selCliente');
+    if (!sel) return;
+    const old = sel.value;
+    sel.innerHTML = `<option value="">— Selecciona —</option>` + S.clientes
+      .slice()
+      .sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es'))
+      .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.nombre)} — ${escapeHtml(c.nif||'')}</option>`)
+      .join('');
+    if (old) sel.value = old;
+  }
+
+  function fillTaraDefaultSelect(){
+    const sel = $('#pTaraDefault');
+    if (!sel) return;
+    const old = sel.value;
+    sel.innerHTML = `<option value="">— Sin envase —</option>` + S.taras
+      .slice()
+      .sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es'))
+      .map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.nombre)} (${toNum(t.peso).toFixed(2).replace('.',',')} kg)</option>`)
+      .join('');
+    if (old) sel.value = old;
+  }
+
+  // cache simple para autocomplete (lo usa 3B)
+  const CACHE = {
+    productNames: [],
+    productById: new Map(),
+    taraById: new Map(),
+    clienteById: new Map()
+  };
+
+  function fillProductoDatalistCache(){
+    CACHE.productNames = S.productos.map(p => String(p?.nombre||'').trim()).filter(Boolean);
+    CACHE.productById = new Map(S.productos.map(p => [p.id, p]));
+    CACHE.taraById = new Map(S.taras.map(t => [t.id, t]));
+    CACHE.clienteById = new Map(S.clientes.map(c => [c.id, c]));
+  }
+
+  /* =========================
+     PROVIDER DEFAULTS (inputs factura)
+  ========================= */
+  function setProviderDefaultsIfEmpty(){
+    if(!$('#provNombre')?.value) $('#provNombre').value = DEFAULT_PROVIDER.nombre;
+    if(!$('#provNif')?.value)    $('#provNif').value    = DEFAULT_PROVIDER.nif;
+    if(!$('#provDir')?.value)    $('#provDir').value    = DEFAULT_PROVIDER.dir;
+    if(!$('#provTel')?.value)    $('#provTel').value    = DEFAULT_PROVIDER.tel;
+    if(!$('#provEmail')?.value)  $('#provEmail').value  = DEFAULT_PROVIDER.email;
+  }
+
+  function loadProviderToUI(){
+    const p = S.ajustes.proveedor || DEFAULT_PROVIDER;
+    if ($('#provNombre')) $('#provNombre').value = p.nombre || '';
+    if ($('#provNif')) $('#provNif').value = p.nif || '';
+    if ($('#provDir')) $('#provDir').value = p.dir || '';
+    if ($('#provTel')) $('#provTel').value = p.tel || '';
+    if ($('#provEmail')) $('#provEmail').value = p.email || '';
+    setProviderDefaultsIfEmpty();
+  }
+
+  function wireProviderSave(){
+    on($('#btnGuardarProveedor'), 'click', () => {
+      S.ajustes.proveedor = {
+        nombre: String($('#provNombre')?.value || '').trim(),
+        nif: String($('#provNif')?.value || '').trim(),
+        dir: String($('#provDir')?.value || '').trim(),
+        tel: String($('#provTel')?.value || '').trim(),
+        email: String($('#provEmail')?.value || '').trim()
+      };
+      save(K.AJUSTES, S.ajustes);
+      toast('Proveedor guardado');
+      updateDiag();
+    });
+  }
+
+  /* =========================
+     CLOUD STATUS PILL (solo UI en 3A)
+  ========================= */
+  function updateCloudStatus(){
+    const f = S.ajustes.firebase || {};
+    const configured = !!(f.apiKey && f.authDomain && f.projectId && f.appId);
+    S.cloud.configured = configured;
+
+    const dot = $('#dotCloud');
+    const txt = $('#cloudText');
+    if (configured) {
+      if (dot) dot.className = 'dot warn';
+      if (txt) txt.textContent = 'Cloud CONFIG';
+    } else {
+      if (dot) dot.className = 'dot off';
+      if (txt) txt.textContent = 'Cloud OFF';
+    }
+  }
+
+  /* =========================
+     DIAGNOSTIC BOX
+  ========================= */
+  function updateDiag(){
+    const el = $('#diagBox');
+    if (!el) return;
+    const f = S.ajustes.firebase || {};
+    const configured = !!(f.apiKey && f.authDomain && f.projectId && f.appId);
+    const lines = [
+      `FACTU MIRAL · v1.0`,
+      `Fecha: ${new Date().toLocaleString('es-ES')}`,
+      `LocalStorage: OK`,
+      `Clientes: ${S.clientes.length}`,
+      `Productos: ${S.productos.length}`,
+      `Taras: ${S.taras.length}`,
+      `Facturas: ${S.facturas.length}`,
+      `Ventas: ${S.ventas.length}`,
+      `PIN: ${String(S.ajustes.pin || '8410') ? 'configurado' : '—'}`,
+      `IVA: ${toNum(S.ajustes.ivaPct)}%`,
+      `Transporte: ${toNum(S.ajustes.transportePct)}%`,
+      `Cloud: ${configured ? 'CONFIGURADA (opcional)' : 'OFF (modo local)'}`,
+    ];
+    el.textContent = lines.join('\n');
+  }
+
+  /* =========================
+     REFRESH UI BASICO
+  ========================= */
+  function refreshAllUI(){
+    fillClienteSelector();
+    fillProductoDatalistCache();
+    fillTaraDefaultSelect();
+    bindAjustesUI();
+    loadProviderToUI();
+    updateCloudStatus();
+    updateDiag();
+
+    // Fechas base
+    if ($('#inpFechaFactura') && !$('#inpFechaFactura').value) $('#inpFechaFactura').value = isoToday();
+    if ($('#pagoFecha') && !$('#pagoFecha').value) $('#pagoFecha').value = isoToday();
+    if ($('#vFecha') && !$('#vFecha').value) $('#vFecha').value = isoToday();
+    if ($('#vRepDesde') && !$('#vRepDesde').value) $('#vRepDesde').value = isoToday();
+    if ($('#vRepHasta') && !$('#vRepHasta').value) $('#vRepHasta').value = isoToday();
+    if ($('#contDesde') && !$('#contDesde').value) $('#contDesde').value = isoToday();
+    if ($('#contHasta') && !$('#contHasta').value) $('#contHasta').value = isoToday();
+    if ($('#factDesde') && !$('#factDesde').value) $('#factDesde').value = '';
+    if ($('#factHasta') && !$('#factHasta').value) $('#factHasta').value = '';
+
+    // Ventas: día semana
+    updateVentaDiaSemana();
+  }
+
+  function updateVentaDiaSemana(){
+    const iso = $('#vFecha')?.value;
+    if ($('#vDiaSemana')) $('#vDiaSemana').value = iso ? dayNameES(iso) : '';
+  }
+
+  /* =========================
+     WIRES VARIOS (botones principales)
+  ========================= */
+  function wireMainButtons(){
+    // Factura acciones (implementación en 3B)
+    on($('#btnNuevaFactura'), 'click', () => {
+      if (typeof window.FACTU_nuevaFactura === 'function') window.FACTU_nuevaFactura();
+      else toast('Nueva factura en 3B');
+    });
+    on($('#btnDuplicarFactura'), 'click', () => {
+      if (typeof window.FACTU_duplicarFactura === 'function') window.FACTU_duplicarFactura();
+      else toast('Duplicar factura en 3B');
+    });
+    on($('#btnEliminarFactura'), 'click', () => {
+      if (typeof window.FACTU_eliminarFactura === 'function') window.FACTU_eliminarFactura();
+      else toast('Eliminar factura en 3B');
+    });
+    on($('#btnGuardarFactura'), 'click', () => {
+      if (typeof window.FACTU_guardarFactura === 'function') window.FACTU_guardarFactura();
+      else toast('Guardar factura en 3B');
+    });
+    on($('#btnGenerarPDF'), 'click', () => {
+      if (typeof window.FACTU_generarPDF === 'function') window.FACTU_generarPDF();
+      else toast('PDF en 3C');
+    });
+    on($('#btnVerPDF'), 'click', () => {
+      if (typeof window.FACTU_verPDF === 'function') window.FACTU_verPDF();
+      else toast('Visor PDF en 3C');
+    });
+    on($('#btnPdfNube'), 'click', () => {
+      if (typeof window.FACTU_pdfNube === 'function') window.FACTU_pdfNube();
+      else toast('PDF + nube en 3C');
+    });
+    on($('#btnWhatsapp'), 'click', () => {
+      if (typeof window.FACTU_whatsapp === 'function') window.FACTU_whatsapp();
+      else toast('WhatsApp en 3B');
+    });
+
+    // Ventas (implementación en 3C)
+    on($('#btnGuardarVenta'), 'click', () => {
+      if (typeof window.FACTU_guardarVenta === 'function') window.FACTU_guardarVenta();
+      else toast('Ventas en 3C');
+    });
+    on($('#btnBorrarVenta'), 'click', () => {
+      if (typeof window.FACTU_borrarVenta === 'function') window.FACTU_borrarVenta();
+      else toast('Ventas en 3C');
+    });
+    on($('#btnGenerarReporteVentas'), 'click', () => {
+      if (typeof window.FACTU_reporteVentas === 'function') window.FACTU_reporteVentas();
+      else toast('Reporte en 3C');
+    });
+    on($('#btnReporteSemanal'), 'click', () => {
+      if (typeof window.FACTU_reporteVentasSemanal === 'function') window.FACTU_reporteVentasSemanal();
+      else toast('Semanal en 3C');
+    });
+    on($('#btnReporteMensual'), 'click', () => {
+      if (typeof window.FACTU_reporteVentasMensual === 'function') window.FACTU_reporteVentasMensual();
+      else toast('Mensual en 3C');
+    });
+    on($('#btnExportVentasCsv'), 'click', () => {
+      if (typeof window.FACTU_exportVentasCsv === 'function') window.FACTU_exportVentasCsv();
+      else toast('Export en 3C');
+    });
+
+    // Cuando cambia fecha ventas -> día semana
+    on($('#vFecha'), 'change', () => updateVentaDiaSemana());
+
+    // PDF modal buttons (implementación en 3C)
+    on($('#btnPdfImprimir'), 'click', () => {
+      if (typeof window.FACTU_pdfImprimir === 'function') window.FACTU_pdfImprimir();
+      else toast('Imprimir en 3C');
+    });
+    on($('#btnPdfPestana'), 'click', () => {
+      if (typeof window.FACTU_pdfPestana === 'function') window.FACTU_pdfPestana();
+      else toast('Abrir pestaña en 3C');
+    });
+    on($('#btnPdfCompartir'), 'click', () => {
+      if (typeof window.FACTU_pdfCompartir === 'function') window.FACTU_pdfCompartir();
+      else toast('Compartir en 3C');
+    });
+
+    // QR copy (texto)
+    on($('#btnCopiarTextoQR'), 'click', async () => {
+      const t = $('#qrText')?.value || '';
+      try{
+        await navigator.clipboard.writeText(t);
+        toast('Texto QR copiado');
+      } catch {
+        toast('No se pudo copiar');
+      }
+    });
+  }
+
+  /* =========================
+     LOCAL PILL
+  ========================= */
+  function updateLocalPill(){
+    const dot = $('#dotLocal');
+    if (dot) dot.className = 'dot ok';
+  }
+
+  /* =========================
+     BOOTSTRAP
+  ========================= */
+  function init(){
+    ensureDefaults();
+    persistAll(); // asegura que los defaults se guarden una vez
+
+    wireModalClosers();
+    wireTabs();
+    wirePin();
+    wireShortcuts();
+    wireProviderSave();
+    wireImportExport();
+    wireMainButtons();
+
+    refreshAllUI();
+    updateLocalPill();
+
+    // Tab inicial
+    setActiveTab('tabFactura');
+
+    // Exponer estado y helpers para 3B/3C (sin contaminar global)
+    window.FACTU_STATE = S;
+    window.FACTU_UTILS = {
+      $, $$, on,
+      uid,
+      toNum, round2, fmtEuro,
+      isoToday, ddmmyyyy, dayNameES,
+      save, load,
+      persistAll,
+      toast,
+      openModal, closeModal,
+      setActiveTab,
+      fillClienteSelector,
+      fillProductoDatalistCache,
+      fillTaraDefaultSelect
+    };
+
+    // Aviso si faltan libs PDF
+    setTimeout(() => {
+      const okJsPDF = !!(window.jspdf && window.jspdf.jsPDF);
+      if (!okJsPDF) {
+        // no rompe: solo avisamos
+        toast('Nota: jsPDF no cargó (PDF se activará si hay internet)');
+      }
+      updateDiag();
+    }, 300);
+
+    // Render inicial de listados si ya existen funciones (cuando pegues 3B/3C)
+    setTimeout(() => afterTabChanged(), 50);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})(); // end IIFE
+/* =========================================================
+PARTE 3B/5 — FACTU MIRAL (B/W PRO)
+Archivo: app.js  (PEGAR 3A + 3B + 3C EN ORDEN, SIN CAMBIAR)
+- 3B: FACTURA (grid pro + cálculos correctos + taras) + clientes + productos + taras + listado facturas + WhatsApp + QR pantalla
+========================================================= */
+
+(() => {
+  'use strict';
+
+  const S = window.FACTU_STATE;
+  const U = window.FACTU_UTILS;
+  if (!S || !U) return;
+
+  const { $, $$, on, uid, toNum, round2, fmtEuro, isoToday, ddmmyyyy, dayNameES, save, toast, openModal, closeModal, setActiveTab } = U;
+
+  /* =========================
+     SAFE GETTERS
+  ========================= */
+  const val = (id) => String($(id)?.value ?? '');
+  const setVal = (id, v) => { const el = $(id); if (el) el.value = (v ?? ''); };
+  const setHtml = (id, html) => { const el = $(id); if (el) el.innerHTML = html ?? ''; };
+
+  /* =========================
+     MODEL: FACTURA
+  ========================= */
+  function makeFacturaEmpty(){
+    const now = new Date();
+    const num = `FA-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
     return {
       id: uid(),
-      numero: makeInvoiceNumber(d),
-      fechaISO,
+      num,
+      fecha: isoToday(),            // ISO
       tags: '',
-      notas: '',
+      notasInt: '',
       obs: '',
       clienteId: '',
-      clienteSnap: null,
-      provSnap: null,
-      chkTransporte: false,
-      chkIvaIncluido: false,
-      pagos: [],
-      metodoPago: 'efectivo',
-      estado: 'impagada',
+      clienteSnap: { nombre:'', nif:'', dir:'', tel:'', email:'', pago:'' },
+      proveedorSnap: { ...(S.ajustes?.proveedor || {}) },
+
+      ivaPct: toNum(S.ajustes?.ivaPct ?? 4),
+      transportePct: toNum(S.ajustes?.transportePct ?? 10),
+      transporteOn: false,
+      ivaIncluido: false,
+
       lineas: makeDefaultLineas(5),
-      totals: {
-        subtotal: 0, transporte: 0, iva: 0, total: 0, pendiente: 0
-      },
-      pdf: { lastBlobUrl: '' },
-      cloud: { pdfUrl: '' }
+      pagos: [],
+      metodoPago: 'efectivo',       // efectivo/transferencia/tarjeta
+      estado: 'impagada',           // impagada/parcial/pagada
+
+      totals: { subtotal:0, transporte:0, iva:0, total:0, pagado:0, pendiente:0 }
     };
   }
 
   function makeDefaultLineas(n=5){
     const arr = [];
-    for(let i=0;i<n;i++){
-      arr.push({
-        id: uid(),
-        producto: '',
-        modo: 'kg',          // kg/caja/ud
-        cantidad: 0,
-        bruto: 0,
-        envaseId: '',
-        envases: 0,
-        taraTotal: 0,
-        neto: 0,
-        netoManual: false,
-        precio: 0,
-        origen: '',
-        importe: 0,
-        hints: { lastPrices: [] } // solo pantalla
-      });
+    for (let i=0;i<n;i++){
+      arr.push(makeLineaEmpty());
     }
     return arr;
   }
 
-  FM.current = blankFactura();
-
-  /* =========================
-     UI: CARGA PROVEEDOR EN CAMPOS
-  ========================= */
-  function setProviderDefaultsIfEmpty(){
-    const p = FM.db.proveedor || structuredClone(DEFAULT_PROVEEDOR);
-    if(!$('#provNombre').value) $('#provNombre').value = p.nombre || DEFAULT_PROVEEDOR.nombre;
-    if(!$('#provNif').value)    $('#provNif').value    = p.nif || DEFAULT_PROVEEDOR.nif;
-    if(!$('#provDir').value)    $('#provDir').value    = p.dir || DEFAULT_PROVEEDOR.dir;
-    if(!$('#provTel').value)    $('#provTel').value    = p.tel || DEFAULT_PROVEEDOR.tel;
-    if(!$('#provEmail').value)  $('#provEmail').value  = p.email || DEFAULT_PROVEEDOR.email;
-  }
-
-  function loadProviderToUI(){
-    const p = FM.db.proveedor || structuredClone(DEFAULT_PROVEEDOR);
-    $('#provNombre').value = p.nombre || '';
-    $('#provNif').value    = p.nif || '';
-    $('#provDir').value    = p.dir || '';
-    $('#provTel').value    = p.tel || '';
-    $('#provEmail').value  = p.email || '';
-  }
-
-  function saveProviderFromUI(){
-    FM.db.proveedor = {
-      nombre: ($('#provNombre')?.value || '').trim(),
-      nif:    ($('#provNif')?.value || '').trim(),
-      dir:    ($('#provDir')?.value || '').trim(),
-      tel:    ($('#provTel')?.value || '').trim(),
-      email:  ($('#provEmail')?.value || '').trim()
+  function makeLineaEmpty(){
+    return {
+      id: uid(),
+      producto: '',
+      productoId: '',
+      modo: 'kg',         // kg/caja/ud
+      cantidad: 0,        // nº envases/uds/cajas (según modo)
+      bruto: 0,           // kg (solo si modo kg)
+      taraId: '',
+      envases: 0,         // nº envases para tara (por defecto = cantidad)
+      taraKg: 0,          // tara total (kg)
+      neto: 0,            // kg neto
+      netoManual: false,  // si el usuario edita neto se respeta
+      precio: 0,          // según modo
+      origen: '',
+      kgCaja: 0,          // solo informativo (productos)
+      importe: 0,         // calculado
+      warn: ''            // avisos (tara>bruto etc)
     };
-    save(K.PROV, FM.db.proveedor);
-    toast('Proveedor','Guardado en local.','ok');
-    FM.renderQR();
   }
 
   /* =========================
-     UI: FACTURA METADATOS
+     ACTIVE INVOICE STATE
   ========================= */
-  function setFacturaMetaUI(){
-    setText($('#facturaNumero'), FM.current.numero || 'FA-—');
-    $('#facturaFecha').value = FM.current.fechaISO || toISODate(now());
-    setText($('#facturaFechaES'), isoToES($('#facturaFecha').value));
-    $('#facturaTags').value  = FM.current.tags || '';
-    $('#facturaNotas').value = FM.current.notas || '';
-    $('#facturaObs').value   = FM.current.obs || '';
-    $('#chkTransporte').checked = !!FM.current.chkTransporte;
-    $('#chkIvaIncluido').checked = !!FM.current.chkIvaIncluido;
-
-    // pagos
-    $('#pagoMetodo').value = FM.current.metodoPago || 'efectivo';
-    $('#pagoFecha').value = FM.current.fechaISO || toISODate(now());
-    $('#pagoImporte').value = '';
+  if (!S._activeFactura) {
+    S._activeFactura = makeFacturaEmpty();
   }
+  let F = S._activeFactura;
 
   /* =========================
-     UI: SELECTS (CLIENTES / TARAS / PRODUCTOS)
+     INDEX DOM IDS (FACTURA)
   ========================= */
-  function fillClienteSelect(){
-    const sel = $('#clienteSelect');
-    if(!sel) return;
-    const prev = sel.value;
-    sel.innerHTML = `<option value="">— Seleccionar —</option>` +
-      FM.db.clientes
-        .slice()
-        .sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''))
-        .map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} · ${escapeHtml(c.nif||'')}</option>`)
-        .join('');
-    sel.value = prev || FM.current.clienteId || '';
-  }
-
-  function fillContClienteSelect(){
-    const sel = $('#contCliente');
-    if(!sel) return;
-    sel.innerHTML = `<option value="">— Todos —</option>` +
-      FM.db.clientes
-        .slice()
-        .sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''))
-        .map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`)
-        .join('');
-  }
-
-  function fillTarasForEditors(){
-    // para Producto editor (envase por defecto)
-    const s1 = $('#proEdEnvase');
-    if(s1){
-      const prev = s1.value;
-      s1.innerHTML = `<option value="">— (sin envase) —</option>` +
-        FM.db.taras
-          .slice()
-          .sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''))
-          .map(t => `<option value="${t.id}">${escapeHtml(t.nombre)} · ${money(t.peso)} kg</option>`)
-          .join('');
-      s1.value = prev || '';
-    }
-  }
-
-  /* =========================
-     GRID: RENDER BASE (celdas)  (lógica completa en 3B)
-  ========================= */
-  function renderLineasBase(){
-    const tbody = $('#lineasBody');
-    if(!tbody) return;
-
-    const rows = FM.current.lineas || [];
-    tbody.innerHTML = rows.map((ln, idx) => {
-      return `
-      <tr data-id="${ln.id}" data-idx="${idx}">
-        <td>
-          <input class="cellInput jsProd" type="text" placeholder="Producto..." value="${escapeHtml(ln.producto||'')}" />
-          <div class="hint jsHint"></div>
-        </td>
-        <td>
-          <select class="cellSelect jsModo">
-            <option value="kg" ${ln.modo==='kg'?'selected':''}>kg</option>
-            <option value="caja" ${ln.modo==='caja'?'selected':''}>caja</option>
-            <option value="ud" ${ln.modo==='ud'?'selected':''}>ud</option>
-          </select>
-        </td>
-        <td><input class="cellInput jsCant cellInput--mono" type="number" inputmode="decimal" step="0.01" value="${ln.cantidad||''}" /></td>
-        <td><input class="cellInput jsBruto cellInput--mono" type="number" inputmode="decimal" step="0.01" value="${ln.bruto||''}" /></td>
-        <td>
-          <select class="cellSelect jsEnvase">
-            <option value="">—</option>
-            ${FM.db.taras.map(t=>`<option value="${t.id}" ${ln.envaseId===t.id?'selected':''}>${escapeHtml(t.nombre)}</option>`).join('')}
-          </select>
-        </td>
-        <td><input class="cellInput jsEnvases cellInput--mono" type="number" inputmode="decimal" step="0.01" value="${ln.envases||''}" /></td>
-        <td class="cellRight jsTara">${money(ln.taraTotal||0)}</td>
-        <td><input class="cellInput jsNeto cellInput--mono" type="number" inputmode="decimal" step="0.01" value="${ln.neto||''}" /></td>
-        <td><input class="cellInput jsPrecio cellInput--mono" type="number" inputmode="decimal" step="0.01" value="${ln.precio||''}" /></td>
-        <td><input class="cellInput jsOrigen" type="text" value="${escapeHtml(ln.origen||'')}" /></td>
-        <td class="cellRight jsImporte">${money(ln.importe||0)}</td>
-        <td class="cellRight"><button class="cellDel jsDel" type="button" title="Eliminar">✕</button></td>
-      </tr>`;
-    }).join('');
-
-    // alternancia de filas la hace CSS; aquí actualizamos hint general
-    setText($('#gridHintRight'), `Líneas: ${rows.length}`);
-  }
-
-  /* =========================
-     EVENTOS PRINCIPALES (base)
-  ========================= */
-  function bindFacturaBase(){
-    on($('#btnProvGuardar'), 'click', saveProviderFromUI);
-
-    on($('#btnRegenNumero'), 'click', ()=>{
-      FM.current.numero = makeInvoiceNumber(now());
-      setText($('#facturaNumero'), FM.current.numero);
-      FM.renderQR();
-      toast('Factura','Número regenerado.','ok');
-    });
-
-    on($('#facturaFecha'), 'change', ()=>{
-      FM.current.fechaISO = $('#facturaFecha').value || toISODate(now());
-      setText($('#facturaFechaES'), isoToES(FM.current.fechaISO));
-      FM.renderQR();
-      FM.recalcInvoice();
-    });
-
-    on($('#facturaTags'), 'input', ()=>{
-      FM.current.tags = $('#facturaTags').value || '';
-    });
-    on($('#facturaNotas'), 'input', ()=>{
-      FM.current.notas = $('#facturaNotas').value || '';
-    });
-    on($('#facturaObs'), 'input', ()=>{
-      FM.current.obs = $('#facturaObs').value || '';
-    });
-
-    on($('#chkTransporte'), 'change', ()=>{
-      FM.current.chkTransporte = $('#chkTransporte').checked;
-      FM.recalcInvoice();
-    });
-
-    on($('#chkIvaIncluido'), 'change', ()=>{
-      FM.current.chkIvaIncluido = $('#chkIvaIncluido').checked;
-      FM.recalcInvoice();
-    });
-
-    on($('#btnAddIva4'), 'click', ()=>{
-      // acción rápida: fuerza 4% en ajustes y recalcula (si luego quieres, lo cambias en Ajustes)
-      FM.db.ajustes.ivaPct = 4;
-      $('#setIva').value = '4';
-      save(K.AJUST, FM.db.ajustes);
-      toast('IVA','IVA ajustado a 4%.','ok');
-      FM.recalcInvoice();
-    });
-
-    on($('#btnNuevaFactura'), 'click', ()=>{
-      FM.current = blankFactura();
-      setFacturaMetaUI();
-      fillClienteSelect();
-      renderLineasBase();
-      FM.recalcInvoice();
-      FM.renderQR();
-      toast('Factura','Nueva factura creada.','ok');
-    });
-
-    on($('#btnVaciarLineas'), 'click', ()=>{
-      FM.current.lineas = makeDefaultLineas(5);
-      renderLineasBase();
-      FM.recalcInvoice();
-      toast('Líneas','Reiniciado a 5 líneas.','ok');
-    });
-
-    on($('#btnAddLinea'), 'click', ()=>{
-      FM.current.lineas.push({
-        id: uid(), producto:'', modo:'kg', cantidad:0, bruto:0, envaseId:'', envases:0,
-        taraTotal:0, neto:0, netoManual:false, precio:0, origen:'', importe:0, hints:{lastPrices:[]}
-      });
-      renderLineasBase();
-      FM.recalcInvoice();
-    });
-
-    on($('#btnGuardarFactura'), 'click', ()=>{
-      // se completa en 3B/3C (validaciones, guardar/actualizar en listado)
-      toast('Guardar','(pendiente) Se completa en 3B/3C.', 'warn');
-    });
-
-    on($('#btnDuplicarFactura'), 'click', ()=>{
-      toast('Duplicar','(pendiente) Se completa en 3B/3C.', 'warn');
-    });
-
-    on($('#btnEliminarFactura'), 'click', ()=>{
-      toast('Eliminar','(pendiente) Se completa en 3B/3C.', 'warn');
-    });
-
-    on($('#btnGenerarPDF'), 'click', async ()=>{
-      toast('PDF','(pendiente) Motor PDF en 3C.', 'warn');
-    });
-
-    on($('#btnVerPDF'), 'click', ()=>{
-      openModal('#pdfModal');
-    });
-
-    on($('#btnPdfImprimir'), 'click', ()=>{
-      const fr = $('#pdfFrame');
-      try{ fr?.contentWindow?.print(); }catch{}
-    });
-
-    on($('#btnPdfAbrir'), 'click', ()=>{
-      const fr = $('#pdfFrame');
-      const src = fr?.getAttribute('src') || '';
-      if(src) window.open(src, '_blank');
-      else toast('PDF','No hay PDF cargado.', 'warn');
-    });
-
-    on($('#btnPdfNube'), 'click', ()=>{
-      toast('Nube','(pendiente) Upload PDF a Firebase en 3C.', 'warn');
-    });
-
-    on($('#btnWhatsApp'), 'click', ()=>{
-      toast('WhatsApp','(pendiente) Texto WhatsApp en 3C.', 'warn');
-    });
-
-    // cliente selector
-    on($('#clienteSelect'), 'change', ()=>{
-      FM.current.clienteId = $('#clienteSelect').value || '';
-      // en 3B se aplicará plantilla cliente (ivaIncluido/transporte/tags/pago)
-      toast('Cliente','Cliente seleccionado.', 'ok', 1200);
-      FM.recalcInvoice();
-    });
-
-    on($('#btnClienteNuevo'), 'click', ()=>{
-      $('#clienteSelect').value = '';
-      $('#cliNombre').value = '';
-      $('#cliNif').value = '';
-      $('#cliDir').value = '';
-      $('#cliTel').value = '';
-      $('#cliEmail').value = '';
-      toast('Cliente','Nuevo cliente (rellena y guarda).','ok');
-    });
-
-    on($('#btnClienteGuardar'), 'click', ()=>{
-      toast('Cliente','(pendiente) Guardado inline en 3B.', 'warn');
-    });
-
-    on($('#btnClienteEditarToggle'), 'click', ()=>{
-      $('#clienteForm')?.classList.toggle('hidden');
-    });
-
-    // Grid eventos base (delegación)
-    on($('#lineasBody'), 'input', (e)=>{
-      // En 3B se hace cálculo completo, aquí solo “marca cambios”
-      const tr = e.target.closest('tr');
-      if(!tr) return;
-      const id = tr.dataset.id;
-      const ln = (FM.current.lineas||[]).find(x=>x.id===id);
-      if(!ln) return;
-
-      if(e.target.classList.contains('jsProd')) ln.producto = e.target.value;
-      if(e.target.classList.contains('jsModo')) ln.modo = e.target.value;
-      if(e.target.classList.contains('jsCant')) ln.cantidad = num(e.target.value);
-      if(e.target.classList.contains('jsBruto')) ln.bruto = num(e.target.value);
-      if(e.target.classList.contains('jsEnvase')) ln.envaseId = e.target.value;
-      if(e.target.classList.contains('jsEnvases')) ln.envases = num(e.target.value);
-      if(e.target.classList.contains('jsNeto')) { ln.neto = num(e.target.value); ln.netoManual = true; }
-      if(e.target.classList.contains('jsPrecio')) ln.precio = num(e.target.value);
-      if(e.target.classList.contains('jsOrigen')) ln.origen = e.target.value;
-
-      FM.recalcInvoice();
-    });
-
-    on($('#lineasBody'), 'change', (e)=>{
-      // para select modo/envase (mismo flujo que input)
-      if(e.target.classList.contains('jsModo') || e.target.classList.contains('jsEnvase')){
-        FM.recalcInvoice();
-      }
-    });
-
-    on($('#lineasBody'), 'click', (e)=>{
-      if(!e.target.classList.contains('jsDel')) return;
-      const tr = e.target.closest('tr');
-      if(!tr) return;
-      const id = tr.dataset.id;
-      FM.current.lineas = (FM.current.lineas||[]).filter(x=>x.id !== id);
-      if(FM.current.lineas.length === 0) FM.current.lineas = makeDefaultLineas(5);
-      renderLineasBase();
-      FM.recalcInvoice();
-    });
-  }
-
-  /* =========================
-     AJUSTES: UI BASE
-  ========================= */
-  function loadAjustesToUI(){
-    const a = FM.db.ajustes || structuredClone(DEFAULT_AJUSTES);
-    $('#setIva').value = (a.ivaPct ?? 4);
-    $('#setTransporte').value = (a.transportePct ?? 10);
-    $('#setPinCont').value = (a.pinCont ?? '');
-    $('#setQrBase').value = (a.qrBase ?? DEFAULT_AJUSTES.qrBase);
-
-    $('#fbApiKey').value = a.firebase?.apiKey || '';
-    $('#fbAuthDomain').value = a.firebase?.authDomain || '';
-    $('#fbDbUrl').value = a.firebase?.databaseURL || '';
-    $('#fbProjectId').value = a.firebase?.projectId || '';
-    $('#fbAppId').value = a.firebase?.appId || '';
-    $('#fbStorageBucket').value = a.firebase?.storageBucket || '';
-  }
-
-  function bindAjustesBase(){
-    const persist = () => {
-      const a = FM.db.ajustes;
-      a.ivaPct = num($('#setIva').value) || 0;
-      a.transportePct = num($('#setTransporte').value) || 0;
-      a.pinCont = ($('#setPinCont').value || '').trim();
-      a.qrBase = ($('#setQrBase').value || '').trim() || DEFAULT_AJUSTES.qrBase;
-
-      a.firebase = {
-        apiKey: ($('#fbApiKey').value||'').trim(),
-        authDomain: ($('#fbAuthDomain').value||'').trim(),
-        databaseURL: ($('#fbDbUrl').value||'').trim(),
-        projectId: ($('#fbProjectId').value||'').trim(),
-        appId: ($('#fbAppId').value||'').trim(),
-        storageBucket: ($('#fbStorageBucket').value||'').trim()
-      };
-
-      save(K.AJUST, a);
-      FM.renderQR();
-      FM.recalcInvoice();
-    };
-
-    on($('#setIva'),'input', persist);
-    on($('#setTransporte'),'input', persist);
-    on($('#setPinCont'),'input', persist);
-    on($('#setQrBase'),'input', persist);
-
-    on($('#fbApiKey'),'input', persist);
-    on($('#fbAuthDomain'),'input', persist);
-    on($('#fbDbUrl'),'input', persist);
-    on($('#fbProjectId'),'input', persist);
-    on($('#fbAppId'),'input', persist);
-    on($('#fbStorageBucket'),'input', persist);
-
-    on($('#btnFbGuardar'),'click', ()=>{
-      persist();
-      toast('Cloud','Configuración guardada (si está completa, 3C activa Firebase).','ok');
-    });
-    on($('#btnFbTest'),'click', ()=>{
-      toast('Cloud','Test se activa en 3C (Firebase).','warn');
-    });
-    on($('#btnFbLogout'),'click', ()=>{
-      toast('Cloud','Logout se activa en 3C (Firebase).','warn');
-    });
-  }
-
-  /* =========================
-     SHORTCUTS (Ctrl+S / Ctrl+P / Ctrl+F)
-  ========================= */
-  function bindShortcuts(){
-    on(document, 'keydown', (e)=>{
-      const isMac = navigator.platform.toUpperCase().includes('MAC');
-      const ctrl = isMac ? e.metaKey : e.ctrlKey;
-
-      if(ctrl && e.key.toLowerCase() === 's'){
-        e.preventDefault();
-        $('#btnGuardarFactura')?.click();
-      }
-      if(ctrl && e.key.toLowerCase() === 'p'){
-        e.preventDefault();
-        $('#btnGenerarPDF')?.click();
-      }
-      if(ctrl && e.key.toLowerCase() === 'f'){
-        e.preventDefault();
-        $('#btnQuickSearch')?.click();
-      }
-    });
-
-    on($('#btnQuickSearch'),'click', ()=>{
-      // en 3C se abre buscador del tab actual; aquí foco rápido
-      const t = FM.ui.activeTab;
-      if(t === 'tabFacturas') $('#facturasBuscar')?.focus();
-      else if(t === 'tabClientes') $('#clientesBuscar')?.focus();
-      else if(t === 'tabProductos') $('#productosBuscar')?.focus();
-      else if(t === 'tabTaras') $('#tarasBuscar')?.focus();
-      else toast('Buscar','Ve a Facturas/Clientes/Productos/Taras para buscar.', 'warn');
-    });
-  }
-
-  /* =========================
-     STATUS PILL
-  ========================= */
-  function setStatus(localText='Local'){
-    setText($('#statusText'), localText);
-    // dot: negro por defecto; en 3C cambiará a “Cloud” si login ok
-  }
-
-  /* =========================
-     INIT
-  ========================= */
-  function init(){
-    bindModalBasics();
-    bindTabs();
-    bindPIN();
-    bindShortcuts();
-
-    seedIfEmpty();
-    loadDB();
-
-    // UI base
-    setStatus('Local');
-    setText($('#appVersion'), FM.version);
-
-    loadProviderToUI();
-    setProviderDefaultsIfEmpty();
-
-    fillClienteSelect();
-    fillContClienteSelect();
-    fillTarasForEditors();
-
-    loadAjustesToUI();
-    bindAjustesBase();
-
-    // factura base
-    setFacturaMetaUI();
-    renderLineasBase();
-
-    // Totales iniciales (se calcula real en 3B)
-    setText($('#totSubtotal'), '0,00');
-    setText($('#totTransporte'), '0,00');
-    setText($('#totIva'), '0,00');
-    setText($('#totTotal'), '0,00');
-    setText($('#totPendiente'), '0,00');
-
-    // bind factura base (después de render grid)
-    bindFacturaBase();
-
-    // QR base (texto fallback, render real en 3C)
-    FM.renderQR();
-
-    // 3C: cloud init opcional
-    // FM.cloud.initIfConfigured();
-
-    toast('Listo','Factu Miral cargado (Offline).', 'ok');
-  }
-
-  // Render QR fallback simple (texto). En 3C se sustituye por QR real.
-  FM.renderQR = function(){
-    try{
-      const provNif = ($('#provNif')?.value || FM.db.proveedor?.nif || '').trim();
-      const numFac = (FM.current?.numero || '').trim();
-      const fecha = (FM.current?.fechaISO || '').trim();
-      const total = money(FM.current?.totals?.total || 0);
-
-      const base = (FM.db.ajustes?.qrBase || DEFAULT_AJUSTES.qrBase);
-      const txt = base
-        .replaceAll('{NIF}', provNif || '')
-        .replaceAll('{NUM}', numFac || '')
-        .replaceAll('{FECHA}', fecha || '')
-        .replaceAll('{TOTAL}', total || '');
-
-      setText($('#qrText'), txt || '—');
-
-      const wrap = $('#qrCanvasWrap');
-      if(wrap){
-        wrap.innerHTML = `<div class="center" style="text-align:center">
-          <div style="font-family:var(--mono);font-weight:900;font-size:12px;">QR (pendiente)</div>
-          <div style="margin-top:6px;font-family:var(--mono);font-size:11px;color:#5b6474;">Se genera en 3C</div>
-        </div>`;
-      }
-    }catch{
-      // no crash
-    }
-  };
-
-  // Start
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', init);
-  }else{
-    init();
-  }
-/* =========================
-   PATCH CARGA: PRODUCTOS + FACTURAS
-   - Evita que queden en blanco si la KEY no existe o si no se ejecutó seed
-========================= */
-(function patchLoadCore(){
-  // 1) Asegurar objeto K (keys) si no existe o cambió nombre
-  window.K = window.K || {};
-  K.PROD    = K.PROD    || K_PRODUCTOS  || 'factumiral_productos';
-  K.FACT    = K.FACT    || K_FACTURAS   || 'factumiral_facturas';
-  K.CLIENTE = K.CLIENTE || K_CLIENTES   || 'factumiral_clientes';
-  K.TARAS   = K.TARAS   || 'factumiral_taras';
-  K.AJUSTES = K.AJUSTES || 'factumiral_ajustes';
-  K.VENTAS  = K.VENTAS  || 'factumiral_ventas';
-
-  // 2) Cargar desde LocalStorage SIEMPRE (y si no hay, fallback)
-  FM.db = FM.db || {};
-  FM.db.productos = load(K.PROD, Array.isArray(FM.db.productos) ? FM.db.productos : []);
-  FM.db.facturas  = load(K.FACT, Array.isArray(FM.db.facturas) ? FM.db.facturas : []);
-  FM.db.clientes  = load(K.CLIENTE, Array.isArray(FM.db.clientes) ? FM.db.clientes : []);
-  FM.db.taras     = load(K.TARAS, Array.isArray(FM.db.taras) ? FM.db.taras : []);
-  FM.db.ajustes   = load(K.AJUSTES, FM.db.ajustes || {});
-  FM.db.ventas    = load(K.VENTAS, Array.isArray(FM.db.ventas) ? FM.db.ventas : []);
-
-  // 3) Seed productos si está vacío (tu lista oficial)
-  const seed = (arr)=> Array.from(new Set(arr.map(x=>String(x).trim()).filter(Boolean)))
-    .map(n=>({ id: uid(), nombre: n.toUpperCase(), modo:'kg', kgCaja:0, pKg:0, pCaja:0, pUd:0, coste:0, origen:'', envaseId:'', hist:[] }));
-
-  if(!Array.isArray(FM.db.productos) || FM.db.productos.length === 0){
-    if(Array.isArray(window.OFFICIAL_PRODUCTS) && window.OFFICIAL_PRODUCTS.length){
-      FM.db.productos = seed(window.OFFICIAL_PRODUCTS);
-      save(K.PROD, FM.db.productos);
-    }
-  }
-
-  // 4) Asegurar facturas array
-  if(!Array.isArray(FM.db.facturas)) FM.db.facturas = [];
-  save(K.FACT, FM.db.facturas); // asegura key creada
-
-  // 5) Debug visible (solo consola)
-  console.log('[FACTU MIRAL] productos:', FM.db.productos.length, 'facturas:', FM.db.facturas.length);
-})();
-
-/* =========================================================
-PARTE 3B/3 — FACTU MIRAL (B/W PRO)
-Archivo: app.js  (CONTINÚA DESPUÉS DE 3A)
-
-⚠️ CORRECCIÓN IMPORTANTE (para cierres perfectos):
-En la PARTE 3A que te di antes, al final aparece:
-})(); // FIN PARTE 3A
-👉 BORRA ESA ÚLTIMA LÍNEA (solo esa), porque si no, 3B/3C quedarían fuera del cierre.
-Luego pega 3B y 3C justo después. (No borres nada más.)
-========================================================= */
-
-/* =========================
-   BUSCADORES / MATCH
-========================= */
-function normName(s){
-  return (s ?? '').toString().trim().toUpperCase();
-}
-function findProductoByName(name){
-  const n = normName(name);
-  if(!n) return null;
-  return (FM.db.productos || []).find(p => normName(p.nombre) === n) || null;
-}
-function findClienteById(id){
-  return (FM.db.clientes || []).find(c => c.id === id) || null;
-}
-function findTaraById(id){
-  return (FM.db.taras || []).find(t => t.id === id) || null;
-}
-function sumPagos(pagos){
-  return (pagos || []).reduce((a,p)=> a + num(p.importe), 0);
-}
-
-/* =========================
-   VALIDACIONES (soft)
-========================= */
-function pushWarn(list, msg){
-  if(!msg) return;
-  list.push(msg);
-}
-function renderWarnings(warns){
-  const box = $('#warnings');
-  if(!box) return;
-  box.innerHTML = '';
-  if(!warns || warns.length===0) return;
-  warns.slice(0,6).forEach(w=>{
-    const d = document.createElement('div');
-    d.className = 'warnItem';
-    d.textContent = w;
-    box.appendChild(d);
-  });
-}
-
-/* =========================
-   HINTS (últimos precios SOLO pantalla)
-========================= */
-function updateLineHints(tr, ln){
-  const hint = $('.jsHint', tr);
-  if(!hint) return;
-  const prod = findProductoByName(ln.producto);
-  if(!prod || !Array.isArray(prod.hist) || prod.hist.length === 0){
-    hint.textContent = '';
-    return;
-  }
-  const items = prod.hist.slice(0,5).map(h => {
-    const f = isoToES(h.fechaISO || '');
-    const px = money(h.precio || 0);
-    const m = (h.modo || '').toUpperCase();
-    return `${f} · ${px}€ · ${m}`;
-  });
-  hint.textContent = `Últimos: ${items.join(' | ')}`;
-}
-
-/* =========================
-   AUTORELLENO ENVASES
-   - Si hay envase y envases=0, por defecto envases=cantidad
-   - Especialmente útil en KG: "10 cajas" => envases=10 => tara=0,3*10
-========================= */
-function autoEnvases(ln){
-  const hasEnv = !!ln.envaseId;
-  if(!hasEnv) return;
-  const env = num(ln.envases);
-  const cant = num(ln.cantidad);
-  if(env > 0) return;
-
-  // Autorelleno recomendado
-  if(cant > 0){
-    ln.envases = cant;
-  }
-}
-
-/* =========================
-   CÁLCULOS POR LÍNEA (CORRECTOS)
-   KG:
-     taraTotal = envases * taraUnidad
-     netoAuto  = bruto - taraTotal
-     importe   = neto * precio
-   CAJA:
-     importe   = cantidad * precioCaja
-     neto info = cantidad * kgCaja (si existe)
-   UD:
-     importe   = cantidad * precioUd
-========================= */
-function calcLinea(ln){
-  const warns = [];
-  const modo = (ln.modo || 'kg');
-  const prod = findProductoByName(ln.producto);
-
-  // Defaults de producto (solo ayuda, NO sobrescribe texto producto)
-  if(prod){
-    // origen por defecto si vacío
-    if(!ln.origen && prod.origen) ln.origen = prod.origen;
-
-    // modo por defecto si vacío
-    if(!ln.modo) ln.modo = prod.modo || 'kg';
-
-    // precio sugerido si el usuario no puso precio (0)
-    if(num(ln.precio) === 0){
-      if(modo === 'kg'  && num(prod.pKg)   > 0) ln.precio = num(prod.pKg);
-      if(modo === 'caja'&& num(prod.pCaja) > 0) ln.precio = num(prod.pCaja);
-      if(modo === 'ud'  && num(prod.pUd)   > 0) ln.precio = num(prod.pUd);
-    }
-
-    // envase por defecto si vacío
-    if(!ln.envaseId && prod.envaseId) ln.envaseId = prod.envaseId;
-  }
-
-  // Tara
-  autoEnvases(ln);
-  const taraObj = findTaraById(ln.envaseId);
-  const taraUnit = taraObj ? num(taraObj.peso) : 0;
-  const envases = num(ln.envases);
-  ln.taraTotal = round2(envases * taraUnit);
-
-  // Validación precio
-  if(num(ln.precio) <= 0 && (ln.producto || num(ln.cantidad) || num(ln.bruto))) {
-    pushWarn(warns, `Precio vacío/0 en "${ln.producto || 'línea'}"`);
-  }
-
-  // Cálculo por modo
-  if(modo === 'kg'){
-    const bruto = num(ln.bruto);
-    if(bruto > 0 && ln.taraTotal > bruto){
-      pushWarn(warns, `Tara > bruto en "${ln.producto || 'línea'}"`);
-    }
-
-    // Neto auto si no está en manual
-    if(!ln.netoManual){
-      ln.neto = round2(bruto - ln.taraTotal);
-    }
-
-    if(num(ln.neto) > bruto && bruto > 0){
-      pushWarn(warns, `Neto > bruto en "${ln.producto || 'línea'}"`);
-    }
-
-    ln.importe = round2(num(ln.neto) * num(ln.precio));
-  }
-
-  if(modo === 'caja'){
-    const cant = num(ln.cantidad);
-    ln.importe = round2(cant * num(ln.precio));
-
-    // Neto informativo si existe kg/caja
-    if(!ln.netoManual){
-      const kgCaja = prod ? num(prod.kgCaja) : 0;
-      if(kgCaja > 0){
-        ln.neto = round2(cant * kgCaja);
-      }else{
-        // si no hay kgCaja, dejamos neto como está (0 por defecto)
-        ln.neto = num(ln.neto) || 0;
-      }
-    }
-  }
-
-  if(modo === 'ud'){
-    const cant = num(ln.cantidad);
-    ln.importe = round2(cant * num(ln.precio));
-    if(!ln.netoManual){
-      // neto no aplica, mantenemos 0
-      ln.neto = num(ln.neto) || 0;
-    }
-  }
-
-  // limpieza: si la línea está vacía, no “ensuciar” warnings
-  const isEmpty =
-    !ln.producto && num(ln.cantidad)===0 && num(ln.bruto)===0 && num(ln.precio)===0 && !ln.origen;
-  if(isEmpty){
-    ln.taraTotal = 0;
-    ln.importe = 0;
-    if(!ln.netoManual) ln.neto = 0;
-  }
-
-  return warns;
-}
-
-/* =========================
-   REFRESCAR UNA FILA EN UI
-========================= */
-function syncLineaToRow(tr, ln){
-  if(!tr) return;
-  const tTara = $('.jsTara', tr);
-  const tImp  = $('.jsImporte', tr);
-  if(tTara) tTara.textContent = money(ln.taraTotal || 0);
-  if(tImp)  tImp.textContent  = money(ln.importe || 0);
-
-  // neto auto: actualizar input neto solo si NO manual
-  const inNeto = $('.jsNeto', tr);
-  if(inNeto && !ln.netoManual){
-    inNeto.value = (num(ln.neto) ? String(ln.neto).replace('.', '.') : '');
-  }
-
-  // envases auto: si se autollenó, reflejar
-  const inEnv = $('.jsEnvases', tr);
-  if(inEnv && num(inEnv.value)===0 && num(ln.envases)>0){
-    inEnv.value = ln.envases;
-  }
-
-  updateLineHints(tr, ln);
-}
-
-/* =========================
-   RECALC FACTURA (tiempo real)
-========================= */
-FM.recalcInvoice = function(){
-  try{
-    const warns = [];
-
-    const lines = FM.current.lineas || [];
-    const tbody = $('#lineasBody');
-
-    lines.forEach((ln, idx)=>{
-      const w = calcLinea(ln);
-      w.forEach(x=>pushWarn(warns, x));
-
-      // sync UI row if exists
-      if(tbody){
-        const tr = tbody.querySelector(`tr[data-id="${ln.id}"]`);
-        if(tr) syncLineaToRow(tr, ln);
-      }
-    });
-
-    // Totales
-    const subtotal = round2(lines.reduce((a,l)=> a + num(l.importe), 0));
-    const tPct = num(FM.db.ajustes?.transportePct ?? 10);
-    const ivaPct = num(FM.db.ajustes?.ivaPct ?? 4);
-
-    const transporte = FM.current.chkTransporte ? round2(subtotal * tPct / 100) : 0;
-    const base = round2(subtotal + transporte);
-
-    // IVA: si IVA incluido, NO se imprime desglose (aquí lo dejamos en 0 para totals visuales)
-    const ivaCalc = round2(base * ivaPct / 100);
-    const iva = FM.current.chkIvaIncluido ? 0 : ivaCalc;
-
-    const total = FM.current.chkIvaIncluido ? base : round2(base + iva);
-    const pagado = round2(sumPagos(FM.current.pagos));
-    const pendiente = round2(total - pagado);
-
-    FM.current.totals = {
-      subtotal, transporte, iva,
-      ivaInterno: ivaCalc, // para contabilidad interna (aunque “IVA incluido” no lo muestre)
-      total, pendiente
-    };
-
-    // Estado automático
-    if(pendiente <= 0 && total > 0){
-      FM.current.estado = 'pagada';
-    }else if(pagado > 0 && pendiente > 0){
-      FM.current.estado = 'parcial';
-    }else{
-      FM.current.estado = 'impagada';
-    }
-
-    // Pintar totales
-    setText($('#totSubtotal'), money(subtotal));
-    setText($('#totTransporte'), money(transporte));
-    setText($('#totIva'), money(iva));
-    setText($('#totTotal'), money(total));
-    setText($('#totPendiente'), money(Math.max(0,pendiente)));
-
-    // warnings
-    renderWarnings(warns);
-
-    // QR
-    FM.renderQR();
-  }catch(err){
-    // no crash
-    console.warn(err);
-  }
-};
-
-/* =========================
-   GUARDAR / DUPLICAR / ELIMINAR FACTURA
-========================= */
-function snapshotProveedor(){
-  return {
-    nombre: ($('#provNombre')?.value || '').trim(),
-    nif:    ($('#provNif')?.value || '').trim(),
-    dir:    ($('#provDir')?.value || '').trim(),
-    tel:    ($('#provTel')?.value || '').trim(),
-    email:  ($('#provEmail')?.value || '').trim()
-  };
-}
-function snapshotCliente(){
-  const cid = FM.current.clienteId;
-  const c = findClienteById(cid);
-  if(!c) return null;
-  return structuredClone({
-    nombre: c.nombre, alias: c.alias, nif: c.nif, dir: c.dir, tel: c.tel, email: c.email
-  });
-}
-function isFacturaValid(){
-  // “críticos”: proveedor nif + numero + fecha + cliente + al menos 1 línea con producto
-  const provNif = ($('#provNif')?.value || '').trim();
-  if(!provNif) return {ok:false, msg:'Falta NIF del proveedor.'};
-
-  if(!FM.current.numero) return {ok:false, msg:'Falta número de factura.'};
-  if(!FM.current.fechaISO) return {ok:false, msg:'Falta fecha de factura.'};
-  if(!FM.current.clienteId) return {ok:false, msg:'Selecciona un cliente.'};
-
-  const hasLine = (FM.current.lineas||[]).some(l => normName(l.producto));
-  if(!hasLine) return {ok:false, msg:'Añade al menos 1 producto.'};
-
-  return {ok:true, msg:''};
-}
-
-function updatePriceHistoryFromInvoice(){
-  const fechaISO = FM.current.fechaISO;
-  (FM.current.lineas||[]).forEach(ln=>{
-    const p = findProductoByName(ln.producto);
-    if(!p) return;
-    const precio = num(ln.precio);
-    if(precio <= 0) return;
-
-    const entry = { fechaISO, precio, modo: ln.modo || 'kg' };
-    p.hist = Array.isArray(p.hist) ? p.hist : [];
-    p.hist.unshift(entry);
-
-    // dedupe simple (misma fecha+precio+modo)
-    const seen = new Set();
-    p.hist = p.hist.filter(h=>{
-      const k = `${h.fechaISO}|${h.precio}|${h.modo}`;
-      if(seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    }).slice(0,5);
-
-    // también guardamos precios base por modo si quieres (opcional y útil):
-    if(ln.modo === 'kg') p.pKg = precio;
-    if(ln.modo === 'caja') p.pCaja = precio;
-    if(ln.modo === 'ud') p.pUd = precio;
-  });
-
-  save(K.PROD, FM.db.productos);
-}
-
-function saveFactura(){
-  FM.recalcInvoice();
-
-  const v = isFacturaValid();
-  if(!v.ok){
-    toast('Falta', v.msg, 'warn');
-    return;
-  }
-
-  FM.current.provSnap = snapshotProveedor();
-  FM.current.clienteSnap = snapshotCliente();
-
-  const idx = (FM.db.facturas||[]).findIndex(f => f.id === FM.current.id);
-  if(idx >= 0){
-    FM.db.facturas[idx] = structuredClone(FM.current);
-  }else{
-    FM.db.facturas.unshift(structuredClone(FM.current));
-  }
-  save(K.FACT, FM.db.facturas);
-
-  updatePriceHistoryFromInvoice();
-
-  toast('Guardado', `Factura ${FM.current.numero} guardada.`, 'ok');
-  FM.renderLists();
-}
-
-function duplicateFactura(){
-  FM.recalcInvoice();
-  const src = structuredClone(FM.current);
-
-  const d = now();
-  src.id = uid();
-  src.numero = makeInvoiceNumber(d);
-  src.fechaISO = toISODate(d);
-
-  // reset pagos/estado/pdf/cloud
-  src.pagos = [];
-  src.estado = 'impagada';
-  src.pdf = { lastBlobUrl: '' };
-  src.cloud = { pdfUrl: '' };
-
-  // netoManual se respeta; si quieres reiniciar, quítalo aquí
-  FM.current = src;
-
-  setFacturaMetaUI();
-  fillClienteSelect();
-  renderLineasBase();
-  FM.recalcInvoice();
-  toast('Duplicada', `Nueva ${FM.current.numero}`, 'ok');
-}
-
-function deleteFactura(){
-  const numFac = FM.current.numero;
-  FM.db.facturas = (FM.db.facturas||[]).filter(f => f.id !== FM.current.id);
-  save(K.FACT, FM.db.facturas);
-
-  FM.current = blankFactura();
-  setFacturaMetaUI();
-  fillClienteSelect();
-  renderLineasBase();
-  FM.recalcInvoice();
-
-  toast('Eliminada', `${numFac} eliminada.`, 'ok');
-  FM.renderLists();
-}
-
-/* enganchar botones reales (si existen en tu index) */
-(function bindFacturaButtons_3B(){
-  on($('#btnGuardarFactura'), 'click', saveFactura);
-  on($('#btnDuplicarFactura'), 'click', duplicateFactura);
-  on($('#btnEliminarFactura'), 'click', deleteFactura);
-})();
-
-/* =========================
-   CLIENTE INLINE (en FACTURA)
-========================= */
-function clientInlineToUI(c){
-  $('#cliNombre').value = c?.nombre || '';
-  $('#cliNif').value    = c?.nif || '';
-  $('#cliDir').value    = c?.dir || '';
-  $('#cliTel').value    = c?.tel || '';
-  $('#cliEmail').value  = c?.email || '';
-}
-function applyClienteTemplateToFactura(c){
-  if(!c || !c.tpl) return;
-
-  // IVA incluido
-  if(typeof c.tpl.ivaIncluido === 'boolean'){
-    FM.current.chkIvaIncluido = !!c.tpl.ivaIncluido;
-    $('#chkIvaIncluido').checked = FM.current.chkIvaIncluido;
-  }
-  // transporte
-  if(typeof c.tpl.transporte === 'boolean'){
-    FM.current.chkTransporte = !!c.tpl.transporte;
-    $('#chkTransporte').checked = FM.current.chkTransporte;
-  }
-  // tags automáticos (no pisa si ya hay)
-  if(c.tpl.tags && !(FM.current.tags||'').trim()){
-    FM.current.tags = c.tpl.tags;
-    $('#facturaTags').value = FM.current.tags;
-  }
-  // método pago
-  if(c.tpl.pago){
-    FM.current.metodoPago = c.tpl.pago.toLowerCase();
-    $('#pagoMetodo').value = FM.current.metodoPago;
-  }
-  FM.recalcInvoice();
-}
-
-(function bindClienteInline_3B(){
-  // cuando cambias selector: rellena inline
-  on($('#clienteSelect'), 'change', ()=>{
-    const cid = $('#clienteSelect').value || '';
-    FM.current.clienteId = cid;
-    const c = findClienteById(cid);
-    if(c){
-      clientInlineToUI(c);
-      applyClienteTemplateToFactura(c);
-    }
-    FM.recalcInvoice();
-  });
-
-  on($('#btnClienteGuardar'), 'click', ()=>{
-    const cid = $('#clienteSelect')?.value || '';
-    const data = {
-      nombre: ($('#cliNombre').value||'').trim(),
-      nif:    ($('#cliNif').value||'').trim(),
-      dir:    ($('#cliDir').value||'').trim(),
-      tel:    ($('#cliTel').value||'').trim(),
-      email:  ($('#cliEmail').value||'').trim()
-    };
-    if(!data.nombre){
-      toast('Cliente','Falta nombre.', 'warn'); return;
-    }
-
-    if(cid){
-      const c = findClienteById(cid);
-      if(c){
-        c.nombre = data.nombre; c.nif=data.nif; c.dir=data.dir; c.tel=data.tel; c.email=data.email;
-        save(K.CLIENTE, FM.db.clientes);
-        toast('Cliente','Actualizado.', 'ok');
-      }
-    }else{
-      const c = {
-        id: uid(),
-        nombre: data.nombre,
-        alias: '',
-        nif: data.nif,
-        dir: data.dir,
-        tel: data.tel,
-        email: data.email,
-        notas: '',
-        tpl: { ivaIncluido:false, transporte:false, pago:'', tags:'', notaStd:'' }
-      };
-      FM.db.clientes.unshift(c);
-      save(K.CLIENTE, FM.db.clientes);
-      fillClienteSelect();
-      $('#clienteSelect').value = c.id;
-      FM.current.clienteId = c.id;
-      toast('Cliente','Creado.', 'ok');
-    }
-    fillContClienteSelect();
-    FM.renderLists();
-  });
-})();
-
-/* =========================
-   PAGOS (parciales)
-========================= */
-function renderPagos(){
-  const box = $('#payList');
-  if(!box) return;
-  const pagos = FM.current.pagos || [];
-  if(pagos.length===0){
-    box.innerHTML = `<div style="padding:12px;color:#5b6474;font-weight:800">Sin pagos</div>`;
-    return;
-  }
-  box.innerHTML = pagos.map(p=>`
-    <div class="totRow" style="margin:10px">
-      <div>
-        <div class="totKey">${escapeHtml(isoToES(p.fechaISO||''))}</div>
-        <div class="hint">${escapeHtml((p.metodo||FM.current.metodoPago||'').toString())}</div>
-      </div>
-      <div class="totVal">${money(p.importe)}€</div>
-      <button class="btn btn--danger btn--xs jsPayDel" data-id="${p.id}" type="button">Eliminar</button>
-    </div>
-  `).join('');
-
-  $$('.jsPayDel', box).forEach(b=>{
-    on(b,'click', ()=>{
-      const id = b.dataset.id;
-      FM.current.pagos = (FM.current.pagos||[]).filter(x=>x.id!==id);
-      renderPagos();
-      FM.recalcInvoice();
-    });
-  });
-}
-
-(function bindPagos_3B(){
-  const btn = $('#btnPagoAdd');
-  if(btn){
-    on(btn,'click', ()=>{
-      const imp = num($('#pagoImporte')?.value);
-      const fechaISO = ($('#pagoFecha')?.value || FM.current.fechaISO || toISODate(now()));
-      const metodo = ($('#pagoMetodo')?.value || FM.current.metodoPago || 'efectivo');
-
-      if(imp <= 0){
-        toast('Pago','Importe inválido.', 'warn'); return;
-      }
-      FM.current.metodoPago = metodo;
-      FM.current.pagos = FM.current.pagos || [];
-      FM.current.pagos.unshift({ id: uid(), fechaISO, importe: round2(imp), metodo });
-
-      $('#pagoImporte').value = '';
-      renderPagos();
-      FM.recalcInvoice();
-      toast('Pago','Añadido.', 'ok');
-    });
-  }
-
-  // render inicial
-  renderPagos();
-
-  on($('#pagoMetodo'),'change', ()=>{
-    FM.current.metodoPago = $('#pagoMetodo').value || 'efectivo';
-  });
-})();
-
-/* =========================
-   LISTADOS (Facturas/Clientes/Productos/Taras)
-========================= */
-function renderFacturasList(){
-  const wrap = $('#facturasList');
-  if(!wrap) return;
-
-  const q = ($('#facturasBuscar')?.value || '').trim().toUpperCase();
-  const rows = (FM.db.facturas||[]).filter(f=>{
-    if(!q) return true;
-    const numf = (f.numero||'').toUpperCase();
-    const cli  = (f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '').toUpperCase();
-    const tags = (f.tags||'').toUpperCase();
-    const fecha = (f.fechaISO||'').toUpperCase();
-    return numf.includes(q) || cli.includes(q) || tags.includes(q) || fecha.includes(q);
-  });
-
-  wrap.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead>
-          <tr><th>Fecha</th><th>Nº</th><th>Cliente</th><th>Tags</th><th>Total</th><th>Estado</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${rows.map(f=>{
-            const cli = f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—';
-            return `
-              <tr>
-                <td class="mono">${escapeHtml(isoToES(f.fechaISO))}</td>
-                <td class="mono"><b>${escapeHtml(f.numero||'')}</b></td>
-                <td>${escapeHtml(cli)}</td>
-                <td class="mono">${escapeHtml(f.tags||'')}</td>
-                <td class="mono">${money(f.totals?.total||0)}€</td>
-                <td class="mono">${escapeHtml(f.estado||'')}</td>
-                <td style="white-space:nowrap">
-                  <button class="btn btn--xs jsFacEdit" data-id="${f.id}" type="button">Editar</button>
-                </td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  $$('.jsFacEdit', wrap).forEach(b=>{
-    on(b,'click', ()=>{
-      const id = b.dataset.id;
-      const f = (FM.db.facturas||[]).find(x=>x.id===id);
-      if(!f) return;
-      FM.current = structuredClone(f);
-
-      // UI
-      setFacturaMetaUI();
-      fillClienteSelect();
-      renderLineasBase();
-      renderPagos();
-      FM.recalcInvoice();
-
-      setActiveTab('tabFactura');
-      toast('Factura','Abierta para edición.', 'ok');
-    });
-  });
-}
-
-function renderClientesList(){
-  const wrap = $('#clientesList');
-  if(!wrap) return;
-
-  const q = ($('#clientesBuscar')?.value || '').trim().toUpperCase();
-  const rows = (FM.db.clientes||[]).filter(c=>{
-    if(!q) return true;
-    return (c.nombre||'').toUpperCase().includes(q) ||
-           (c.nif||'').toUpperCase().includes(q) ||
-           (c.dir||'').toUpperCase().includes(q);
-  });
-
-  wrap.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead>
-          <tr><th>Nombre</th><th>NIF/CIF</th><th>Dirección</th><th>Tel</th><th>Email</th></tr>
-        </thead>
-        <tbody>
-          ${rows.map(c=>`
-            <tr>
-              <td><b>${escapeHtml(c.nombre||'')}</b></td>
-              <td class="mono">${escapeHtml(c.nif||'')}</td>
-              <td>${escapeHtml(c.dir||'')}</td>
-              <td class="mono">${escapeHtml(c.tel||'')}</td>
-              <td class="mono">${escapeHtml(c.email||'')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderProductosList(){
-  const wrap = $('#productosList');
-  if(!wrap) return;
-
-  const q = ($('#productosBuscar')?.value || '').trim().toUpperCase();
-  const rows = (FM.db.productos||[]).filter(p=>{
-    if(!q) return true;
-    return (p.nombre||'').toUpperCase().includes(q);
-  }).slice(0,800); // seguridad UI
-
-  wrap.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead>
-          <tr><th>Producto</th><th>Modo</th><th>€/kg</th><th>€/caja</th><th>€/ud</th><th>Kg/caja</th><th>Envase</th></tr>
-        </thead>
-        <tbody>
-          ${rows.map(p=>{
-            const env = p.envaseId ? (findTaraById(p.envaseId)?.nombre || '') : '';
-            return `
-              <tr>
-                <td><b>${escapeHtml(p.nombre||'')}</b></td>
-                <td class="mono">${escapeHtml((p.modo||'kg').toUpperCase())}</td>
-                <td class="mono">${money(p.pKg||0)}</td>
-                <td class="mono">${money(p.pCaja||0)}</td>
-                <td class="mono">${money(p.pUd||0)}</td>
-                <td class="mono">${money(p.kgCaja||0)}</td>
-                <td>${escapeHtml(env)}</td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderTarasList(){
-  const wrap = $('#tarasList');
-  if(!wrap) return;
-
-  const q = ($('#tarasBuscar')?.value || '').trim().toUpperCase();
-  const rows = (FM.db.taras||[]).filter(t=>{
-    if(!q) return true;
-    return (t.nombre||'').toUpperCase().includes(q);
-  });
-
-  wrap.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead>
-          <tr><th>Envase/Tara</th><th>Peso (kg)</th><th>Notas</th></tr>
-        </thead>
-        <tbody>
-          ${rows.map(t=>`
-            <tr>
-              <td><b>${escapeHtml(t.nombre||'')}</b></td>
-              <td class="mono">${money(t.peso||0)}</td>
-              <td>${escapeHtml(t.notas||'')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-/* Hook renderLists global */
-FM.renderLists = function(){
-  try{
-    renderFacturasList();
-    renderClientesList();
-    renderProductosList();
-    renderTarasList();
-  }catch(e){
-    console.warn(e);
-  }
-};
-
-/* binds de búsqueda */
-(function bindSearch_3B(){
-  on($('#facturasBuscar'),'input', ()=> renderFacturasList());
-  on($('#clientesBuscar'),'input', ()=> renderClientesList());
-  on($('#productosBuscar'),'input', ()=> renderProductosList());
-  on($('#tarasBuscar'),'input', ()=> renderTarasList());
-})();
-
-/* =========================
-   ENTRADA PRO: ENTER AVANZA + CREA NUEVA LÍNEA
-========================= */
-(function bindEnterFlow_3B(){
-  const body = $('#lineasBody');
-  if(!body) return;
-
-  on(body, 'keydown', (e)=>{
-    if(e.key !== 'Enter') return;
-
-    const tr = e.target.closest('tr');
-    if(!tr) return;
-
-    const focusables = [
-      '.jsProd', '.jsModo', '.jsCant', '.jsBruto', '.jsEnvase', '.jsEnvases',
-      '.jsNeto', '.jsPrecio', '.jsOrigen'
-    ];
-    const list = focusables.map(sel => $(sel, tr)).filter(Boolean);
-
-    const idx = list.indexOf(e.target);
-    if(idx < 0) return;
-
-    e.preventDefault();
-
-    // si último campo => crear línea y foco producto nueva
-    if(idx === list.length - 1){
-      $('#btnAddLinea')?.click();
-      setTimeout(()=>{
-        const lastTr = body.querySelector('tr:last-child');
-        const inp = lastTr ? $('.jsProd', lastTr) : null;
-        inp?.focus();
-      }, 30);
-      return;
-    }
-
-    // avanzar foco
-    const next = list[idx+1];
-    next?.focus();
-    next?.select?.();
-  });
-})();
-// Fuerza refresco del listado tras guardar
-const _oldSaveFactura = saveFactura;
-saveFactura = function(){
-  _oldSaveFactura();
-  // recarga desde storage por seguridad
-  FM.db.facturas = load(K.FACT, FM.db.facturas || []);
-  FM.renderLists?.();
-};
-
-/* =========================
-   FIN PARTE 3B (NO CIERRES AQUÍ)
-========================= */
-/* =========================================================
-PARTE 3C/3 — FACTU MIRAL (B/W PRO)
-Archivo: app.js  (PEGAR DESPUÉS DE 3B)
-
-✅ Esta parte añade:
-- QR AEAT REAL (canvas) + copiar texto
-- WhatsApp PRO
-- PDF PRO (jsPDF si existe; si no, vista imprimible sin crash) + visor interno
-- “Suma y sigue” + numeración páginas si hay jsPDF
-- Contabilidad 🔒 (PIN) KPIs + filtros + export CSV
-- Ventas diarias 🔒 (PIN 8410) San Pablo/San Lesmes/Santiago + reportes
-- CRUD Clientes/Productos/Taras (si existen los elementos en el HTML)
-- Cloud Firebase opcional (0 crash si no hay config o sin internet)
-========================================================= */
-
-/* =========================
-   COMPAT: si falta algún elemento, NO CRASHEA
-========================= */
-function elExists(id){ return !!document.getElementById(id.replace('#','')); }
-function safeSetVal(id, v){ const e=$(id); if(e) e.value = v; }
-function safeGetVal(id){ const e=$(id); return e ? e.value : ''; }
-
-/* =========================
-   QR REAL (canvas) — mini QR generator (ligero)
-   - No depende de internet
-========================= */
-/* eslint-disable */
-function _qr_make(text, ecc){
-  // Basado en qrcode-generator (K. Arase) — versión compacta
-  // ecc: 'L','M','Q','H'
-  const QRMode = { MODE_8BIT_BYTE: 1 };
-  const QRErrorCorrectLevel = { L:1, M:0, Q:3, H:2 };
-  const PAD0 = 0xEC, PAD1 = 0x11;
-
-  function _b2(i){ return i<10?'0'+i:''+i; }
-  function _utf8(s){
-    const out=[]; for(let i=0;i<s.length;i++){
-      const c=s.charCodeAt(i);
-      if(c<0x80) out.push(c);
-      else if(c<0x800){ out.push(0xC0|(c>>6), 0x80|(c&0x3F)); }
-      else { out.push(0xE0|(c>>12), 0x80|((c>>6)&0x3F), 0x80|(c&0x3F)); }
-    } return out;
-  }
-
-  function QRBitBuffer(){ this.buffer=[]; this.length=0; }
-  QRBitBuffer.prototype = {
-    get(i){ const b=Math.floor(i/8); return ((this.buffer[b] >>> (7 - i%8)) & 1) === 1; },
-    put(num, len){
-      for(let i=0;i<len;i++) this.putBit(((num >>> (len - i - 1)) & 1) === 1);
-    },
-    putBit(bit){
-      const b=Math.floor(this.length/8);
-      if(this.buffer.length<=b) this.buffer.push(0);
-      if(bit) this.buffer[b] |= (0x80 >>> (this.length % 8));
-      this.length++;
-    }
-  };
-
-  function QRPolynomial(num, shift){
-    let offset=0;
-    while(offset<num.length && num[offset]===0) offset++;
-    this.num = new Array(num.length-offset+shift);
-    for(let i=0;i<num.length-offset;i++) this.num[i]=num[i+offset];
-    for(let i=0;i<shift;i++) this.num[num.length-offset+i]=0;
-  }
-  QRPolynomial.prototype = {
-    get(i){ return this.num[i]; },
-    getLength(){ return this.num.length; },
-    multiply(e){
-      const num = new Array(this.getLength()+e.getLength()-1).fill(0);
-      for(let i=0;i<this.getLength();i++){
-        for(let j=0;j<e.getLength();j++){
-          num[i+j] ^= QRMath.gexp(QRMath.glog(this.get(i)) + QRMath.glog(e.get(j)));
-        }
-      }
-      return new QRPolynomial(num, 0);
-    },
-    mod(e){
-      if(this.getLength()-e.getLength()<0) return this;
-      const ratio = QRMath.glog(this.get(0)) - QRMath.glog(e.get(0));
-      const num = this.num.slice();
-      for(let i=0;i<e.getLength();i++) num[i] ^= QRMath.gexp(QRMath.glog(e.get(i)) + ratio);
-      return new QRPolynomial(num, 0).mod(e);
-    }
-  };
-
-  const QRMath = {
-    EXP_TABLE: new Array(256),
-    LOG_TABLE: new Array(256),
-    glog(n){
-      if(n<1) throw new Error("glog");
-      return this.LOG_TABLE[n];
-    },
-    gexp(n){
-      while(n<0) n += 255;
-      while(n>=256) n -= 255;
-      return this.EXP_TABLE[n];
-    }
-  };
-  for(let i=0;i<8;i++) QRMath.EXP_TABLE[i]=1<<i;
-  for(let i=8;i<256;i++) QRMath.EXP_TABLE[i]=QRMath.EXP_TABLE[i-4]^QRMath.EXP_TABLE[i-5]^QRMath.EXP_TABLE[i-6]^QRMath.EXP_TABLE[i-8];
-  for(let i=0;i<255;i++) QRMath.LOG_TABLE[QRMath.EXP_TABLE[i]]=i;
-
-  const RS_BLOCK_TABLE = [
-    // type 2 (version 1..10 only; suficiente para facturas normales). Si necesitas más, lo ampliamos.
-    [], // 0
-    [1, 26, 19], // 1
-    [1, 44, 34], // 2
-    [1, 70, 55], // 3
-    [1, 100, 80], // 4
-    [1, 134, 108], // 5
-    [2, 86, 68], // 6
-    [2, 98, 78], // 7
-    [2, 121, 97], // 8
-    [2, 146, 116], // 9
-    [2, 86, 68, 2, 87, 69] // 10 (aprox)
-  ];
-
-  function QRRSBlock(totalCount, dataCount){ this.totalCount=totalCount; this.dataCount=dataCount; }
-  function getRSBlocks(typeNumber){
-    const t = RS_BLOCK_TABLE[typeNumber];
-    if(!t || t.length===0) throw new Error('RS table missing');
-    const blocks=[];
-    for(let i=0;i<t.length;i+=3){
-      const count=t[i], total=t[i+1], data=t[i+2];
-      for(let j=0;j<count;j++) blocks.push(new QRRSBlock(total, data));
-    }
-    return blocks;
-  }
-
-  function createData(typeNumber, data){
-    const buffer = new QRBitBuffer();
-    buffer.put(0x4, 4); // 8bit
-    buffer.put(data.length, typeNumber < 10 ? 8 : 16);
-    for(let i=0;i<data.length;i++) buffer.put(data[i], 8);
-
-    const rsBlocks = getRSBlocks(typeNumber);
-    let totalDataCount=0;
-    for(const b of rsBlocks) totalDataCount += b.dataCount;
-
-    // terminator
-    if(buffer.length + 4 <= totalDataCount*8) buffer.put(0, 4);
-    while(buffer.length % 8 !== 0) buffer.putBit(false);
-
-    // padding
-    while(buffer.buffer.length < totalDataCount){
-      buffer.put(PAD0, 8);
-      if(buffer.buffer.length >= totalDataCount) break;
-      buffer.put(PAD1, 8);
-    }
-    return createBytes(buffer, rsBlocks);
-  }
-
-  function createBytes(buffer, rsBlocks){
-    let offset=0;
-    const dcdata=[], ecdata=[];
-    let maxDcCount=0, maxEcCount=0;
-
-    for(const rs of rsBlocks){
-      const dcCount = rs.dataCount;
-      const ecCount = rs.totalCount - dcCount;
-      maxDcCount = Math.max(maxDcCount, dcCount);
-      maxEcCount = Math.max(maxEcCount, ecCount);
-
-      const dc = new Array(dcCount);
-      for(let i=0;i<dc.length;i++) dc[i] = 0xff & buffer.buffer[i+offset];
-      offset += dcCount;
-
-      const rsPoly = getErrorCorrectPolynomial(ecCount);
-      const rawPoly = new QRPolynomial(dc, rsPoly.getLength()-1);
-      const modPoly = rawPoly.mod(rsPoly);
-      const ec = new Array(rsPoly.getLength()-1);
-      for(let i=0;i<ec.length;i++){
-        const modIndex = i + modPoly.getLength() - ec.length;
-        ec[i] = (modIndex >= 0) ? modPoly.get(modIndex) : 0;
-      }
-      dcdata.push(dc); ecdata.push(ec);
-    }
-
-    const data = [];
-    for(let i=0;i<maxDcCount;i++){
-      for(let r=0;r<dcdata.length;r++){
-        if(i < dcdata[r].length) data.push(dcdata[r][i]);
-      }
-    }
-    for(let i=0;i<maxEcCount;i++){
-      for(let r=0;r<ecdata.length;r++){
-        if(i < ecdata[r].length) data.push(ecdata[r][i]);
-      }
-    }
-    return data;
-  }
-
-  function getErrorCorrectPolynomial(ecLen){
-    let a = new QRPolynomial([1],0);
-    for(let i=0;i<ecLen;i++){
-      a = a.multiply(new QRPolynomial([1, QRMath.gexp(i)],0));
-    }
-    return a;
-  }
-
-  // QR core (version 1..10)
-  function QRCode(typeNumber, errorCorrectLevel){
-    this.typeNumber=typeNumber;
-    this.errorCorrectLevel=errorCorrectLevel;
-    this.modules=null;
-    this.moduleCount=0;
-    this.dataCache=null;
-    this.dataList=[];
-  }
-  QRCode.prototype = {
-    addData(data){
-      this.dataList.push({mode:QRMode.MODE_8BIT_BYTE, data:_utf8(data)});
-      this.dataCache=null;
-    },
-    isDark(r,c){
-      if(this.modules[r][c] == null) return false;
-      return this.modules[r][c];
-    },
-    getModuleCount(){ return this.moduleCount; },
-    make(){
-      this.makeImpl(false, this.getBestMaskPattern());
-    },
-    makeImpl(test, maskPattern){
-      this.moduleCount = this.typeNumber * 4 + 17;
-      this.modules = new Array(this.moduleCount);
-      for(let r=0;r<this.moduleCount;r++){
-        this.modules[r] = new Array(this.moduleCount);
-        for(let c=0;c<this.moduleCount;c++) this.modules[r][c] = null;
-      }
-      this.setupPositionProbePattern(0,0);
-      this.setupPositionProbePattern(this.moduleCount-7,0);
-      this.setupPositionProbePattern(0,this.moduleCount-7);
-      this.setupPositionAdjustPattern();
-      this.setupTimingPattern();
-      this.setupTypeInfo(test, maskPattern);
-      if(this.typeNumber >= 7) this.setupTypeNumber(test);
-      if(this.dataCache == null) this.dataCache = this.createData();
-      this.mapData(this.dataCache, maskPattern);
-    },
-    setupPositionProbePattern(row,col){
-      for(let r=-1;r<=7;r++){
-        if(row+r<=-1||this.moduleCount<=row+r) continue;
-        for(let c=-1;c<=7;c++){
-          if(col+c<=-1||this.moduleCount<=col+c) continue;
-          if((0<=r&&r<=6&&(c===0||c===6)) || (0<=c&&c<=6&&(r===0||r===6)) || (2<=r&&r<=4&&2<=c&&c<=4)){
-            this.modules[row+r][col+c]=true;
-          }else{
-            this.modules[row+r][col+c]=false;
-          }
-        }
-      }
-    },
-    setupTimingPattern(){
-      for(let i=8;i<this.moduleCount-8;i++){
-        if(this.modules[i][6] == null) this.modules[i][6] = (i%2===0);
-        if(this.modules[6][i] == null) this.modules[6][i] = (i%2===0);
-      }
-    },
-    setupPositionAdjustPattern(){
-      const pos = this.getPatternPosition();
-      for(let i=0;i<pos.length;i++){
-        for(let j=0;j<pos.length;j++){
-          const row=pos[i], col=pos[j];
-          if(this.modules[row][col] != null) continue;
-          for(let r=-2;r<=2;r++){
-            for(let c=-2;c<=2;c++){
-              if(r===-2||r===2||c===-2||c===2 || (r===0&&c===0)){
-                this.modules[row+r][col+c]=true;
-              }else{
-                this.modules[row+r][col+c]=false;
-              }
-            }
-          }
-        }
-      }
-    },
-    getPatternPosition(){
-      // version 1..10
-      const table = {
-        1:[],2:[6,18],3:[6,22],4:[6,26],5:[6,30],
-        6:[6,34],7:[6,22,38],8:[6,24,42],9:[6,26,46],10:[6,28,50]
-      };
-      return table[this.typeNumber] || [];
-    },
-    setupTypeNumber(test){
-      // omitido (no necesitamos si version < 7; pero lo dejamos seguro)
-    },
-    setupTypeInfo(test, maskPattern){
-      const data = (QRErrorCorrectLevel[ecc||'M'] << 3) | maskPattern;
-      const bits = this.getBCHTypeInfo(data);
-      // vertical
-      for(let i=0;i<15;i++){
-        const mod = (!test && ((bits >> i) & 1) === 1);
-        if(i<6) this.modules[i][8]=mod;
-        else if(i<8) this.modules[i+1][8]=mod;
-        else this.modules[this.moduleCount-15+i][8]=mod;
-      }
-      // horizontal
-      for(let i=0;i<15;i++){
-        const mod = (!test && ((bits >> i) & 1) === 1);
-        if(i<8) this.modules[8][this.moduleCount-i-1]=mod;
-        else if(i<9) this.modules[8][15-i-1+1]=mod;
-        else this.modules[8][15-i-1]=mod;
-      }
-      this.modules[this.moduleCount-8][8] = (!test);
-    },
-    getBCHTypeInfo(data){
-      let d = data << 10;
-      while(this.getBCHDigit(d) - this.getBCHDigit(0x537) >= 0){
-        d ^= (0x537 << (this.getBCHDigit(d)-this.getBCHDigit(0x537)));
-      }
-      return ((data << 10) | d) ^ 0x5412;
-    },
-    getBCHDigit(data){
-      let digit=0;
-      while(data !== 0){ digit++; data >>>= 1; }
-      return digit;
-    },
-    createData(){
-      // elegimos typeNumber por longitud (simple)
-      let type = this.typeNumber;
-      const bytes = this.dataList[0]?.data || [];
-      // Ajuste: si se pasa, subimos hasta 10
-      const cap = {1:19,2:34,3:55,4:80,5:108,6:136,7:156,8:194,9:232,10:274};
-      while(type < 10 && bytes.length > (cap[type]||19)) type++;
-      this.typeNumber = type;
-      return createData(this.typeNumber, bytes);
-    },
-    mapData(data, maskPattern){
-      let inc=-1, row=this.moduleCount-1, bitIndex=7, byteIndex=0;
-      const mask = (r,c) => {
-        switch(maskPattern){
-          case 0: return (r+c)%2===0;
-          case 1: return r%2===0;
-          case 2: return c%3===0;
-          case 3: return (r+c)%3===0;
-          default: return (r+c)%2===0;
-        }
-      };
-      for(let col=this.moduleCount-1; col>0; col-=2){
-        if(col===6) col--;
-        while(true){
-          for(let c=0;c<2;c++){
-            if(this.modules[row][col-c] == null){
-              let dark=false;
-              if(byteIndex < data.length){
-                dark = (((data[byteIndex] >>> bitIndex) & 1) === 1);
-              }
-              const m = mask(row, col-c);
-              this.modules[row][col-c] = m ? !dark : dark;
-              bitIndex--;
-              if(bitIndex===-1){ byteIndex++; bitIndex=7; }
-            }
-          }
-          row += inc;
-          if(row < 0 || this.moduleCount <= row){
-            row -= inc;
-            inc = -inc;
-            break;
-          }
-        }
-      }
-    },
-    getBestMaskPattern(){
-      return 0; // simple
-    }
-  };
-
-  const qr = new QRCode(4, QRErrorCorrectLevel[ecc||'M']); // versión inicial, se ajusta dentro
-  qr.addData(text || '');
-  qr.make();
-  return qr;
-}
-
-function qrToCanvas(text, canvas, sizePx=220){
-  const qr = _qr_make(text || '', 'M');
-  const count = qr.getModuleCount();
-  const margin = 2;
-  const cells = count + margin*2;
-
-  const scale = Math.floor(sizePx / cells);
-  const actual = scale * cells;
-
-  canvas.width = actual;
-  canvas.height = actual;
-  const ctx = canvas.getContext('2d');
-
-  ctx.clearRect(0,0,actual,actual);
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0,0,actual,actual);
-  ctx.fillStyle = '#000';
-
-  for(let r=0;r<count;r++){
-    for(let c=0;c<count;c++){
-      if(qr.isDark(r,c)){
-        ctx.fillRect((c+margin)*scale, (r+margin)*scale, scale, scale);
-      }
-    }
-  }
-  return canvas;
-}
-/* eslint-enable */
-
-/* =========================
-   QR AEAT TEXT + COPIAR + RENDER
-========================= */
-function buildQrText(){
-  const provNif = ($('#provNif')?.value || FM.db.proveedor?.nif || '').trim();
-  const numFac  = (FM.current?.numero || '').trim();
-  const fecha   = (FM.current?.fechaISO || '').trim();
-  const total   = money(FM.current?.totals?.total || 0);
-
-  const base = (FM.db.ajustes?.qrBase || 'NIF={NIF};NUM={NUM};FECHA={FECHA};TOTAL={TOTAL}');
-  return (base || '')
-    .replaceAll('{NIF}', provNif || '')
-    .replaceAll('{NUM}', numFac || '')
-    .replaceAll('{FECHA}', fecha || '')
-    .replaceAll('{TOTAL}', total || '');
-}
-
-FM.renderQR = function(){
-  try{
-    const txt = buildQrText();
-    setText($('#qrText'), txt || '—');
-
-    const wrap = $('#qrCanvasWrap');
-    if(!wrap) return;
-
-    wrap.innerHTML = '';
-    const canvas = document.createElement('canvas');
-    canvas.id = 'qrCanvas';
-    canvas.style.maxWidth = '100%';
-    canvas.style.height = 'auto';
-    wrap.appendChild(canvas);
-
-    // validación mínima
-    const provNif = ($('#provNif')?.value || '').trim();
-    if(!provNif || !FM.current?.numero || !FM.current?.fechaISO){
-      const d = document.createElement('div');
-      d.className = 'warnItem';
-      d.style.marginTop = '10px';
-      d.textContent = 'Faltan datos para QR (NIF / Nº / Fecha).';
-      wrap.appendChild(d);
-      return;
-    }
-
-    qrToCanvas(txt, canvas, 240);
-  }catch(e){
-    // fallback
-    const wrap = $('#qrCanvasWrap');
-    if(wrap) wrap.innerHTML = `<div class="center"><div class="mono">QR no disponible</div></div>`;
-  }
-};
-
-(function bindQrCopy(){
-  on($('#btnQrCopy'),'click', async ()=>{
-    const txt = buildQrText();
-    try{
-      await navigator.clipboard.writeText(txt);
-      toast('QR','Texto copiado.', 'ok');
-    }catch{
-      // fallback
-      const ta = document.createElement('textarea');
-      ta.value = txt;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-      toast('QR','Texto copiado.', 'ok');
-    }
-  });
-})();
-
-/* =========================
-   WHATSAPP PRO
-========================= */
-FM.whatsappText = function(){
-  FM.recalcInvoice();
-  const f = FM.current;
-  const cli = f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—';
-
-  const lines = (f.lineas||[])
-    .filter(l=> normName(l.producto))
-    .map(l=>{
-      const prod = l.producto;
-      const modo = (l.modo||'kg').toUpperCase();
-      const cant = (l.modo==='kg') ? `${money(l.neto)} kg` : `${money(l.cantidad)} ${l.modo==='caja'?'caja':'ud'}`;
-      const pr   = `${money(l.precio)}€`;
-      const imp  = `${money(l.importe)}€`;
-      return `- ${prod} (${modo}) · ${cant} · ${pr} = ${imp}`;
-    });
-
-  const head = `FACTURA ${f.numero} · ${isoToES(f.fechaISO)}\nCliente: ${cli}\n`;
-  const body = lines.join('\n');
-  const tots = `\n\nSubtotal: ${money(f.totals.subtotal)}€` +
-    (f.chkTransporte ? `\nTransporte: ${money(f.totals.transporte)}€` : '') +
-    (f.chkIvaIncluido ? `\nIVA: incluido` : `\nIVA: ${money(f.totals.iva)}€`) +
-    `\nTOTAL: ${money(f.totals.total)}€` +
-    `\nPendiente: ${money(Math.max(0,f.totals.pendiente))}€`;
-
-  return head + body + tots;
-};
-
-(function bindWhatsApp(){
-  on($('#btnWhatsApp'),'click', ()=>{
-    const txt = FM.whatsappText();
-    const url = `https://wa.me/?text=${encodeURIComponent(txt)}`;
-    window.open(url, '_blank');
-  });
-})();
-
-/* =========================
-   PDF PRO
-   - Si existe jsPDF: PDF real + multipágina + suma y sigue + páginas
-   - Si NO existe: vista HTML imprimible en visor (sin crash)
-========================= */
-function hasJsPDF(){
-  return !!(window.jspdf && window.jspdf.jsPDF);
-}
-
-function invoiceHtmlPreview(){
-  const f = FM.current;
-  const prov = snapshotProveedor();
-  const cli = f.clienteSnap || snapshotCliente() || {};
-  const logo = '🍒 FACTU MIRAL';
-  const qrTxt = buildQrText();
-
-  const rows = (f.lineas||[]).filter(l=> normName(l.producto)).map(l=>`
-    <tr>
-      <td>${escapeHtml(l.producto)}</td>
-      <td>${escapeHtml((l.modo||'').toUpperCase())}</td>
-      <td style="text-align:right">${money(l.cantidad)}</td>
-      <td style="text-align:right">${money(l.bruto)}</td>
-      <td style="text-align:right">${money(l.taraTotal)}</td>
-      <td style="text-align:right">${money(l.neto)}</td>
-      <td style="text-align:right">${money(l.precio)}</td>
-      <td>${escapeHtml(l.origen||'')}</td>
-      <td style="text-align:right">${money(l.importe)}€</td>
-    </tr>
-  `).join('');
-
-  const ivaLine = f.chkIvaIncluido ? `<div>IVA incluido en los precios</div>` : `<div>IVA: ${money(f.totals.iva)}€</div>`;
-
-  return `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(f.numero)}</title>
-<style>
-  body{font-family:Arial, sans-serif; margin:18px; color:#111;}
-  .top{display:grid; grid-template-columns:1fr 220px 1fr; gap:14px; align-items:start;}
-  .box{border:1px solid #ddd; padding:12px; border-radius:10px;}
-  h1{margin:0 0 6px 0; font-size:16px; letter-spacing:.08em;}
-  .muted{color:#555; font-size:12px;}
-  table{width:100%; border-collapse:collapse; margin-top:14px;}
-  th,td{border-bottom:1px solid #eee; padding:8px; font-size:12px; vertical-align:top;}
-  th{text-transform:uppercase; letter-spacing:.08em; color:#555; font-size:11px; text-align:left;}
-  .tot{margin-top:12px; display:flex; justify-content:flex-end;}
-  .tot .box{width:320px;}
-  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
-  @media print{ .noprint{display:none;} }
-</style></head>
-<body>
-  <div class="noprint" style="margin-bottom:10px">
-    <button onclick="window.print()">Imprimir / Guardar como PDF</button>
-  </div>
-  <div class="top">
-    <div class="box">
-      <h1>${logo}</h1>
-      <div class="muted"><b>Proveedor</b></div>
-      <div>${escapeHtml(prov.nombre||'')}</div>
-      <div class="mono">${escapeHtml(prov.nif||'')}</div>
-      <div>${escapeHtml(prov.dir||'')}</div>
-      <div class="muted">${escapeHtml(prov.tel||'')} · ${escapeHtml(prov.email||'')}</div>
-    </div>
-    <div class="box" style="text-align:center">
-      <div class="muted"><b>QR AEAT</b></div>
-      <div class="mono" style="word-break:break-word; margin-top:8px; font-size:10px">${escapeHtml(qrTxt)}</div>
-    </div>
-    <div class="box">
-      <div class="muted"><b>Cliente</b></div>
-      <div><b>${escapeHtml(cli.nombre||'')}</b></div>
-      <div class="mono">${escapeHtml(cli.nif||'')}</div>
-      <div>${escapeHtml(cli.dir||'')}</div>
-      <div class="muted">${escapeHtml(cli.tel||'')} · ${escapeHtml(cli.email||'')}</div>
-      <div style="margin-top:10px" class="muted"><b>Factura</b></div>
-      <div class="mono">${escapeHtml(f.numero||'')}</div>
-      <div class="mono">${escapeHtml(isoToES(f.fechaISO))}</div>
-      <div class="muted">${escapeHtml(f.tags||'')}</div>
-    </div>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Producto</th><th>Modo</th><th style="text-align:right">Cant</th><th style="text-align:right">Bruto</th>
-        <th style="text-align:right">Tara</th><th style="text-align:right">Neto</th>
-        <th style="text-align:right">Precio</th><th>Origen</th><th style="text-align:right">Importe</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
-
-  <div class="tot">
-    <div class="box">
-      <div>Subtotal: <span class="mono">${money(f.totals.subtotal)}€</span></div>
-      ${f.chkTransporte ? `<div>Transporte: <span class="mono">${money(f.totals.transporte)}€</span></div>` : ``}
-      ${ivaLine}
-      <div style="margin-top:8px"><b>TOTAL: <span class="mono">${money(f.totals.total)}€</span></b></div>
-      <div class="muted">Pendiente: <span class="mono">${money(Math.max(0,f.totals.pendiente))}€</span></div>
-    </div>
-  </div>
-
-  ${f.obs ? `<div class="box" style="margin-top:12px"><div class="muted"><b>Observaciones</b></div>${escapeHtml(f.obs)}</div>`:''}
-</body></html>`;
-}
-
-async function generatePDF_Real(){
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit:'mm', format:'a4' });
-
-  const f = FM.current;
-  FM.recalcInvoice();
-
-  const margin = 12;
-  const W = 210, H = 297;
-
-  const prov = snapshotProveedor();
-  const cli = f.clienteSnap || snapshotCliente() || {};
-  const qrTxt = buildQrText();
-
-  // QR image
-  const c = document.createElement('canvas');
-  qrToCanvas(qrTxt, c, 220);
-  const qrData = c.toDataURL('image/png');
-
-  const pageCountPlaceholder = '{totalPages}';
-
-  function header(){
-    doc.setFont('helvetica','bold');
-    doc.setFontSize(12);
-    doc.text('FACTU MIRAL', margin, 14);
-    doc.setFontSize(10);
-    doc.setFont('helvetica','normal');
-    doc.text(`Factura: ${f.numero}`, margin, 20);
-    doc.text(`Fecha: ${isoToES(f.fechaISO)}`, margin, 25);
-
-    // three columns
-    const y0 = 32;
-
-    // proveedor
-    doc.setFont('helvetica','bold'); doc.text('Proveedor', margin, y0);
-    doc.setFont('helvetica','normal');
-    doc.text((prov.nombre||''), margin, y0+5);
-    doc.text((prov.nif||''), margin, y0+10);
-    doc.text((prov.dir||''), margin, y0+15);
-    doc.text(`${prov.tel||''} ${prov.email?('· '+prov.email):''}`, margin, y0+20);
-
-    // QR center
-    doc.addImage(qrData, 'PNG', (W/2)-16, y0, 32, 32);
-    doc.setFontSize(7);
-    doc.text(qrTxt, (W/2)-40, y0+36, { maxWidth: 80 });
+  const IDS = {
+    // header invoice
+    numFactura: '#numFactura',
+    inpFecha: '#inpFechaFactura',
+    inpTags: '#inpTags',
+    inpNotasInt: '#inpNotasInt',
+    inpObs: '#inpObs',
+    chkTransporte: '#chkTransporte',
+    chkIvaIncluido: '#chkIvaIncluido',
+    btnAddIva4: '#btnAddIva4',
 
     // cliente
-    const xr = W - margin - 70;
-    doc.setFontSize(10);
-    doc.setFont('helvetica','bold'); doc.text('Cliente', xr, y0);
-    doc.setFont('helvetica','normal');
-    doc.text((cli.nombre||''), xr, y0+5, { maxWidth: 70 });
-    doc.text((cli.nif||''), xr, y0+10, { maxWidth: 70 });
-    doc.text((cli.dir||''), xr, y0+15, { maxWidth: 70 });
-    doc.text(`${cli.tel||''} ${cli.email?('· '+cli.email):''}`, xr, y0+20, { maxWidth: 70 });
+    selCliente: '#selCliente',
+    cliNombre: '#cliNombre',
+    cliNif: '#cliNif',
+    cliDir: '#cliDir',
+    cliTel: '#cliTel',
+    cliEmail: '#cliEmail',
+    cliPago: '#cliPago',
+    btnNuevoClienteFactura: '#btnNuevoClienteFactura',
+    btnGuardarClienteFactura: '#btnGuardarClienteFactura',
 
-    // tags
-    if(f.tags){
-      doc.setFontSize(9);
-      doc.setFont('helvetica','bold'); doc.text('Tags:', margin, y0+28);
-      doc.setFont('helvetica','normal'); doc.text(String(f.tags), margin+12, y0+28, { maxWidth: 160 });
+    // grid
+    gridBody: '#gridBody',
+    btnAddLinea: '#btnAddLinea',
+    btnVaciarLineas: '#btnVaciarLineas',
+
+    // totals
+    outSubtotal: '#outSubtotal',
+    outTransporte: '#outTransporte',
+    outIva: '#outIva',
+    outTotal: '#outTotal',
+    outPendiente: '#outPendiente',
+
+    // payments
+    pagoImporte: '#pagoImporte',
+    pagoFecha: '#pagoFecha',
+    pagoMetodo: '#pagoMetodo',
+    btnAddPago: '#btnAddPago',
+    pagosList: '#pagosList',
+
+    // qr
+    qrText: '#qrText',
+    qrSmall: '#qrSmall',
+    qrCanvas: '#qrCanvas',
+    qrFallback: '#qrFallback',
+
+    // whatsapp
+    btnWhatsappCopy: '#btnWhatsappCopy', // opcional
+    waOut: '#waOut', // opcional textarea
+  };
+
+  /* =========================
+     AUTOCOMPLETE POPUP (manual, NO sustituye)
+  ========================= */
+  const AC = {
+    el: $('#acPopup'),
+    open: false,
+    items: [],
+    idx: -1,
+    anchor: null,
+    type: 'producto'
+  };
+
+  function acClose(){
+    if (!AC.el) return;
+    AC.open = false;
+    AC.items = [];
+    AC.idx = -1;
+    AC.anchor = null;
+    AC.el.setAttribute('aria-hidden','true');
+    AC.el.style.display = 'none';
+    AC.el.innerHTML = '';
+  }
+
+  function acOpen(anchorEl, items, type='producto'){
+    if (!AC.el || !anchorEl) return;
+    AC.open = true;
+    AC.items = items || [];
+    AC.idx = 0;
+    AC.anchor = anchorEl;
+    AC.type = type;
+
+    const r = anchorEl.getBoundingClientRect();
+    const top = Math.round(r.bottom + 6);
+    const left = Math.round(r.left);
+    AC.el.style.top = `${top}px`;
+    AC.el.style.left = `${left}px`;
+    AC.el.style.display = 'block';
+    AC.el.setAttribute('aria-hidden','false');
+
+    renderAC();
+  }
+
+  function renderAC(){
+    if (!AC.el) return;
+    const items = AC.items.slice(0, 30);
+    if (!items.length){
+      acClose();
+      return;
+    }
+    AC.idx = Math.max(0, Math.min(AC.idx, items.length-1));
+
+    AC.el.innerHTML = items.map((it, i) => {
+      const active = i === AC.idx ? 'acItem isActive' : 'acItem';
+      const right = it.right ? `<div class="acRight">${it.right}</div>` : `<div class="acRight"></div>`;
+      return `<div class="${active}" data-i="${i}">
+        <div class="acLeft">${escapeHtml(it.left)}</div>${right}
+      </div>`;
+    }).join('');
+
+    // click
+    $$('.acItem', AC.el).forEach(row => {
+      on(row, 'mousedown', (e) => e.preventDefault()); // no blur
+      on(row, 'click', () => {
+        const i = parseInt(row.getAttribute('data-i') || '0', 10);
+        AC.idx = i;
+        acPick();
+      });
+    });
+  }
+
+  function escapeHtml(s){
+    return (s ?? '').toString()
+      .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+      .replaceAll('"','&quot;').replaceAll("'","&#039;");
+  }
+
+  function acPick(){
+    if (!AC.open || !AC.anchor) return;
+    const item = AC.items[AC.idx];
+    if (!item) return;
+
+    // Guardamos el texto tal cual el usuario lo ve
+    if (AC.type === 'producto'){
+      // En producto input de línea: NO sustituye el texto automáticamente salvo al elegir
+      AC.anchor.value = item.left;
+      AC.anchor.dispatchEvent(new Event('input', { bubbles:true }));
+      AC.anchor.dispatchEvent(new Event('change', { bubbles:true }));
+      acClose();
+      // mover a siguiente campo (modo)
+      const next = AC.anchor.closest('.gridRow')?.querySelector('[data-col="modo"]');
+      next?.focus();
+    } else {
+      acClose();
     }
   }
 
-  function footer(pageNum){
-    doc.setFontSize(8);
-    doc.setFont('helvetica','normal');
-    const txt = `Página ${pageNum}/${pageCountPlaceholder}`;
-    doc.text(txt, W - margin, H - 10, { align:'right' });
-    doc.text('IVA y tributos según normativa. (B/W PRO)', margin, H - 10);
+  function acHandleKey(e){
+    if (!AC.open) return false;
+    if (e.key === 'ArrowDown'){
+      e.preventDefault();
+      AC.idx = Math.min(AC.idx + 1, Math.min(AC.items.length-1, 29));
+      renderAC();
+      return true;
+    }
+    if (e.key === 'ArrowUp'){
+      e.preventDefault();
+      AC.idx = Math.max(AC.idx - 1, 0);
+      renderAC();
+      return true;
+    }
+    if (e.key === 'Enter'){
+      e.preventDefault();
+      acPick();
+      return true;
+    }
+    if (e.key === 'Escape'){
+      e.preventDefault();
+      acClose();
+      return true;
+    }
+    return false;
   }
 
-  // table layout manual (sin autoTable)
-  const cols = [
-    {k:'producto',  w:55, align:'left',  title:'Producto'},
-    {k:'modo',      w:12, align:'left',  title:'Modo'},
-    {k:'cantidad',  w:14, align:'right', title:'Cant'},
-    {k:'bruto',     w:14, align:'right', title:'Bruto'},
-    {k:'taraTotal', w:14, align:'right', title:'Tara'},
-    {k:'neto',      w:14, align:'right', title:'Neto'},
-    {k:'precio',    w:14, align:'right', title:'Precio'},
-    {k:'origen',    w:25, align:'left',  title:'Origen'},
-    {k:'importe',   w:18, align:'right', title:'Importe'}
-  ];
+  on(document, 'keydown', (e) => {
+    if (AC.open) acHandleKey(e);
+  });
+  on(document, 'click', (e) => {
+    if (!AC.open) return;
+    if (AC.el && (e.target === AC.el || AC.el.contains(e.target))) return;
+    if (AC.anchor && (e.target === AC.anchor)) return;
+    acClose();
+  });
 
-  const lines = (f.lineas||[])
-    .filter(l=> normName(l.producto))
-    .map(l=>({
-      producto: String(l.producto||''),
-      modo: String((l.modo||'').toUpperCase()),
-      cantidad: money(l.modo==='kg' ? l.neto : l.cantidad),
-      bruto: money(l.bruto),
-      taraTotal: money(l.taraTotal),
-      neto: money(l.neto),
-      precio: money(l.precio),
-      origen: String(l.origen||''),
-      importe: money(l.importe)+'€'
+  /* =========================
+     PRODUCTS HELPERS
+  ========================= */
+  function findProductoByName(name){
+    const n = String(name||'').trim().toLowerCase();
+    if (!n) return null;
+    const exact = S.productos.find(p => String(p.nombre||'').trim().toLowerCase() === n);
+    if (exact) return exact;
+    // fallback contains
+    const cand = S.productos.find(p => String(p.nombre||'').trim().toLowerCase().includes(n));
+    return cand || null;
+  }
+  function findProductoById(id){
+    return S.productos.find(p => p.id === id) || null;
+  }
+  function findTaraById(id){
+    return S.taras.find(t => t.id === id) || null;
+  }
+  function findClienteById(id){
+    return S.clientes.find(c => c.id === id) || null;
+  }
+
+  function productPriceForMode(p, modo){
+    if (!p) return 0;
+    if (modo === 'kg') return toNum(p.precioKg);
+    if (modo === 'caja') return toNum(p.precioCaja);
+    return toNum(p.precioUd);
+  }
+
+  function updateProductoHistorial(p, modo, precio, fechaIso){
+    if (!p) return;
+    const entry = {
+      ts: Date.now(),
+      fecha: fechaIso || isoToday(),
+      modo: modo || 'kg',
+      precio: round2(toNum(precio))
+    };
+    const hist = Array.isArray(p.historial) ? p.historial.slice() : [];
+    hist.unshift(entry);
+    // dedupe simple por modo+precio+fecha (primeras 5)
+    const out = [];
+    const seen = new Set();
+    for (const h of hist){
+      const k = `${h.modo}|${h.precio}|${h.fecha}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(h);
+      if (out.length >= 5) break;
+    }
+    p.historial = out;
+  }
+
+  function getHistorialTextByProductoId(prodId){
+    const p = findProductoById(prodId);
+    if (!p || !Array.isArray(p.historial) || !p.historial.length) return '';
+    const lines = p.historial.slice(0,5).map(h => {
+      const f = ddmmyyyy(h.fecha);
+      const modo = (h.modo || '').toUpperCase();
+      return `${f} · ${modo} · ${fmtEuro(h.precio)}`;
+    });
+    return lines.join('\n');
+  }
+
+  /* =========================
+     TARAS LOGIC (correcto)
+  ========================= */
+  function computeTaraKg(line){
+    const tara = line.taraId ? findTaraById(line.taraId) : null;
+    const peso = tara ? toNum(tara.peso) : 0;
+    const env = toNum(line.envases);
+
+    // Si el usuario eligió envase y no puso envases, usar por defecto = cantidad
+    let envases = env;
+    if (tara && (!envases || envases <= 0)) {
+      const c = toNum(line.cantidad);
+      if (c > 0) envases = c;
+    }
+
+    // Guardar envases auto (solo si estaba vacío)
+    if (tara && (!toNum(line.envases) || toNum(line.envases) <= 0) && envases > 0) {
+      line.envases = envases;
+    }
+
+    const taraKg = round2(envases * peso);
+    return taraKg;
+  }
+
+  function computeNetoKg(line){
+    const bruto = toNum(line.bruto);
+    const taraKg = toNum(line.taraKg);
+    const neto = round2(bruto - taraKg);
+    return neto < 0 ? 0 : neto;
+  }
+
+  /* =========================
+     LINE CALCULATIONS
+  ========================= */
+  function recalcLinea(line){
+    line.warn = '';
+
+    // tara total
+    line.taraKg = round2(computeTaraKg(line));
+
+    if (line.modo === 'kg') {
+      // neto (si no manual)
+      if (!line.netoManual) {
+        line.neto = computeNetoKg(line);
+      } else {
+        line.neto = round2(toNum(line.neto));
+      }
+
+      const bruto = toNum(line.bruto);
+      const neto = toNum(line.neto);
+      if (line.taraKg > bruto && bruto > 0) line.warn = 'Tara > Bruto';
+      if (neto > bruto && bruto > 0) line.warn = 'Neto > Bruto';
+
+      line.importe = round2(toNum(line.neto) * toNum(line.precio));
+      return;
+    }
+
+    if (line.modo === 'caja') {
+      // neto informativo si kg/caja
+      const c = toNum(line.cantidad);
+      const kgCaja = toNum(line.kgCaja);
+      // si neto no manual, mostrar neto = c * kgCaja
+      if (!line.netoManual) {
+        line.neto = kgCaja > 0 ? round2(c * kgCaja) : 0;
+      } else {
+        line.neto = round2(toNum(line.neto));
+      }
+      line.importe = round2(c * toNum(line.precio));
+      // tara no aplica en modo caja (pero si hay seleccionada, la dejamos informativa)
+      return;
+    }
+
+    // UD
+    {
+      const c = toNum(line.cantidad);
+      if (!line.netoManual) line.neto = 0;
+      line.importe = round2(c * toNum(line.precio));
+    }
+  }
+
+  function recalcFacturaTotals(){
+    let subtotal = 0;
+    for (const l of F.lineas) subtotal += toNum(l.importe);
+    subtotal = round2(subtotal);
+
+    const transporteOn = !!F.transporteOn;
+    const tpct = toNum(F.transportePct ?? S.ajustes?.transportePct ?? 10);
+    const tval = transporteOn ? round2(subtotal * (tpct/100)) : 0;
+
+    const base = round2(subtotal + tval);
+
+    const ivaIncl = !!F.ivaIncluido;
+    const ipct = toNum(F.ivaPct ?? S.ajustes?.ivaPct ?? 4);
+    const iva = ivaIncl ? 0 : round2(base * (ipct/100));
+    const total = round2(base + iva);
+
+    let pagado = 0;
+    for (const p of (F.pagos || [])) pagado += toNum(p.importe);
+    pagado = round2(pagado);
+
+    const pendiente = round2(total - pagado);
+
+    F.totals = { subtotal, transporte:tval, iva, total, pagado, pendiente };
+
+    // estado automático
+    if (total <= 0.0001) {
+      F.estado = 'impagada';
+    } else if (pendiente <= 0.0001) {
+      F.estado = 'pagada';
+    } else if (pagado > 0.0001) {
+      F.estado = 'parcial';
+    } else {
+      F.estado = 'impagada';
+    }
+
+    // UI
+    setTextSafe(IDS.outSubtotal, fmtEuro(subtotal));
+    setTextSafe(IDS.outTransporte, fmtEuro(tval));
+    setTextSafe(IDS.outIva, ivaIncl ? 'IVA incluido' : fmtEuro(iva));
+    setTextSafe(IDS.outTotal, fmtEuro(total));
+    setTextSafe(IDS.outPendiente, fmtEuro(pendiente));
+  }
+
+  function setTextSafe(sel, txt){
+    const el = $(sel);
+    if (el) el.textContent = txt ?? '';
+  }
+
+  /* =========================
+     GRID PRO RENDER
+  ========================= */
+  function renderGrid(){
+    const wrap = $(IDS.gridBody);
+    if (!wrap) return;
+
+    // Asegurar min líneas
+    if (!Array.isArray(F.lineas)) F.lineas = [];
+    if (F.lineas.length === 0) F.lineas = makeDefaultLineas(5);
+
+    // render rows
+    wrap.innerHTML = F.lineas.map((l, idx) => rowHTML(l, idx)).join('');
+
+    // wire each row inputs
+    $$('.gridRow', wrap).forEach(row => {
+      const i = parseInt(row.getAttribute('data-i') || '0', 10);
+      const line = F.lineas[i];
+      if (!line) return;
+
+      // helpers
+      const q = (s) => row.querySelector(s);
+
+      // producto
+      const inpProd = q('[data-col="producto"]');
+      on(inpProd, 'input', () => {
+        line.producto = String(inpProd.value || '');
+        // sugerencias (manual)
+        const qv = String(line.producto || '').trim().toLowerCase();
+        if (!qv) { acClose(); return; }
+        const items = S.productos
+          .filter(p => String(p.nombre||'').toLowerCase().includes(qv))
+          .slice(0, 40)
+          .map(p => {
+            const pr = productPriceForMode(p, line.modo);
+            const right = pr > 0 ? fmtEuro(pr) : '';
+            return { left: p.nombre, right };
+          });
+        if (items.length) acOpen(inpProd, items, 'producto');
+        else acClose();
+      });
+
+      on(inpProd, 'change', () => {
+        // al seleccionar o confirmar texto -> aplicar defaults si existe producto exacto
+        const p = findProductoByName(line.producto);
+        if (p) {
+          line.productoId = p.id;
+          // modo default del producto SOLO si la línea está vacía en modo (se respeta elección)
+          if (!line.modo) line.modo = p.modo || 'kg';
+          line.kgCaja = toNum(p.kgCaja);
+          // origen default si vacío
+          if (!String(line.origen||'').trim()) line.origen = p.origen || '';
+
+          // tara default del producto: si aún no hay tara elegida
+          if (!line.taraId && p.taraDefault) line.taraId = p.taraDefault;
+
+          // precio por modo si está vacío o 0
+          if (toNum(line.precio) <= 0) {
+            line.precio = productPriceForMode(p, line.modo);
+          }
+          // refrescar select de tara
+          const selTara = q('[data-col="taraSel"]');
+          if (selTara) selTara.value = line.taraId || '';
+
+          // historial en UI
+          const hist = q('[data-col="hist"]');
+          if (hist) hist.textContent = getHistorialTextByProductoId(p.id);
+
+          // recalcular
+          recalcLinea(line);
+          updateRowUI(i);
+          recalcFacturaTotals();
+        } else {
+          line.productoId = '';
+          // historial limpia
+          const hist = q('[data-col="hist"]');
+          if (hist) hist.textContent = '';
+          recalcLinea(line);
+          updateRowUI(i);
+          recalcFacturaTotals();
+        }
+      });
+
+      // modo
+      const selModo = q('[data-col="modo"]');
+      on(selModo, 'change', () => {
+        line.modo = String(selModo.value || 'kg');
+
+        // si tiene productoId, cargar precio por modo si el usuario no ha fijado precio (o precio 0)
+        const p = line.productoId ? findProductoById(line.productoId) : findProductoByName(line.producto);
+        if (p) {
+          line.kgCaja = toNum(p.kgCaja);
+          if (toNum(line.precio) <= 0) line.precio = productPriceForMode(p, line.modo);
+        }
+
+        // defaults: en modo caja -> bruto no obligatorio, tara no aplica
+        if (line.modo !== 'kg') {
+          line.bruto = 0;
+          line.taraKg = 0;
+        }
+
+        // si modo caja y hay tara seleccionada, envases por defecto = cantidad
+        if (line.modo === 'caja' && line.taraId && (!toNum(line.envases) || toNum(line.envases) <= 0)) {
+          const c = toNum(line.cantidad);
+          if (c > 0) line.envases = c;
+        }
+
+        // si modo kg y hay tara y envases vacío -> envases = cantidad (nº cajas)
+        if (line.modo === 'kg' && line.taraId && (!toNum(line.envases) || toNum(line.envases) <= 0)) {
+          const c = toNum(line.cantidad);
+          if (c > 0) line.envases = c;
+        }
+
+        line.netoManual = false; // al cambiar modo, mejor recalcular neto
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // cantidad
+      const inpCant = q('[data-col="cantidad"]');
+      on(inpCant, 'input', () => {
+        line.cantidad = toNum(inpCant.value);
+
+        // autocompletar envases: si hay tara y envases vacío/0 -> envases=cantidad
+        if (line.taraId && (!toNum(line.envases) || toNum(line.envases) <= 0)) {
+          line.envases = toNum(line.cantidad);
+          const envInp = q('[data-col="envases"]');
+          if (envInp) envInp.value = line.envases ? String(line.envases) : '';
+        }
+
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // bruto (kg)
+      const inpBruto = q('[data-col="bruto"]');
+      on(inpBruto, 'input', () => {
+        line.bruto = toNum(inpBruto.value);
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // tara selector
+      const selTara = q('[data-col="taraSel"]');
+      on(selTara, 'change', () => {
+        line.taraId = String(selTara.value || '');
+        // si selecciona tara, aplicar auto envases si vacío
+        if (line.taraId && (!toNum(line.envases) || toNum(line.envases) <= 0)) {
+          const c = toNum(line.cantidad);
+          if (c > 0) {
+            line.envases = c;
+            const envInp = q('[data-col="envases"]');
+            if (envInp) envInp.value = String(line.envases);
+          }
+        }
+        line.netoManual = false; // si cambias tara, recalcula neto
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // envases
+      const inpEnv = q('[data-col="envases"]');
+      on(inpEnv, 'input', () => {
+        line.envases = toNum(inpEnv.value);
+        line.netoManual = false;
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // tara kg (solo lectura por defecto; si editan, lo aceptamos como manual pero no recomendado)
+      const inpTaraKg = q('[data-col="taraKg"]');
+      on(inpTaraKg, 'input', () => {
+        // si el usuario toca taraKg manual, lo permitimos:
+        line.taraKg = toNum(inpTaraKg.value);
+        line.netoManual = false;
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // neto
+      const inpNeto = q('[data-col="neto"]');
+      on(inpNeto, 'input', () => {
+        line.netoManual = true;
+        line.neto = toNum(inpNeto.value);
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // precio
+      const inpPrecio = q('[data-col="precio"]');
+      on(inpPrecio, 'input', () => {
+        line.precio = toNum(inpPrecio.value);
+        recalcLinea(line);
+        updateRowUI(i);
+        recalcFacturaTotals();
+      });
+
+      // origen
+      const inpOrigen = q('[data-col="origen"]');
+      on(inpOrigen, 'input', () => {
+        line.origen = String(inpOrigen.value || '');
+      });
+
+      // delete
+      const del = q('[data-col="del"]');
+      on(del, 'click', () => {
+        F.lineas.splice(i, 1);
+        if (F.lineas.length === 0) F.lineas = makeDefaultLineas(5);
+        renderGrid();
+        recalcFacturaTotals();
+      });
+
+      // ENTER PRO: avanza campo y al final crea línea
+      const flowInputs = [
+        inpProd, selModo, inpCant, inpBruto, selTara, inpEnv, inpTaraKg, inpNeto, inpPrecio, inpOrigen
+      ].filter(Boolean);
+
+      flowInputs.forEach((el, pos) => {
+        on(el, 'keydown', (e) => {
+          // si autocomplete abierto y el focus está en producto, dejamos que lo gestione AC
+          if (AC.open && el === inpProd && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+            return;
+          }
+
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const next = flowInputs[pos + 1];
+            if (next) {
+              next.focus();
+              next.select?.();
+            } else {
+              // última columna -> nueva línea
+              FACTU_addLinea();
+              // enfocar producto de la nueva línea
+              setTimeout(() => {
+                const rows = $$('.gridRow', $(IDS.gridBody));
+                const last = rows[rows.length - 1];
+                last?.querySelector('[data-col="producto"]')?.focus();
+              }, 0);
+            }
+          }
+        });
+      });
+
+      // pintar historial si ya hay productoId
+      const hist = q('[data-col="hist"]');
+      if (hist) hist.textContent = line.productoId ? getHistorialTextByProductoId(line.productoId) : '';
+    });
+
+    // recalcular totales
+    F.lineas.forEach(recalcLinea);
+    recalcFacturaTotals();
+  }
+
+  function rowHTML(l, idx){
+    const taraOptions = `<option value="">—</option>` + S.taras
+      .slice()
+      .sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'))
+      .map(t => `<option value="${escapeHtml(t.id)}"${t.id===l.taraId?' selected':''}>${escapeHtml(t.nombre)} (${toNum(t.peso).toFixed(2).replace('.',',')}kg)</option>`)
+      .join('');
+
+    const warn = l.warn ? `<div class="small" style="color:#b91c1c;font-weight:900;margin-top:4px">${escapeHtml(l.warn)}</div>` : '';
+
+    return `
+    <div class="gridRow" data-i="${idx}">
+      <div class="cell">
+        <div style="width:100%">
+          <input data-col="producto" value="${escapeHtml(l.producto)}" placeholder="Producto..." autocomplete="off" />
+          ${warn}
+          <div class="historyBox" data-col="hist" style="margin-top:6px;display:${l.productoId?'block':'none'}"></div>
+        </div>
+      </div>
+
+      <div class="cell">
+        <select data-col="modo">
+          <option value="kg"${l.modo==='kg'?' selected':''}>kg</option>
+          <option value="caja"${l.modo==='caja'?' selected':''}>caja</option>
+          <option value="ud"${l.modo==='ud'?' selected':''}>ud</option>
+        </select>
+      </div>
+
+      <div class="cell">
+        <input data-col="cantidad" inputmode="decimal" class="monoIn" value="${numOrEmpty(l.cantidad)}" placeholder="0" />
+      </div>
+
+      <div class="cell">
+        <input data-col="bruto" inputmode="decimal" class="monoIn" value="${numOrEmpty(l.bruto)}" placeholder="kg" ${l.modo==='kg'?'':'disabled'} />
+      </div>
+
+      <div class="cell">
+        <select data-col="taraSel">${taraOptions}</select>
+      </div>
+
+      <div class="cell">
+        <input data-col="envases" inputmode="decimal" class="monoIn" value="${numOrEmpty(l.envases)}" placeholder="env" />
+      </div>
+
+      <div class="cell">
+        <input data-col="taraKg" inputmode="decimal" class="monoIn" value="${numOrEmpty(l.taraKg)}" placeholder="kg" />
+      </div>
+
+      <div class="cell">
+        <input data-col="neto" inputmode="decimal" class="monoIn" value="${numOrEmpty(l.neto)}" placeholder="kg" ${l.modo==='kg' || l.modo==='caja' ? '' : 'disabled'} />
+      </div>
+
+      <div class="cell">
+        <input data-col="precio" inputmode="decimal" class="monoIn" value="${numOrEmpty(l.precio)}" placeholder="€" />
+      </div>
+
+      <div class="cell">
+        <input data-col="origen" value="${escapeHtml(l.origen||'')}" placeholder="Origen" />
+      </div>
+
+      <div class="cell">
+        <div class="importeBox">${fmtEuro(l.importe)}</div>
+      </div>
+
+      <div class="cell" style="justify-content:center">
+        <button class="btnDel" data-col="del" title="Eliminar">×</button>
+      </div>
+    </div>`;
+  }
+
+  function numOrEmpty(n){
+    const x = toNum(n);
+    return x ? String(x).replace('.', ',') : '';
+  }
+
+  function updateRowUI(i){
+    const wrap = $(IDS.gridBody);
+    if (!wrap) return;
+    const row = wrap.querySelector(`.gridRow[data-i="${i}"]`);
+    if (!row) return;
+
+    // importe
+    const imp = row.querySelector('.importeBox');
+    if (imp) imp.textContent = fmtEuro(F.lineas[i].importe);
+
+    // taraKg + neto (por si se recalculan)
+    const l = F.lineas[i];
+    const taraKg = row.querySelector('[data-col="taraKg"]');
+    if (taraKg && document.activeElement !== taraKg) taraKg.value = numOrEmpty(l.taraKg);
+
+    const neto = row.querySelector('[data-col="neto"]');
+    if (neto && document.activeElement !== neto) neto.value = numOrEmpty(l.neto);
+
+    const env = row.querySelector('[data-col="envases"]');
+    if (env && document.activeElement !== env) env.value = numOrEmpty(l.envases);
+
+    // warn
+    const prodWrap = row.querySelector('[data-col="producto"]')?.parentElement;
+    if (prodWrap) {
+      // eliminar warn existente y recrear
+      const existing = prodWrap.querySelector('.small');
+      if (existing && existing.style?.color) existing.remove();
+      if (l.warn) {
+        const d = document.createElement('div');
+        d.className = 'small';
+        d.style.color = '#b91c1c';
+        d.style.fontWeight = '900';
+        d.style.marginTop = '4px';
+        d.textContent = l.warn;
+        prodWrap.appendChild(d);
+      }
+    }
+
+    // historial visible solo si hay productoId
+    const hist = row.querySelector('[data-col="hist"]');
+    if (hist) {
+      hist.style.display = l.productoId ? 'block' : 'none';
+      hist.textContent = l.productoId ? getHistorialTextByProductoId(l.productoId) : '';
+    }
+  }
+
+  /* =========================
+     QR (pantalla) — usa librería si existe, si no fallback
+  ========================= */
+  function buildQrText(){
+    const nif = String(S.ajustes?.proveedor?.nif || '').trim();
+    const num = String(F.num || '').trim();
+    const fecha = ddmmyyyy(F.fecha || '');
+    const total = fmtEuro(F.totals?.total || 0);
+
+    // plantilla desde ajustes:
+    const tpl = String(S.ajustes?.qrPlantilla || 'NIF={NIF}&NUM={NUM}&FECHA={FECHA}&TOTAL={TOTAL}');
+    const txt = tpl
+      .replaceAll('{NIF}', nif)
+      .replaceAll('{NUM}', num)
+      .replaceAll('{FECHA}', fecha)
+      .replaceAll('{TOTAL}', total);
+
+    return txt;
+  }
+
+  function renderQrOnScreen(){
+    const txt = buildQrText();
+    const area = $(IDS.qrText);
+    if (area) area.value = txt;
+
+    const small = $(IDS.qrSmall);
+    if (small) small.textContent = txt ? `Texto QR: ${txt}` : '';
+
+    const canvas = $(IDS.qrCanvas);
+    const fb = $(IDS.qrFallback);
+
+    // validación previa
+    const nif = String(S.ajustes?.proveedor?.nif || '').trim();
+    if (!nif || !F.num || !F.fecha || !(toNum(F.totals?.total) > 0)) {
+      if (fb) {
+        fb.style.display = 'flex';
+        fb.textContent = 'QR: faltan datos (NIF/NUM/FECHA/TOTAL).';
+      }
+      if (canvas) canvas.style.display = 'none';
+      return;
+    }
+
+    // Intentar render con librerías comunes
+    try{
+      if (!canvas) throw new Error('no canvas');
+      canvas.style.display = 'block';
+      if (fb) fb.style.display = 'none';
+
+      const size = 220;
+      canvas.width = size;
+      canvas.height = size;
+
+      // 1) QRCode (davidshimjs)
+      if (window.QRCode) {
+        // si existe QRCode con target div, creamos temporal
+        // fallback: dibujamos un patrón simple si no podemos
+        // NOTA: muchas libs QR no dibujan sobre canvas directo.
+        throw new Error('QRCode lib no-canvas');
+      }
+
+      // 2) qrcode-generator
+      if (window.qrcode) {
+        const qr = window.qrcode(0, 'M');
+        qr.addData(txt);
+        qr.make();
+        const ctx = canvas.getContext('2d');
+        const count = qr.getModuleCount();
+        const cell = Math.floor(size / count);
+        ctx.clearRect(0,0,size,size);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0,0,size,size);
+        for (let r=0;r<count;r++){
+          for (let c=0;c<count;c++){
+            ctx.fillStyle = qr.isDark(r,c) ? '#111' : '#fff';
+            ctx.fillRect(c*cell, r*cell, cell, cell);
+          }
+        }
+        return;
+      }
+
+      // 3) Si no hay lib: fallback (no QR real)
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,size,size);
+      ctx.fillStyle = '#fff'; ctx.fillRect(0,0,size,size);
+      ctx.fillStyle = '#111';
+      ctx.font = 'bold 12px ui-monospace, Menlo, Consolas';
+      ctx.fillText('QR NO DISPONIBLE', 40, 108);
+
+      if (fb) {
+        fb.style.display = 'flex';
+        fb.textContent = 'QR no disponible (lib QR no cargada). Texto listo para copiar.';
+      }
+    } catch(err){
+      if (fb) {
+        fb.style.display = 'flex';
+        fb.textContent = 'QR no disponible (lib QR no cargada). Texto listo para copiar.';
+      }
+      if (canvas) canvas.style.display = 'none';
+    }
+  }
+
+  /* =========================
+     FACTURA UI BINDINGS
+  ========================= */
+  function bindFacturaUI(){
+    // set values
+    setTextSafe(IDS.numFactura, F.num || '');
+    if ($(IDS.inpFecha)) setVal(IDS.inpFecha, F.fecha || isoToday());
+    if ($(IDS.inpTags)) setVal(IDS.inpTags, F.tags || '');
+    if ($(IDS.inpNotasInt)) setVal(IDS.inpNotasInt, F.notasInt || '');
+    if ($(IDS.inpObs)) setVal(IDS.inpObs, F.obs || '');
+
+    const chkT = $(IDS.chkTransporte);
+    if (chkT) chkT.checked = !!F.transporteOn;
+
+    const chkI = $(IDS.chkIvaIncluido);
+    if (chkI) chkI.checked = !!F.ivaIncluido;
+
+    // cliente selector
+    const sel = $(IDS.selCliente);
+    if (sel) sel.value = F.clienteId || '';
+
+    // cliente snap
+    setVal(IDS.cliNombre, F.clienteSnap?.nombre || '');
+    setVal(IDS.cliNif, F.clienteSnap?.nif || '');
+    setVal(IDS.cliDir, F.clienteSnap?.dir || '');
+    setVal(IDS.cliTel, F.clienteSnap?.tel || '');
+    setVal(IDS.cliEmail, F.clienteSnap?.email || '');
+    setVal(IDS.cliPago, F.clienteSnap?.pago || '');
+
+    // wire changes (una vez)
+    if (!bindFacturaUI._wired) {
+      bindFacturaUI._wired = true;
+
+      on($(IDS.inpFecha), 'change', () => {
+        F.fecha = val(IDS.inpFecha) || isoToday();
+        recalcFacturaTotals();
+        renderQrOnScreen();
+      });
+
+      on($(IDS.inpTags), 'input', () => F.tags = val(IDS.inpTags));
+      on($(IDS.inpNotasInt), 'input', () => F.notasInt = val(IDS.inpNotasInt));
+      on($(IDS.inpObs), 'input', () => F.obs = val(IDS.inpObs));
+
+      on($(IDS.chkTransporte), 'change', () => {
+        F.transporteOn = !!$(IDS.chkTransporte).checked;
+        recalcFacturaTotals();
+        renderQrOnScreen();
+      });
+
+      on($(IDS.chkIvaIncluido), 'change', () => {
+        F.ivaIncluido = !!$(IDS.chkIvaIncluido).checked;
+        recalcFacturaTotals();
+        renderQrOnScreen();
+      });
+
+      // botón añadir 4% IVA al total (atajo)
+      on($(IDS.btnAddIva4), 'click', () => {
+        // Fuerza IVA no incluido, y usa el % actual (por defecto 4)
+        F.ivaIncluido = false;
+        const chk = $(IDS.chkIvaIncluido);
+        if (chk) chk.checked = false;
+        recalcFacturaTotals();
+        renderQrOnScreen();
+        toast('IVA aplicado');
+      });
+
+      // selector cliente
+      on($(IDS.selCliente), 'change', () => {
+        const id = val(IDS.selCliente);
+        F.clienteId = id;
+        const c = findClienteById(id);
+        if (c) {
+          // aplicar plantilla cliente (si existe)
+          F.clienteSnap = {
+            nombre: c.nombre || '',
+            nif: c.nif || '',
+            dir: c.dir || '',
+            tel: c.tel || '',
+            email: c.email || '',
+            pago: c.pago || ''
+          };
+
+          if (c.tpl && typeof c.tpl === 'object') {
+            if (typeof c.tpl.ivaIncluido === 'boolean') F.ivaIncluido = c.tpl.ivaIncluido;
+            if (typeof c.tpl.transporte === 'boolean') F.transporteOn = c.tpl.transporte;
+            if (typeof c.tpl.tagsAuto === 'string' && c.tpl.tagsAuto.trim()) {
+              if (!String(F.tags||'').trim()) F.tags = c.tpl.tagsAuto;
+            }
+            if (typeof c.tpl.notasStd === 'string' && c.tpl.notasStd.trim()) {
+              if (!String(F.obs||'').trim()) F.obs = c.tpl.notasStd;
+            }
+          }
+
+          // reflejar UI
+          bindFacturaUI();
+          recalcFacturaTotals();
+          renderQrOnScreen();
+        } else {
+          F.clienteSnap = { nombre:'', nif:'', dir:'', tel:'', email:'', pago:'' };
+          bindFacturaUI();
+          renderQrOnScreen();
+        }
+      });
+
+      // botones cliente en factura
+      on($(IDS.btnNuevoClienteFactura), 'click', () => {
+        F.clienteId = '';
+        F.clienteSnap = { nombre:'', nif:'', dir:'', tel:'', email:'', pago:'' };
+        if ($(IDS.selCliente)) $(IDS.selCliente).value = '';
+        bindFacturaUI();
+        toast('Cliente (nuevo) listo para editar');
+      });
+
+      on($(IDS.btnGuardarClienteFactura), 'click', () => {
+        const nombre = val(IDS.cliNombre).trim();
+        if (!nombre) { toast('Cliente: falta nombre'); return; }
+
+        const obj = {
+          id: F.clienteId || uid(),
+          nombre,
+          nif: val(IDS.cliNif).trim(),
+          dir: val(IDS.cliDir).trim(),
+          tel: val(IDS.cliTel).trim(),
+          email: val(IDS.cliEmail).trim(),
+          pago: val(IDS.cliPago).trim(),
+          alias: '',
+          notas: '',
+          tpl: {}
+        };
+
+        // actualizar / insertar
+        const idx = S.clientes.findIndex(c => c.id === obj.id);
+        if (idx >= 0) S.clientes[idx] = { ...S.clientes[idx], ...obj };
+        else S.clientes.push(obj);
+
+        save('factu_miral_clientes_v1', S.clientes);
+        // refrescar selector (3A helpers)
+        U.fillClienteSelector();
+        // set selected
+        F.clienteId = obj.id;
+        if ($(IDS.selCliente)) $(IDS.selCliente).value = obj.id;
+        // snap
+        F.clienteSnap = { nombre: obj.nombre, nif: obj.nif, dir: obj.dir, tel: obj.tel, email: obj.email, pago: obj.pago };
+        toast('Cliente guardado');
+      });
+
+      // payments
+      on($(IDS.btnAddPago), 'click', () => addPagoFromUI());
+      on($(IDS.pagoImporte), 'keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addPagoFromUI(); }
+      });
+
+      // grid buttons
+      on($(IDS.btnAddLinea), 'click', () => { FACTU_addLinea(); });
+      on($(IDS.btnVaciarLineas), 'click', () => {
+        F.lineas = makeDefaultLineas(5);
+        renderGrid();
+        toast('Líneas reiniciadas');
+      });
+    }
+
+    renderGrid();
+    renderPagos();
+    recalcFacturaTotals();
+    renderQrOnScreen();
+  }
+
+  function addPagoFromUI(){
+    const imp = toNum(val(IDS.pagoImporte));
+    if (!(imp > 0)) { toast('Pago: importe inválido'); return; }
+    const fecha = val(IDS.pagoFecha) || isoToday();
+    const metodo = val(IDS.pagoMetodo) || F.metodoPago || 'efectivo';
+    if (!Array.isArray(F.pagos)) F.pagos = [];
+    F.pagos.push({ id: uid(), importe: round2(imp), fecha, metodo });
+    setVal(IDS.pagoImporte, '');
+    renderPagos();
+    recalcFacturaTotals();
+    renderQrOnScreen();
+    toast('Pago añadido');
+  }
+
+  function renderPagos(){
+    const wrap = $(IDS.pagosList);
+    if (!wrap) return;
+    const pagos = Array.isArray(F.pagos) ? F.pagos : [];
+    if (!pagos.length){
+      wrap.innerHTML = `<div class="muted small">Sin pagos.</div>`;
+      return;
+    }
+    wrap.innerHTML = pagos
+      .slice()
+      .sort((a,b) => String(a.fecha||'').localeCompare(String(b.fecha||'')))
+      .map(p => `
+        <div class="totRow">
+          <div>
+            <div style="font-weight:900">${fmtEuro(p.importe)} <span class="muted small">(${escapeHtml((p.metodo||'').toUpperCase())})</span></div>
+            <div class="muted small">${ddmmyyyy(p.fecha)} · ${escapeHtml(dayNameES(p.fecha))}</div>
+          </div>
+          <button class="btn btnTiny btnDangerGhost" data-delp="${escapeHtml(p.id)}">Eliminar</button>
+        </div>
+      `).join('');
+
+    $$('[data-delp]', wrap).forEach(btn => {
+      on(btn, 'click', () => {
+        const id = btn.getAttribute('data-delp');
+        F.pagos = (F.pagos || []).filter(x => x.id !== id);
+        renderPagos();
+        recalcFacturaTotals();
+        renderQrOnScreen();
+      });
+    });
+  }
+
+  /* =========================
+     FACTURAS: SAVE / LOAD / LIST
+  ========================= */
+  function validateFacturaBeforeSave(){
+    // básicos
+    if (!String(F.num||'').trim()) return 'Falta número';
+    if (!String(F.fecha||'').trim()) return 'Falta fecha';
+    if (!String(F.clienteSnap?.nombre||'').trim()) return 'Falta cliente (nombre)';
+    // líneas: permitir vacías pero al menos 1 con producto y precio
+    const used = (F.lineas || []).filter(l => String(l.producto||'').trim() && (toNum(l.precio) > 0) && ((l.modo==='kg' && toNum(l.bruto) > 0) || (l.modo!=='kg' && toNum(l.cantidad) > 0)));
+    if (!used.length) return 'Añade al menos 1 línea completa';
+    // warnings críticos opcional: tara > bruto
+    const bad = (F.lineas || []).some(l => l.modo==='kg' && toNum(l.bruto) > 0 && toNum(l.taraKg) > toNum(l.bruto) + 1e-9);
+    if (bad) return 'Hay líneas con Tara > Bruto';
+    return '';
+  }
+
+  function snapshotProveedor(){
+    // siempre desde ajustes (editable y guardable)
+    return { ...(S.ajustes?.proveedor || {}) };
+  }
+
+  function snapshotCliente(){
+    return {
+      nombre: val(IDS.cliNombre).trim(),
+      nif: val(IDS.cliNif).trim(),
+      dir: val(IDS.cliDir).trim(),
+      tel: val(IDS.cliTel).trim(),
+      email: val(IDS.cliEmail).trim(),
+      pago: val(IDS.cliPago).trim()
+    };
+  }
+
+  function cleanLineForSave(l){
+    const out = { ...l };
+    // normalizar números
+    out.cantidad = round2(toNum(out.cantidad));
+    out.bruto = round2(toNum(out.bruto));
+    out.envases = round2(toNum(out.envases));
+    out.taraKg = round2(toNum(out.taraKg));
+    out.neto = round2(toNum(out.neto));
+    out.precio = round2(toNum(out.precio));
+    out.kgCaja = round2(toNum(out.kgCaja));
+    out.importe = round2(toNum(out.importe));
+    return out;
+  }
+
+  function FACTU_guardarFactura(){
+    // sincronizar UI -> modelo
+    F.fecha = val(IDS.inpFecha) || isoToday();
+    F.tags = val(IDS.inpTags);
+    F.notasInt = val(IDS.inpNotasInt);
+    F.obs = val(IDS.inpObs);
+    F.transporteOn = !!$(IDS.chkTransporte)?.checked;
+    F.ivaIncluido = !!$(IDS.chkIvaIncluido)?.checked;
+    F.clienteSnap = snapshotCliente();
+    F.proveedorSnap = snapshotProveedor();
+    F.ivaPct = toNum(S.ajustes?.ivaPct ?? 4);
+    F.transportePct = toNum(S.ajustes?.transportePct ?? 10);
+
+    // recalcular total final
+    F.lineas.forEach(recalcLinea);
+    recalcFacturaTotals();
+
+    // validación
+    const err = validateFacturaBeforeSave();
+    if (err) { toast('No se puede guardar: ' + err); return; }
+
+    // actualizar historial precios por producto (solo si línea válida)
+    for (const l of (F.lineas || [])) {
+      if (!String(l.producto||'').trim()) continue;
+      const p = l.productoId ? findProductoById(l.productoId) : findProductoByName(l.producto);
+      if (!p) continue;
+
+      // si no había id, fijarlo
+      l.productoId = p.id;
+
+      if (toNum(l.precio) > 0) {
+        updateProductoHistorial(p, l.modo, l.precio, F.fecha);
+        // si producto no tiene precio guardado, lo dejamos (no pisamos si ya hay)
+        // pero sí puedes actualizar precios desde Productos explícitamente.
+      }
+
+      // origin: si producto no tiene origen y la línea sí, guardamos como default
+      if (!String(p.origen||'').trim() && String(l.origen||'').trim()) {
+        p.origen = String(l.origen||'').trim();
+      }
+
+      // tara default: si producto no tiene taraDefault y la línea sí, guardamos
+      if (!p.taraDefault && l.taraId) p.taraDefault = l.taraId;
+    }
+
+    // persist productos (historial)
+    save('factu_miral_productos_v1', S.productos);
+
+    // guardar factura (upsert)
+    const fact = {
+      ...F,
+      lineas: (F.lineas || []).map(cleanLineForSave),
+      pagos: Array.isArray(F.pagos) ? F.pagos.map(p => ({...p, importe: round2(toNum(p.importe))})) : [],
+      totals: { ...F.totals }
+    };
+
+    const idx = S.facturas.findIndex(x => x.id === fact.id);
+    if (idx >= 0) S.facturas[idx] = fact;
+    else S.facturas.unshift(fact); // nuevas arriba
+
+    save('factu_miral_facturas_v1', S.facturas);
+    toast('Factura guardada');
+
+    // refrescar listados si están visibles
+    if (typeof window.FACTU_renderFacturas === 'function') window.FACTU_renderFacturas();
+    if (typeof window.FACTU_renderContabilidad === 'function') window.FACTU_renderContabilidad();
+
+    // QR actualizado
+    renderQrOnScreen();
+  }
+
+  function FACTU_nuevaFactura(){
+    F = makeFacturaEmpty();
+    // aplica provider desde ajustes y cliente vacío
+    F.proveedorSnap = snapshotProveedor();
+    S._activeFactura = F;
+
+    // UI
+    bindFacturaUI();
+    toast('Nueva factura');
+  }
+
+  function FACTU_duplicarFactura(){
+    const old = F;
+    const nf = JSON.parse(JSON.stringify(old));
+    nf.id = uid();
+    // nuevo número
+    const now = new Date();
+    nf.num = `FA-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+    nf.fecha = isoToday();
+    // pagos vacíos
+    nf.pagos = [];
+    nf.estado = 'impagada';
+    // reset pdf
+    nf.pdfUrl = '';
+    nf.totals = { subtotal:0, transporte:0, iva:0, total:0, pagado:0, pendiente:0 };
+    // neto manual off
+    (nf.lineas||[]).forEach(l => { l.id = uid(); l.netoManual = false; });
+
+    F = nf;
+    S._activeFactura = F;
+    bindFacturaUI();
+    toast('Factura duplicada');
+  }
+
+  function FACTU_eliminarFactura(){
+    if (!F?.id) { toast('No hay factura activa'); return; }
+    const isSaved = S.facturas.some(x => x.id === F.id);
+    if (isSaved) {
+      if (!confirm(`Eliminar factura ${F.num}?`)) return;
+      S.facturas = S.facturas.filter(x => x.id !== F.id);
+      save('factu_miral_facturas_v1', S.facturas);
+      toast('Factura eliminada');
+      // nueva
+      FACTU_nuevaFactura();
+      if (typeof window.FACTU_renderFacturas === 'function') window.FACTU_renderFacturas();
+      if (typeof window.FACTU_renderContabilidad === 'function') window.FACTU_renderContabilidad();
+    } else {
+      // no guardada
+      FACTU_nuevaFactura();
+    }
+  }
+
+  function FACTU_addLinea(){
+    if (!Array.isArray(F.lineas)) F.lineas = [];
+    F.lineas.push(makeLineaEmpty());
+    renderGrid();
+  }
+
+  function FACTU_loadFacturaById(id){
+    const f = S.facturas.find(x => x.id === id);
+    if (!f) { toast('Factura no encontrada'); return; }
+    F = JSON.parse(JSON.stringify(f));
+    S._activeFactura = F;
+    setActiveTab('tabFactura');
+    bindFacturaUI();
+    toast('Factura cargada');
+  }
+
+  /* =========================
+     LISTADO FACTURAS TAB
+  ========================= */
+  function FACTU_renderFacturas(){
+    const list = $('#facturasList');
+    if (!list) return;
+
+    const q = String($('#buscarFacturas')?.value || '').trim().toLowerCase();
+    const d1 = String($('#factDesde')?.value || '').trim();
+    const d2 = String($('#factHasta')?.value || '').trim();
+
+    let arr = (S.facturas || []).slice();
+
+    // rango fecha
+    if (d1) arr = arr.filter(x => String(x.fecha||'') >= d1);
+    if (d2) arr = arr.filter(x => String(x.fecha||'') <= d2);
+
+    // búsqueda
+    if (q) {
+      arr = arr.filter(x => {
+        const num = String(x.num||'').toLowerCase();
+        const cli = String(x.clienteSnap?.nombre||'').toLowerCase();
+        const tags = String(x.tags||'').toLowerCase();
+        const obs = String(x.obs||'').toLowerCase();
+        return num.includes(q) || cli.includes(q) || tags.includes(q) || obs.includes(q);
+      });
+    }
+
+    // sort desc fecha+num
+    arr.sort((a,b) => (String(b.fecha||'').localeCompare(String(a.fecha||''))) || (String(b.num||'').localeCompare(String(a.num||''))));
+
+    if (!arr.length){
+      list.innerHTML = `<div class="muted small" style="padding:10px">No hay facturas.</div>`;
+      return;
+    }
+
+    list.innerHTML = arr.map(f => {
+      const total = fmtEuro(toNum(f?.totals?.total));
+      const pend = fmtEuro(toNum(f?.totals?.pendiente));
+      const st = String(f.estado||'impagada');
+      const stTxt = st === 'pagada' ? 'PAGADA' : (st === 'parcial' ? 'PARCIAL' : 'IMPAGADA');
+      const stBadge = st === 'pagada'
+        ? `<span class="badge" style="border-color:#111;background:#111;color:#fff">${stTxt}</span>`
+        : `<span class="badge">${stTxt}</span>`;
+
+      return `
+      <div class="item" data-fid="${escapeHtml(f.id)}">
+        <div class="itemTop">
+          <div class="itemTitle">${escapeHtml(f.num)} · ${ddmmyyyy(f.fecha)} <span class="muted small">(${escapeHtml(dayNameES(f.fecha))})</span></div>
+          ${stBadge}
+        </div>
+        <div class="itemSub">
+          <b>${escapeHtml(f.clienteSnap?.nombre||'')}</b> · Total: <b>${total}</b> · Pendiente: <b>${pend}</b>
+          ${String(f.tags||'').trim() ? ` · Tags: ${escapeHtml(f.tags)}` : ''}
+        </div>
+        <div class="itemBtns" style="margin-top:8px">
+          <button class="btn btnTiny" data-edit="${escapeHtml(f.id)}">Editar</button>
+          <button class="btn btnTiny btnGhost" data-view="${escapeHtml(f.id)}">Ver PDF</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    $$('[data-edit]', list).forEach(b => on(b, 'click', (e) => {
+      e.stopPropagation();
+      FACTU_loadFacturaById(b.getAttribute('data-edit'));
     }));
-
-  let pageNum = 1;
-  header();
-
-  let y = 75;
-  const rowH = 7;
-  const headH = 7;
-  const bottomLimit = H - 52;
-
-  function drawTableHeader(){
-    let x = margin;
-    doc.setFont('helvetica','bold'); doc.setFontSize(9);
-    for(const c of cols){
-      doc.text(c.title, x + (c.align==='right'?c.w:0), y, { align: c.align==='right'?'right':'left' });
-      x += c.w;
-    }
-    doc.setDrawColor(220); doc.line(margin, y+1, W-margin, y+1);
-    y += headH;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9);
+    $$('[data-view]', list).forEach(b => on(b, 'click', (e) => {
+      e.stopPropagation();
+      const id = b.getAttribute('data-view');
+      FACTU_loadFacturaById(id);
+      // visor PDF en 3C
+      if (typeof window.FACTU_verPDF === 'function') window.FACTU_verPDF();
+      else toast('Visor PDF en 3C');
+    }));
+    $$('.item', list).forEach(card => on(card, 'click', () => {
+      const id = card.getAttribute('data-fid');
+      FACTU_loadFacturaById(id);
+    }));
   }
 
-  function drawRow(r){
-    let x=margin;
-    for(const c of cols){
-      const v = (r[c.k] ?? '').toString();
-      if(c.align==='right'){
-        doc.text(v, x + c.w, y, { align:'right', maxWidth:c.w });
-      }else{
-        doc.text(v, x, y, { align:'left', maxWidth:c.w });
+  function wireFacturasSearch(){
+    on($('#buscarFacturas'), 'input', () => FACTU_renderFacturas());
+    on($('#factDesde'), 'change', () => FACTU_renderFacturas());
+    on($('#factHasta'), 'change', () => FACTU_renderFacturas());
+  }
+
+  /* =========================
+     CLIENTES TAB (gestión completa)
+  ========================= */
+  function FACTU_renderClientes(){
+    const list = $('#clientesList');
+    if (!list) return;
+
+    const q = String($('#buscarClientes')?.value || '').trim().toLowerCase();
+    let arr = (S.clientes || []).slice();
+    if (q) {
+      arr = arr.filter(c => {
+        const a = String(c.nombre||'').toLowerCase();
+        const b = String(c.nif||'').toLowerCase();
+        const d = String(c.alias||'').toLowerCase();
+        return a.includes(q) || b.includes(q) || d.includes(q);
+      });
+    }
+    arr.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es'));
+
+    list.innerHTML = arr.map(c => `
+      <div class="item" data-cid="${escapeHtml(c.id)}">
+        <div class="itemTop">
+          <div class="itemTitle">${escapeHtml(c.nombre)}</div>
+          <span class="badge">${escapeHtml(c.nif||'')}</span>
+        </div>
+        <div class="itemSub">${escapeHtml(c.dir||'')}</div>
+      </div>
+    `).join('') || `<div class="muted small" style="padding:10px">No hay clientes.</div>`;
+
+    $$('.item', list).forEach(it => on(it, 'click', () => {
+      const id = it.getAttribute('data-cid');
+      openClienteEditor(id);
+    }));
+  }
+
+  function openClienteEditor(id){
+    const c = id ? findClienteById(id) : null;
+    S._cliEditId = c ? c.id : '';
+    setVal('#cNombre', c?.nombre || '');
+    setVal('#cAlias', c?.alias || '');
+    setVal('#cNif', c?.nif || '');
+    setVal('#cDir', c?.dir || '');
+    setVal('#cTel', c?.tel || '');
+    setVal('#cEmail', c?.email || '');
+    setVal('#cPago', c?.pago || '');
+    setVal('#cNotas', c?.notas || '');
+
+    // plantillas
+    const tpl = c?.tpl || {};
+    const chkI = $('#cTplIvaIncluido');
+    const chkT = $('#cTplTransporte');
+    if (chkI) chkI.checked = !!tpl.ivaIncluido;
+    if (chkT) chkT.checked = !!tpl.transporte;
+    setVal('#cTplTags', tpl.tagsAuto || '');
+    setVal('#cTplObs', tpl.notasStd || '');
+
+    setTextSafe('#cEditorTitle', c ? 'Editar cliente' : 'Nuevo cliente');
+  }
+
+  function saveClienteFromEditor(){
+    const nombre = String($('#cNombre')?.value || '').trim();
+    if (!nombre) { toast('Cliente: falta nombre'); return; }
+    const id = S._cliEditId || uid();
+    const obj = {
+      id,
+      nombre,
+      alias: String($('#cAlias')?.value || '').trim(),
+      nif: String($('#cNif')?.value || '').trim(),
+      dir: String($('#cDir')?.value || '').trim(),
+      tel: String($('#cTel')?.value || '').trim(),
+      email: String($('#cEmail')?.value || '').trim(),
+      pago: String($('#cPago')?.value || '').trim(),
+      notas: String($('#cNotas')?.value || '').trim(),
+      tpl: {
+        ivaIncluido: !!$('#cTplIvaIncluido')?.checked,
+        transporte: !!$('#cTplTransporte')?.checked,
+        tagsAuto: String($('#cTplTags')?.value || ''),
+        notasStd: String($('#cTplObs')?.value || '')
       }
-      x += c.w;
+    };
+
+    const idx = S.clientes.findIndex(x => x.id === id);
+    if (idx >= 0) S.clientes[idx] = { ...S.clientes[idx], ...obj };
+    else S.clientes.push(obj);
+
+    save('factu_miral_clientes_v1', S.clientes);
+    U.fillClienteSelector();
+    FACTU_renderClientes();
+    toast('Cliente guardado');
+
+    // si coincide con cliente seleccionado en factura, refrescar
+    if (F.clienteId === id) {
+      F.clienteSnap = { nombre: obj.nombre, nif: obj.nif, dir: obj.dir, tel: obj.tel, email: obj.email, pago: obj.pago };
+      bindFacturaUI();
     }
-    y += rowH;
-    doc.setDrawColor(235); doc.line(margin, y-5, W-margin, y-5);
   }
 
-  drawTableHeader();
+  function canDeleteCliente(id){
+    if (!id) return false;
+    // si está usado en facturas (clienteId), bloquear
+    return !S.facturas.some(f => f.clienteId === id);
+  }
 
-  for(let i=0;i<lines.length;i++){
-    if(y > bottomLimit){
-      // “Suma y sigue”
-      doc.setFont('helvetica','bold'); doc.setFontSize(9);
-      doc.text('Suma y sigue…', W-margin, H-28, { align:'right' });
+  function deleteClienteFromEditor(){
+    const id = S._cliEditId;
+    if (!id) { toast('No hay cliente seleccionado'); return; }
+    if (!canDeleteCliente(id)) { toast('No se puede eliminar: usado en facturas'); return; }
+    if (!confirm('Eliminar cliente?')) return;
+    S.clientes = S.clientes.filter(c => c.id !== id);
+    save('factu_miral_clientes_v1', S.clientes);
+    U.fillClienteSelector();
+    FACTU_renderClientes();
+    openClienteEditor('');
+    toast('Cliente eliminado');
+  }
 
-      footer(pageNum);
-      doc.addPage();
-      pageNum++;
-      header();
-      y = 75;
-      drawTableHeader();
+  function wireClientesTab(){
+    on($('#buscarClientes'), 'input', () => FACTU_renderClientes());
+    on($('#btnClienteNuevo'), 'click', () => openClienteEditor(''));
+    on($('#btnClienteGuardar'), 'click', () => saveClienteFromEditor());
+    on($('#btnClienteEliminar'), 'click', () => deleteClienteFromEditor());
+  }
+
+  /* =========================
+     PRODUCTOS TAB (vocab + precios + kg/caja + historial)
+  ========================= */
+  function FACTU_renderProductos(){
+    const list = $('#productosList');
+    if (!list) return;
+
+    const q = String($('#buscarProductos')?.value || '').trim().toLowerCase();
+    let arr = (S.productos || []).slice();
+    if (q) {
+      arr = arr.filter(p => String(p.nombre||'').toLowerCase().includes(q));
     }
-    drawRow(lines[i]);
+    arr.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es'));
+
+    list.innerHTML = arr.map(p => {
+      const prKg = toNum(p.precioKg) > 0 ? fmtEuro(p.precioKg) : '—';
+      const prCaja = toNum(p.precioCaja) > 0 ? fmtEuro(p.precioCaja) : '—';
+      const prUd = toNum(p.precioUd) > 0 ? fmtEuro(p.precioUd) : '—';
+      return `
+        <div class="item" data-pid="${escapeHtml(p.id)}">
+          <div class="itemTop">
+            <div class="itemTitle">${escapeHtml(p.nombre)}</div>
+            <span class="badge">${escapeHtml((p.modo||'kg').toUpperCase())}</span>
+          </div>
+          <div class="itemSub">€/kg: <b>${prKg}</b> · €/caja: <b>${prCaja}</b> · €/ud: <b>${prUd}</b> · Kg/caja: <b>${toNum(p.kgCaja) ? String(toNum(p.kgCaja)).replace('.',',') : '—'}</b></div>
+        </div>
+      `;
+    }).join('') || `<div class="muted small" style="padding:10px">No hay productos.</div>`;
+
+    $$('.item', list).forEach(it => on(it, 'click', () => {
+      const id = it.getAttribute('data-pid');
+      openProductoEditor(id);
+    }));
   }
 
-  // Totales (última página)
-  const yTot = Math.max(y + 6, H - 48);
-  doc.setFont('helvetica','bold'); doc.setFontSize(10);
-  doc.text(`Subtotal: ${money(f.totals.subtotal)}€`, W-margin, yTot, { align:'right' });
+  function openProductoEditor(id){
+    const p = id ? findProductoById(id) : null;
+    S._prodEditId = p ? p.id : '';
+    setVal('#pNombre', p?.nombre || '');
+    setVal('#pModo', p?.modo || 'kg');
+    setVal('#pKgCaja', numOrEmpty(p?.kgCaja || 0));
+    setVal('#pPrecioKg', numOrEmpty(p?.precioKg || 0));
+    setVal('#pPrecioCaja', numOrEmpty(p?.precioCaja || 0));
+    setVal('#pPrecioUd', numOrEmpty(p?.precioUd || 0));
+    setVal('#pCoste', numOrEmpty(p?.coste || 0));
+    setVal('#pOrigen', p?.origen || '');
 
-  let y2 = yTot + 6;
-  doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  if(f.chkTransporte){
-    doc.text(`Transporte: ${money(f.totals.transporte)}€`, W-margin, y2, { align:'right' });
-    y2 += 6;
-  }
-  if(f.chkIvaIncluido){
-    doc.text(`IVA: incluido`, W-margin, y2, { align:'right' });
-    y2 += 6;
-  }else{
-    doc.text(`IVA: ${money(f.totals.iva)}€`, W-margin, y2, { align:'right' });
-    y2 += 6;
-  }
-  doc.setFont('helvetica','bold');
-  doc.text(`TOTAL: ${money(f.totals.total)}€`, W-margin, y2, { align:'right' });
+    // tara default select (ya la rellena 3A en opciones, pero refrescamos por si acaso)
+    U.fillTaraDefaultSelect();
+    setVal('#pTaraDefault', p?.taraDefault || '');
 
-  // Observaciones
-  if(f.obs){
-    doc.setFont('helvetica','normal'); doc.setFontSize(9);
-    doc.text('Observaciones:', margin, y2+10);
-    doc.setFontSize(9);
-    doc.text(String(f.obs), margin, y2+15, { maxWidth: 180 });
+    // historial (solo pantalla)
+    setTextSafe('#pHistorial', p?.historial && p.historial.length ? p.historial.map(h => `${ddmmyyyy(h.fecha)} · ${(h.modo||'').toUpperCase()} · ${fmtEuro(h.precio)}`).join('\n') : '—');
+
+    setTextSafe('#pEditorTitle', p ? 'Editar producto' : 'Nuevo producto');
   }
 
-  // Footer last page
-  footer(pageNum);
-
-  // total pages substitute
-  const totalPages = doc.internal.getNumberOfPages();
-  for(let p=1;p<=totalPages;p++){
-    doc.setPage(p);
-    doc.setFontSize(8);
-    const str = `Página ${p}/${totalPages}`;
-    doc.text(str, W - 12, H - 10, { align:'right' });
+  function isProductoUsed(prodId){
+    if (!prodId) return false;
+    return S.facturas.some(f => (f.lineas||[]).some(l => l.productoId === prodId));
   }
 
-  return doc.output('blob');
-}
+  function saveProductoFromEditor(){
+    const nombre = String($('#pNombre')?.value || '').trim();
+    if (!nombre) { toast('Producto: falta nombre'); return; }
+    const id = S._prodEditId || uid();
 
-FM.renderPDF = async function(){
-  FM.recalcInvoice();
+    const obj = {
+      id,
+      nombre,
+      modo: String($('#pModo')?.value || 'kg'),
+      kgCaja: round2(toNum($('#pKgCaja')?.value)),
+      precioKg: round2(toNum($('#pPrecioKg')?.value)),
+      precioCaja: round2(toNum($('#pPrecioCaja')?.value)),
+      precioUd: round2(toNum($('#pPrecioUd')?.value)),
+      coste: round2(toNum($('#pCoste')?.value)),
+      origen: String($('#pOrigen')?.value || ''),
+      taraDefault: String($('#pTaraDefault')?.value || ''),
+      historial: (findProductoById(id)?.historial) || []
+    };
 
-  // Validación QR mínima
-  const provNif = ($('#provNif')?.value || '').trim();
-  if(!provNif || !FM.current.numero || !FM.current.fechaISO){
-    toast('PDF','Faltan datos (NIF / Nº / Fecha).', 'warn');
-    return null;
+    // evitar duplicados por nombre (si cambia nombre, respeta id)
+    const dup = S.productos.find(p => p.id !== id && String(p.nombre||'').trim().toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe un producto con ese nombre'); return; }
+
+    const idx = S.productos.findIndex(x => x.id === id);
+    if (idx >= 0) S.productos[idx] = { ...S.productos[idx], ...obj };
+    else S.productos.push(obj);
+
+    save('factu_miral_productos_v1', S.productos);
+    U.fillProductoDatalistCache();
+    FACTU_renderProductos();
+    toast('Producto guardado');
   }
 
-  try{
-    let blob = null;
+  function deleteProductoFromEditor(){
+    const id = S._prodEditId;
+    if (!id) { toast('No hay producto seleccionado'); return; }
+    if (isProductoUsed(id)) { toast('No se puede eliminar: usado en facturas'); return; }
+    if (!confirm('Eliminar producto?')) return;
+    S.productos = S.productos.filter(p => p.id !== id);
+    save('factu_miral_productos_v1', S.productos);
+    U.fillProductoDatalistCache();
+    FACTU_renderProductos();
+    openProductoEditor('');
+    toast('Producto eliminado');
+  }
 
-    if(hasJsPDF()){
-      blob = await generatePDF_Real();
-    }else{
-      // Fallback: HTML imprimible (se verá en visor como "vista", no PDF real)
-      const html = invoiceHtmlPreview();
-      const fr = $('#pdfFrame');
-      if(fr){
-        fr.removeAttribute('src');
-        fr.srcdoc = html;
-        openModal('#pdfModal');
-        toast('Vista','Modo vista imprimible (sin jsPDF).', 'warn', 2600);
-        return null;
+  function wireProductosTab(){
+    on($('#buscarProductos'), 'input', () => FACTU_renderProductos());
+    on($('#btnProductoNuevo'), 'click', () => openProductoEditor(''));
+    on($('#btnProductoGuardar'), 'click', () => saveProductoFromEditor());
+    on($('#btnProductoEliminar'), 'click', () => deleteProductoFromEditor());
+  }
+
+  /* =========================
+     TARAS TAB (gestión envases)
+  ========================= */
+  function FACTU_renderTaras(){
+    const list = $('#tarasList');
+    if (!list) return;
+
+    const q = String($('#buscarTaras')?.value || '').trim().toLowerCase();
+    let arr = (S.taras || []).slice();
+    if (q) arr = arr.filter(t => String(t.nombre||'').toLowerCase().includes(q));
+    arr.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es'));
+
+    list.innerHTML = arr.map(t => `
+      <div class="item" data-tid="${escapeHtml(t.id)}">
+        <div class="itemTop">
+          <div class="itemTitle">${escapeHtml(t.nombre)}</div>
+          <span class="badge">${toNum(t.peso).toFixed(2).replace('.',',')} kg</span>
+        </div>
+        <div class="itemSub">${escapeHtml(t.notas||'')}</div>
+      </div>
+    `).join('') || `<div class="muted small" style="padding:10px">No hay taras.</div>`;
+
+    $$('.item', list).forEach(it => on(it, 'click', () => {
+      const id = it.getAttribute('data-tid');
+      openTaraEditor(id);
+    }));
+  }
+
+  function isTaraUsed(taraId){
+    if (!taraId) return false;
+    return S.facturas.some(f => (f.lineas||[]).some(l => l.taraId === taraId));
+  }
+
+  function openTaraEditor(id){
+    const t = id ? findTaraById(id) : null;
+    S._taraEditId = t ? t.id : '';
+    setVal('#tNombre', t?.nombre || '');
+    setVal('#tPeso', numOrEmpty(t?.peso || 0));
+    setVal('#tNotas', t?.notas || '');
+    setTextSafe('#tEditorTitle', t ? 'Editar tara' : 'Nueva tara');
+  }
+
+  function saveTaraFromEditor(){
+    const nombre = String($('#tNombre')?.value || '').trim();
+    if (!nombre) { toast('Tara: falta nombre'); return; }
+    const id = S._taraEditId || uid();
+    const obj = { id, nombre, peso: round2(toNum($('#tPeso')?.value)), notas: String($('#tNotas')?.value || '') };
+
+    const dup = S.taras.find(t => t.id !== id && String(t.nombre||'').trim().toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe una tara con ese nombre'); return; }
+
+    const idx = S.taras.findIndex(x => x.id === id);
+    if (idx >= 0) S.taras[idx] = { ...S.taras[idx], ...obj };
+    else S.taras.push(obj);
+
+    save('factu_miral_taras_v1', S.taras);
+    U.fillTaraDefaultSelect();
+    FACTU_renderTaras();
+    // refrescar grid (selects)
+    renderGrid();
+    toast('Tara guardada');
+  }
+
+  function deleteTaraFromEditor(){
+    const id = S._taraEditId;
+    if (!id) { toast('No hay tara seleccionada'); return; }
+    if (isTaraUsed(id)) { toast('No se puede eliminar: usada en facturas'); return; }
+    if (!confirm('Eliminar tara?')) return;
+    S.taras = S.taras.filter(t => t.id !== id);
+    save('factu_miral_taras_v1', S.taras);
+    U.fillTaraDefaultSelect();
+    FACTU_renderTaras();
+    renderGrid();
+    openTaraEditor('');
+    toast('Tara eliminada');
+  }
+
+  function wireTarasTab(){
+    on($('#buscarTaras'), 'input', () => FACTU_renderTaras());
+    on($('#btnTaraNueva'), 'click', () => openTaraEditor(''));
+    on($('#btnTaraGuardar'), 'click', () => saveTaraFromEditor());
+    on($('#btnTaraEliminar'), 'click', () => deleteTaraFromEditor());
+  }
+
+  /* =========================
+     WHATSAPP PRO (texto)
+  ========================= */
+  function buildWhatsAppText(){
+    const linesOk = (F.lineas || []).filter(l => String(l.producto||'').trim() && toNum(l.importe) > 0);
+    const head = [
+      `*FACTURA ${F.num}*`,
+      `Fecha: ${ddmmyyyy(F.fecha)} (${dayNameES(F.fecha)})`,
+      `Cliente: ${F.clienteSnap?.nombre || ''}`,
+      F.tags ? `Tags: ${F.tags}` : ''
+    ].filter(Boolean).join('\n');
+
+    const body = linesOk.map(l => {
+      const modo = (l.modo || '').toUpperCase();
+      if (l.modo === 'kg') {
+        return `• ${l.producto} · ${modo} · Bruto ${toNum(l.bruto)}kg · Tara ${toNum(l.taraKg)}kg · Neto ${toNum(l.neto)}kg · ${fmtEuro(l.precio)} · Importe ${fmtEuro(l.importe)}`;
       }
-      toast('Vista','No hay visor disponible.', 'warn');
+      return `• ${l.producto} · ${modo} · Cant ${toNum(l.cantidad)} · ${fmtEuro(l.precio)} · Importe ${fmtEuro(l.importe)}`;
+    }).join('\n');
+
+    const tot = [
+      `Subtotal: ${fmtEuro(F.totals.subtotal)}`,
+      F.transporteOn ? `Transporte (${toNum(F.transportePct)}%): ${fmtEuro(F.totals.transporte)}` : '',
+      F.ivaIncluido ? `IVA: incluido` : `IVA (${toNum(F.ivaPct)}%): ${fmtEuro(F.totals.iva)}`,
+      `TOTAL: *${fmtEuro(F.totals.total)}*`,
+      `Pagado: ${fmtEuro(F.totals.pagado)} · Pendiente: *${fmtEuro(F.totals.pendiente)}*`
+    ].filter(Boolean).join('\n');
+
+    return `${head}\n\n${body}\n\n${tot}`.trim();
+  }
+
+  function FACTU_whatsapp(){
+    // asegura totales
+    recalcFacturaTotals();
+    const txt = buildWhatsAppText();
+
+    const out = $(IDS.waOut);
+    if (out) out.value = txt;
+
+    // copiar + abrir enlace
+    navigator.clipboard.writeText(txt).then(() => {
+      toast('WhatsApp: texto copiado');
+      const url = `https://wa.me/?text=${encodeURIComponent(txt)}`;
+      window.open(url, '_blank');
+    }).catch(() => {
+      toast('No se pudo copiar. Abriendo WhatsApp…');
+      const url = `https://wa.me/?text=${encodeURIComponent(txt)}`;
+      window.open(url, '_blank');
+    });
+  }
+
+  /* =========================
+     EXPOSE FUNCTIONS (para 3A botones)
+  ========================= */
+  window.FACTU_nuevaFactura = FACTU_nuevaFactura;
+  window.FACTU_duplicarFactura = FACTU_duplicarFactura;
+  window.FACTU_eliminarFactura = FACTU_eliminarFactura;
+  window.FACTU_guardarFactura = FACTU_guardarFactura;
+  window.FACTU_addLinea = FACTU_addLinea;
+  window.FACTU_loadFacturaById = FACTU_loadFacturaById;
+
+  window.FACTU_renderFacturas = FACTU_renderFacturas;
+  window.FACTU_renderClientes = FACTU_renderClientes;
+  window.FACTU_renderProductos = FACTU_renderProductos;
+  window.FACTU_renderTaras = FACTU_renderTaras;
+
+  window.FACTU_whatsapp = FACTU_whatsapp;
+
+  /* =========================
+     WIRE TABS RENDERS (safe)
+  ========================= */
+  // Entra aquí cuando cambias tab (3A lo llama)
+  // Solo aseguramos que existan inputs/handlers y render
+  function init3B(){
+    // factura UI
+    bindFacturaUI();
+
+    // listados
+    wireFacturasSearch();
+    wireClientesTab();
+    wireProductosTab();
+    wireTarasTab();
+
+    // render inicial de listados si tab cambia
+    if ($('#tabFacturas')) FACTU_renderFacturas();
+    if ($('#tabClientes')) FACTU_renderClientes();
+    if ($('#tabProductos')) FACTU_renderProductos();
+    if ($('#tabTaras')) FACTU_renderTaras();
+
+    // Botón opcional de copiar whatsapp si existe
+    on($(IDS.btnWhatsappCopy), 'click', () => {
+      const txt = buildWhatsAppText();
+      navigator.clipboard.writeText(txt).then(() => toast('Texto copiado')).catch(() => toast('No se pudo copiar'));
+    });
+
+    // Si hay datos previos en selector cliente, aplicarlos
+    const sel = $(IDS.selCliente);
+    if (sel && sel.value && !F.clienteId) {
+      F.clienteId = sel.value;
+      const c = findClienteById(F.clienteId);
+      if (c) F.clienteSnap = { nombre:c.nombre||'', nif:c.nif||'', dir:c.dir||'', tel:c.tel||'', email:c.email||'', pago:c.pago||'' };
+    }
+
+    // Recalcular y QR
+    F.lineas.forEach(recalcLinea);
+    recalcFacturaTotals();
+    renderQrOnScreen();
+  }
+
+  // run
+  try { init3B(); } catch(e){ console.error(e); }
+
+})(); // end 3B
+/* =========================================================
+PARTE 3C/5 — FACTU MIRAL (B/W PRO)
+Archivo: app.js  (PEGAR 3A + 3B + 3C EN ORDEN, SIN CAMBIAR)
+- 3C: PDF PRO (multipágina + visor interno) + QR en PDF (si OK) + Contabilidad PIN + Ventas Diarias PIN
+      + Ajustes (IVA/Transporte/PIN/QR/Cloud) + Cloud Firebase opcional (no crash) + Atajos teclado PRO
+========================================================= */
+
+(() => {
+  'use strict';
+
+  const S = window.FACTU_STATE;
+  const U = window.FACTU_UTILS;
+  if (!S || !U) return;
+
+  const {
+    $, $$, on, uid, toNum, round2, fmtEuro, isoToday, ddmmyyyy, dayNameES,
+    save, toast, openModal, closeModal, setActiveTab
+  } = U;
+
+  // Active invoice reference (shared with 3B)
+  const getF = () => (S._activeFactura || null);
+
+  /* =========================
+     SAFE DOM HELPERS
+  ========================= */
+  const val = (sel) => String($(sel)?.value ?? '');
+  const setVal = (sel, v) => { const el = $(sel); if (el) el.value = (v ?? ''); };
+  const setText = (sel, t) => { const el = $(sel); if (el) el.textContent = (t ?? ''); };
+  const setHtml = (sel, h) => { const el = $(sel); if (el) el.innerHTML = (h ?? ''); };
+  const show = (sel) => { const el = $(sel); if (el) el.style.display = ''; };
+  const hide = (sel) => { const el = $(sel); if (el) el.style.display = 'none'; };
+
+  const esc = (s) => (s ?? '').toString()
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'","&#039;");
+
+  /* =========================
+     PERSIST KEYS
+  ========================= */
+  const K = {
+    AJUSTES: 'factu_miral_ajustes_v1',
+    FACTURAS: 'factu_miral_facturas_v1',
+    CLIENTES: 'factu_miral_clientes_v1',
+    PRODUCTOS: 'factu_miral_productos_v1',
+    TARAS: 'factu_miral_taras_v1',
+    VENTAS: 'factu_miral_ventas_v1'
+  };
+
+  /* =========================
+     AJUSTES — load/save wrappers
+  ========================= */
+  function getPin(){
+    return String(S.ajustes?.pin || '8410');
+  }
+  function isPinOk(pin){
+    return String(pin || '') === getPin();
+  }
+
+  function ensureVentasLoaded(){
+    if (!Array.isArray(S.ventas)) {
+      try {
+        S.ventas = JSON.parse(localStorage.getItem(K.VENTAS) || '[]') || [];
+      } catch {
+        S.ventas = [];
+      }
+    }
+  }
+
+  /* =========================
+     QR — dataURL generator (for PDF) (safe)
+     RULE: if fails, DO NOT include QR in PDF.
+  ========================= */
+  function buildQrTextForFactura(F){
+    const nif = String(S.ajustes?.proveedor?.nif || '').trim();
+    const num = String(F?.num || '').trim();
+    const fecha = ddmmyyyy(F?.fecha || '');
+    const total = fmtEuro(toNum(F?.totals?.total || 0));
+
+    const tpl = String(S.ajustes?.qrPlantilla || 'NIF={NIF}&NUM={NUM}&FECHA={FECHA}&TOTAL={TOTAL}');
+    const txt = tpl
+      .replaceAll('{NIF}', nif)
+      .replaceAll('{NUM}', num)
+      .replaceAll('{FECHA}', fecha)
+      .replaceAll('{TOTAL}', total);
+
+    return txt;
+  }
+
+  function canMakeQr(F){
+    const nif = String(S.ajustes?.proveedor?.nif || '').trim();
+    return !!(nif && F?.num && F?.fecha && (toNum(F?.totals?.total) > 0));
+  }
+
+  function qrDataUrlFromText(txt){
+    // Try qrcode-generator (window.qrcode) -> canvas -> dataURL
+    try {
+      if (!txt) return null;
+      if (typeof window.qrcode !== 'function') return null;
+
+      const qr = window.qrcode(0, 'M');
+      qr.addData(txt);
+      qr.make();
+
+      const count = qr.getModuleCount();
+      const size = 180; // px
+      const cell = Math.floor(size / count) || 3;
+      const canvas = document.createElement('canvas');
+      canvas.width = cell * count;
+      canvas.height = cell * count;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      for (let r=0;r<count;r++){
+        for (let c=0;c<count;c++){
+          ctx.fillStyle = qr.isDark(r,c) ? '#111' : '#fff';
+          ctx.fillRect(c*cell, r*cell, cell, cell);
+        }
+      }
+      return canvas.toDataURL('image/png');
+    } catch {
+      return null;
+    }
+  }
+
+  /* =========================
+     PDF PRO — jsPDF + autoTable if available
+     - multi-page, "Suma y sigue"
+     - page numbering "Página X/Y"
+     - QR in PDF only if QR creation succeeds (rule)
+  ========================= */
+  function lineasValidas(F){
+    const arr = Array.isArray(F?.lineas) ? F.lineas : [];
+    return arr.filter(l => String(l.producto||'').trim() && (toNum(l.importe) > 0 || toNum(l.cantidad)>0 || toNum(l.bruto)>0));
+  }
+
+  function makePdfFilename(F){
+    const n = String(F?.num || 'FACTURA').replaceAll('/','-').replaceAll('\\','-');
+    return `${n}.pdf`;
+  }
+
+  function getProveedorSnap(F){
+    return F?.proveedorSnap || S.ajustes?.proveedor || {};
+  }
+
+  function getClienteSnap(F){
+    return F?.clienteSnap || {};
+  }
+
+  function ensureTotals(F){
+    // 3B recalcula siempre, pero por seguridad:
+    if (!F.totals) F.totals = { subtotal:0, transporte:0, iva:0, total:0, pagado:0, pendiente:0 };
+  }
+
+  function generatePdfBlob(F){
+    ensureTotals(F);
+
+    const jsPDF = window.jspdf?.jsPDF || window.jsPDF;
+    if (!jsPDF) {
+      toast('PDF: falta jsPDF en index');
       return null;
     }
 
-    const url = URL.createObjectURL(blob);
-    FM.current.pdf = FM.current.pdf || {};
-    FM.current.pdf.lastBlobUrl = url;
+    const doc = new jsPDF({ orientation:'p', unit:'mm', format:'a4' });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
 
-    const fr = $('#pdfFrame');
-    if(fr){
-      fr.removeAttribute('srcdoc');
-      fr.src = url;
-    }
-    openModal('#pdfModal');
-    toast('PDF','Generado.', 'ok');
-    return { blob, url };
-  }catch(e){
-    console.warn(e);
-    toast('PDF','Error generando PDF.', 'danger');
-    return null;
-  }
-};
+    // theme: B/W PRO
+    const M = 12;        // margin
+    const headerH = 34;
+    const y0 = M;
 
-(function bindPDF(){
-  on($('#btnGenerarPDF'),'click', async ()=>{ await FM.renderPDF(); });
-  on($('#btnVerPDF'),'click', ()=>{
-    const fr = $('#pdfFrame');
-    if(fr && (fr.getAttribute('src') || fr.getAttribute('srcdoc'))){
-      openModal('#pdfModal');
-    }else{
-      toast('PDF','Primero genera el PDF.', 'warn');
-    }
-  });
-})();
-
-/* =========================
-   FACTURAS: botón “Ver PDF” en listado (si existe)
-========================= */
-function renderFacturasList_plusPDF(){
-  const wrap = $('#facturasList');
-  if(!wrap) return;
-
-  const q = ($('#facturasBuscar')?.value || '').trim().toUpperCase();
-  const rows = (FM.db.facturas||[]).filter(f=>{
-    if(!q) return true;
-    const numf = (f.numero||'').toUpperCase();
-    const cli  = (f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '').toUpperCase();
-    const tags = (f.tags||'').toUpperCase();
-    const fecha = (f.fechaISO||'').toUpperCase();
-    return numf.includes(q) || cli.includes(q) || tags.includes(q) || fecha.includes(q);
-  });
-
-  wrap.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead>
-          <tr><th>Fecha</th><th>Nº</th><th>Cliente</th><th>Tags</th><th>Total</th><th>Estado</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${rows.map(f=>{
-            const cli = f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—';
-            const pdfOk = (f.pdf?.lastBlobUrl) || (f.cloud?.pdfUrl);
-            return `
-              <tr>
-                <td class="mono">${escapeHtml(isoToES(f.fechaISO))}</td>
-                <td class="mono"><b>${escapeHtml(f.numero||'')}</b></td>
-                <td>${escapeHtml(cli)}</td>
-                <td class="mono">${escapeHtml(f.tags||'')}</td>
-                <td class="mono">${money(f.totals?.total||0)}€</td>
-                <td class="mono">${escapeHtml(f.estado||'')}</td>
-                <td style="white-space:nowrap">
-                  <button class="btn btn--xs jsFacEdit" data-id="${f.id}" type="button">Editar</button>
-                  <button class="btn btn--xs jsFacPdf" data-id="${f.id}" type="button" ${pdfOk?'':'disabled'}>Ver PDF</button>
-                </td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  $$('.jsFacEdit', wrap).forEach(b=>{
-    on(b,'click', ()=>{
-      const id = b.dataset.id;
-      const f = (FM.db.facturas||[]).find(x=>x.id===id);
-      if(!f) return;
-      FM.current = structuredClone(f);
-      setFacturaMetaUI();
-      fillClienteSelect();
-      renderLineasBase();
-      renderPagos();
-      FM.recalcInvoice();
-      setActiveTab('tabFactura');
-      toast('Factura','Abierta para edición.', 'ok');
-    });
-  });
-
-  $$('.jsFacPdf', wrap).forEach(b=>{
-    on(b,'click', ()=>{
-      const id = b.dataset.id;
-      const f = (FM.db.facturas||[]).find(x=>x.id===id);
-      if(!f) return;
-      const fr = $('#pdfFrame');
-      if(!fr) return;
-
-      const src = f.cloud?.pdfUrl || f.pdf?.lastBlobUrl;
-      if(!src){ toast('PDF','No hay PDF guardado.', 'warn'); return; }
-      fr.removeAttribute('srcdoc');
-      fr.src = src;
-      openModal('#pdfModal');
-    });
-  });
-}
-// sustituimos el render de facturas por versión con PDF
-FM.renderLists = function(){
-  try{
-    renderFacturasList_plusPDF();
-    renderClientesList();
-    renderProductosList();
-    renderTarasList();
-  }catch(e){ console.warn(e); }
-};
-on($('#facturasBuscar'),'input', ()=> renderFacturasList_plusPDF());
-
-/* =========================
-   CONTABILIDAD 🔒 (PIN) — KPIs + filtros + CSV
-========================= */
-function contFilteredFacturas(){
-  const desde = safeGetVal('#contDesde');
-  const hasta = safeGetVal('#contHasta');
-  const clienteId = safeGetVal('#contCliente');
-  const tag = (safeGetVal('#contTag') || '').trim().toUpperCase();
-
-  return (FM.db.facturas||[]).filter(f=>{
-    if(desde && (f.fechaISO||'') < desde) return false;
-    if(hasta && (f.fechaISO||'') > hasta) return false;
-    if(clienteId && f.clienteId !== clienteId) return false;
-    if(tag && !((f.tags||'').toUpperCase().includes(tag))) return false;
-    return true;
-  });
-}
-
-function calcMargin(f){
-  // margen si hay coste en productos: suma(importe - (neto*coste)) solo modo kg; caja/ud usa cantidad*coste si se define
-  let m = 0;
-  (f.lineas||[]).forEach(l=>{
-    const p = findProductoByName(l.producto);
-    const coste = p ? num(p.coste) : 0;
-    if(coste<=0) return;
-    if(l.modo==='kg') m += (num(l.importe) - (num(l.neto)*coste));
-    else m += (num(l.importe) - (num(l.cantidad)*coste));
-  });
-  return round2(m);
-}
-
-function renderContabilidad(){
-  const list = contFilteredFacturas();
-  const ventas = round2(list.reduce((a,f)=> a + num(f.totals?.total), 0));
-  const iva = round2(list.reduce((a,f)=> a + num(f.chkIvaIncluido ? (f.totals?.ivaInterno||0) : (f.totals?.iva||0)), 0));
-  const n = list.length;
-  const margen = round2(list.reduce((a,f)=> a + calcMargin(f), 0));
-
-  setText($('#kpiVentas'), money(ventas)+'€');
-  setText($('#kpiIVA'), money(iva)+'€');
-  setText($('#kpiNum'), String(n));
-  setText($('#kpiMargen'), money(margen)+'€');
-
-  const wrap = $('#contTable');
-  if(!wrap) return;
-
-  wrap.innerHTML = `
-    <div class="tableWrap">
-      <table class="simpleTable">
-        <thead><tr><th>Fecha</th><th>Nº</th><th>Cliente</th><th>Tags</th><th>Total</th><th>IVA</th><th>Pendiente</th></tr></thead>
-        <tbody>
-          ${list.map(f=>{
-            const cli = f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—';
-            const ivaF = f.chkIvaIncluido ? (f.totals?.ivaInterno||0) : (f.totals?.iva||0);
-            return `
-              <tr>
-                <td class="mono">${escapeHtml(isoToES(f.fechaISO))}</td>
-                <td class="mono"><b>${escapeHtml(f.numero||'')}</b></td>
-                <td>${escapeHtml(cli)}</td>
-                <td class="mono">${escapeHtml(f.tags||'')}</td>
-                <td class="mono">${money(f.totals?.total||0)}€</td>
-                <td class="mono">${money(ivaF)}€</td>
-                <td class="mono">${money(Math.max(0,f.totals?.pendiente||0))}€</td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  // dashboards simples: top clientes / pendientes
-  const topCli = {};
-  list.forEach(f=>{
-    const name = f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—';
-    topCli[name] = (topCli[name]||0) + num(f.totals?.total);
-  });
-  const topArr = Object.entries(topCli).sort((a,b)=>b[1]-a[1]).slice(0,8);
-
-  const topBox = $('#contTopClientes');
-  if(topBox){
-    topBox.innerHTML = topArr.map(([k,v])=>`<div class="totRow"><div>${escapeHtml(k)}</div><div class="totVal">${money(v)}€</div></div>`).join('')
-      || `<div class="muted">Sin datos</div>`;
-  }
-
-  const pend = list
-    .filter(f => num(f.totals?.pendiente) > 0.01)
-    .sort((a,b)=> num(b.totals?.pendiente)-num(a.totals?.pendiente))
-    .slice(0,10);
-
-  const pendBox = $('#contPendientes');
-  if(pendBox){
-    pendBox.innerHTML = pend.map(f=>{
-      const cli = f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—';
-      return `<div class="totRow"><div><div><b>${escapeHtml(cli)}</b></div><div class="hint mono">${escapeHtml(f.numero||'')}</div></div><div class="totVal">${money(f.totals?.pendiente||0)}€</div></div>`;
-    }).join('') || `<div class="muted">Sin pendientes</div>`;
-  }
-}
-
-function exportContCSV(){
-  const list = contFilteredFacturas();
-  const lines = [
-    ['Fecha','Numero','Cliente','Tags','Total','IVA','Pendiente'].join(';')
-  ];
-  list.forEach(f=>{
-    const cli = (f.clienteSnap?.nombre || findClienteById(f.clienteId)?.nombre || '—').replaceAll(';',',');
-    const ivaF = f.chkIvaIncluido ? (f.totals?.ivaInterno||0) : (f.totals?.iva||0);
-    lines.push([
-      isoToES(f.fechaISO),
-      f.numero||'',
-      cli,
-      (f.tags||'').replaceAll(';',','),
-      money(f.totals?.total||0),
-      money(ivaF),
-      money(Math.max(0,f.totals?.pendiente||0))
-    ].join(';'));
-  });
-  const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'contabilidad_factumiral.csv';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url), 5000);
-}
-
-(function bindContabilidad(){
-  const ids = ['#contDesde','#contHasta','#contCliente','#contTag'];
-  ids.forEach(id => on($(id),'input', renderContabilidad));
-  on($('#btnContExport'),'click', exportContCSV);
-  // render al entrar tab (ya se llama FM.renderLists), pero también:
-  on($('#tabBtnContRefresh'),'click', renderContabilidad);
-})();
-
-/* =========================
-   VENTAS DIARIAS 🔒 PIN 8410
-   - San Pablo / San Lesmes / Santiago
-   - efectivo + tarjeta + gastos
-   - reportes diario/semanal/mensual/rango
-========================= */
-function ventasAdd(){
-  const fechaISO = safeGetVal('#venFecha') || toISODate(now());
-  const tienda = safeGetVal('#venTienda') || 'San Pablo';
-  const efectivo = num(safeGetVal('#venEfectivo'));
-  const tarjeta = num(safeGetVal('#venTarjeta'));
-  const gastos = num(safeGetVal('#venGastos'));
-  const nota = safeGetVal('#venNota') || '';
-
-  const d = new Date(fechaISO+'T00:00:00');
-  const dias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-  const dia = dias[d.getDay()];
-
-  FM.db.ventas = FM.db.ventas || [];
-  FM.db.ventas.unshift({
-    id: uid(),
-    fechaISO, dia, tienda,
-    efectivo: round2(efectivo),
-    tarjeta: round2(tarjeta),
-    total: round2(efectivo + tarjeta),
-    gastos: round2(gastos),
-    neto: round2((efectivo + tarjeta) - gastos),
-    nota
-  });
-
-  save(K.VENTAS, FM.db.ventas);
-  toast('Ventas','Guardado.', 'ok');
-  ventasRender();
-}
-
-function ventasFiltered(){
-  const desde = safeGetVal('#venDesde');
-  const hasta = safeGetVal('#venHasta');
-  const tienda = safeGetVal('#venFiltroTienda');
-
-  return (FM.db.ventas||[]).filter(v=>{
-    if(desde && v.fechaISO < desde) return false;
-    if(hasta && v.fechaISO > hasta) return false;
-    if(tienda && tienda !== 'todas' && v.tienda !== tienda) return false;
-    return true;
-  }).sort((a,b)=> (b.fechaISO||'').localeCompare(a.fechaISO||''));
-}
-
-function ventasRender(){
-  const list = ventasFiltered();
-  const wrap = $('#ventasList');
-  if(wrap){
-    wrap.innerHTML = `
-      <div class="tableWrap">
-        <table class="simpleTable">
-          <thead><tr><th>Fecha</th><th>Día</th><th>Tienda</th><th>Efectivo</th><th>Tarjeta</th><th>Total</th><th>Gastos</th><th>Neto</th><th></th></tr></thead>
-          <tbody>
-            ${list.map(v=>`
-              <tr>
-                <td class="mono">${escapeHtml(isoToES(v.fechaISO))}</td>
-                <td>${escapeHtml(v.dia||'')}</td>
-                <td><b>${escapeHtml(v.tienda||'')}</b></td>
-                <td class="mono">${money(v.efectivo)}€</td>
-                <td class="mono">${money(v.tarjeta)}€</td>
-                <td class="mono"><b>${money(v.total)}€</b></td>
-                <td class="mono">${money(v.gastos)}€</td>
-                <td class="mono"><b>${money(v.neto)}€</b></td>
-                <td><button class="btn btn--danger btn--xs jsVenDel" data-id="${v.id}" type="button">Eliminar</button></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-    $$('.jsVenDel', wrap).forEach(b=>{
-      on(b,'click', ()=>{
-        const id = b.dataset.id;
-        FM.db.ventas = (FM.db.ventas||[]).filter(x=>x.id!==id);
-        save(K.VENTAS, FM.db.ventas);
-        ventasRender();
-      });
-    });
-  }
-
-  const sum = (k)=> round2(list.reduce((a,x)=>a+num(x[k]),0));
-  setText($('#venSumEfectivo'), money(sum('efectivo'))+'€');
-  setText($('#venSumTarjeta'), money(sum('tarjeta'))+'€');
-  setText($('#venSumTotal'), money(sum('total'))+'€');
-  setText($('#venSumGastos'), money(sum('gastos'))+'€');
-  setText($('#venSumNeto'), money(sum('neto'))+'€');
-}
-
-(function bindVentas(){
-  on($('#venAdd'),'click', ventasAdd);
-  ['#venFecha','#venTienda','#venEfectivo','#venTarjeta','#venGastos','#venNota','#venDesde','#venHasta','#venFiltroTienda']
-    .forEach(id => on($(id),'input', ventasRender));
-
-  // defaults
-  if($('#venFecha')) $('#venFecha').value = toISODate(now());
-  ventasRender();
-})();
-
-/* =========================
-   CRUD — PRODUCTOS / TARAS / CLIENTES (si hay panel editor)
-========================= */
-function bindCRUD(){
-  // PRODUCTOS
-  on($('#btnProNuevo'),'click', ()=>{
-    safeSetVal('#proEdId','');
-    safeSetVal('#proEdNombre','');
-    safeSetVal('#proEdModo','kg');
-    safeSetVal('#proEdKgCaja','0');
-    safeSetVal('#proEdPKg','0');
-    safeSetVal('#proEdPCaja','0');
-    safeSetVal('#proEdPUd','0');
-    safeSetVal('#proEdCoste','0');
-    safeSetVal('#proEdOrigen','');
-    safeSetVal('#proEdEnvase','');
-    toast('Producto','Nuevo.', 'ok');
-  });
-
-  on($('#btnProGuardar'),'click', ()=>{
-    const id = safeGetVal('#proEdId') || uid();
-    const nombre = normName(safeGetVal('#proEdNombre'));
-    if(!nombre){ toast('Producto','Falta nombre.', 'warn'); return; }
-
-    const p = {
-      id,
-      nombre,
-      modo: safeGetVal('#proEdModo') || 'kg',
-      kgCaja: num(safeGetVal('#proEdKgCaja')),
-      pKg: num(safeGetVal('#proEdPKg')),
-      pCaja: num(safeGetVal('#proEdPCaja')),
-      pUd: num(safeGetVal('#proEdPUd')),
-      coste: num(safeGetVal('#proEdCoste')),
-      origen: safeGetVal('#proEdOrigen') || '',
-      envaseId: safeGetVal('#proEdEnvase') || '',
-      hist: (findProductoByName(nombre)?.hist || [])
-    };
-
-    const idx = (FM.db.productos||[]).findIndex(x=>x.id===id);
-    if(idx>=0) FM.db.productos[idx] = p;
-    else FM.db.productos.unshift(p);
-
-    save(K.PROD, FM.db.productos);
-    toast('Producto','Guardado.', 'ok');
-    FM.renderLists();
-  });
-
-  on($('#btnProEliminar'),'click', ()=>{
-    const id = safeGetVal('#proEdId');
-    if(!id) return;
-    // protección: si usado en facturas
-    const used = (FM.db.facturas||[]).some(f => (f.lineas||[]).some(l => {
-      const pr = findProductoByName(l.producto);
-      return pr && pr.id === id;
-    }));
-    if(used){ toast('Producto','No se puede eliminar: usado en facturas.', 'warn'); return; }
-
-    FM.db.productos = (FM.db.productos||[]).filter(p=>p.id!==id);
-    save(K.PROD, FM.db.productos);
-    toast('Producto','Eliminado.', 'ok');
-    FM.renderLists();
-  });
-
-  // TARAS
-  on($('#btnTaraNuevo'),'click', ()=>{
-    safeSetVal('#taraEdId','');
-    safeSetVal('#taraEdNombre','');
-    safeSetVal('#taraEdPeso','0.30');
-    safeSetVal('#taraEdNotas','');
-  });
-  on($('#btnTaraGuardar'),'click', ()=>{
-    const id = safeGetVal('#taraEdId') || uid();
-    const nombre = (safeGetVal('#taraEdNombre')||'').trim();
-    const peso = num(safeGetVal('#taraEdPeso'));
-    if(!nombre){ toast('Tara','Falta nombre.', 'warn'); return; }
-    if(peso<=0){ toast('Tara','Peso inválido.', 'warn'); return; }
-
-    const t = { id, nombre, peso: round2(peso), notas: safeGetVal('#taraEdNotas')||'' };
-    const idx = (FM.db.taras||[]).findIndex(x=>x.id===id);
-    if(idx>=0) FM.db.taras[idx]=t; else FM.db.taras.unshift(t);
-    save(K.TARAS, FM.db.taras);
-
-    fillTarasForEditors();
-    renderLineasBase();
-    FM.recalcInvoice();
-
-    toast('Tara','Guardada.', 'ok');
-    FM.renderLists();
-  });
-  on($('#btnTaraEliminar'),'click', ()=>{
-    const id = safeGetVal('#taraEdId');
-    if(!id) return;
-
-    // protección: si usada
-    const used = (FM.db.facturas||[]).some(f => (f.lineas||[]).some(l => l.envaseId===id));
-    const usedProd = (FM.db.productos||[]).some(p => p.envaseId===id);
-    if(used || usedProd){
-      toast('Tara','No se puede eliminar: usada en productos/facturas.', 'warn'); return;
+    // QR
+    const qrTxt = buildQrTextForFactura(F);
+    let qrDataUrl = null;
+    if (canMakeQr(F)) {
+      qrDataUrl = qrDataUrlFromText(qrTxt); // may be null
     }
 
-    FM.db.taras = (FM.db.taras||[]).filter(t=>t.id!==id);
-    save(K.TARAS, FM.db.taras);
-    fillTarasForEditors();
-    renderLineasBase();
-    FM.recalcInvoice();
-    toast('Tara','Eliminada.', 'ok');
-    FM.renderLists();
-  });
+    // header blocks
+    const prov = getProveedorSnap(F);
+    const cli = getClienteSnap(F);
 
-  // CLIENTES (en tab Clientes, si hay editor)
-  on($('#btnCliNuevo'),'click', ()=>{
-    safeSetVal('#cliEdId','');
-    safeSetVal('#cliEdNombre','');
-    safeSetVal('#cliEdAlias','');
-    safeSetVal('#cliEdNif','');
-    safeSetVal('#cliEdDir','');
-    safeSetVal('#cliEdTel','');
-    safeSetVal('#cliEdEmail','');
-    safeSetVal('#cliEdNotas','');
+    // Title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('FACTURA', M, y0 + 7);
 
-    safeSetVal('#cliTplIvaIncl','');
-    safeSetVal('#cliTplTrans','');
-    safeSetVal('#cliTplPago','');
-    safeSetVal('#cliTplTags','');
-    safeSetVal('#cliTplNota','');
-  });
-
-  on($('#btnCliGuardar'),'click', ()=>{
-    const id = safeGetVal('#cliEdId') || uid();
-    const nombre = (safeGetVal('#cliEdNombre')||'').trim();
-    if(!nombre){ toast('Cliente','Falta nombre.', 'warn'); return; }
-
-    const c = {
-      id,
-      nombre,
-      alias: safeGetVal('#cliEdAlias')||'',
-      nif: safeGetVal('#cliEdNif')||'',
-      dir: safeGetVal('#cliEdDir')||'',
-      tel: safeGetVal('#cliEdTel')||'',
-      email: safeGetVal('#cliEdEmail')||'',
-      notas: safeGetVal('#cliEdNotas')||'',
-      tpl: {
-        ivaIncluido: ($('#cliTplIvaIncl')?.checked) || false,
-        transporte: ($('#cliTplTrans')?.checked) || false,
-        pago: safeGetVal('#cliTplPago')||'',
-        tags: safeGetVal('#cliTplTags')||'',
-        notaStd: safeGetVal('#cliTplNota')||''
-      }
-    };
-
-    const idx = (FM.db.clientes||[]).findIndex(x=>x.id===id);
-    if(idx>=0) FM.db.clientes[idx]=c; else FM.db.clientes.unshift(c);
-
-    save(K.CLIENTE, FM.db.clientes);
-    fillClienteSelect();
-    fillContClienteSelect();
-    toast('Cliente','Guardado.', 'ok');
-    FM.renderLists();
-  });
-
-  on($('#btnCliEliminar'),'click', ()=>{
-    const id = safeGetVal('#cliEdId');
-    if(!id) return;
-    const used = (FM.db.facturas||[]).some(f => f.clienteId === id);
-    if(used){ toast('Cliente','No se puede eliminar: usado en facturas.', 'warn'); return; }
-    FM.db.clientes = (FM.db.clientes||[]).filter(c=>c.id!==id);
-    save(K.CLIENTE, FM.db.clientes);
-    fillClienteSelect();
-    fillContClienteSelect();
-    toast('Cliente','Eliminado.', 'ok');
-    FM.renderLists();
-  });
-}
-bindCRUD();
-
-/* =========================
-   CLOUD (Firebase) — opcional, 0 crash
-   - Sólo se intenta si hay config completa
-========================= */
-FM.cloud.initIfConfigured = async function(){
-  try{
-    const fb = FM.db.ajustes?.firebase || {};
-    const has = fb.apiKey && fb.authDomain && fb.databaseURL && fb.projectId && fb.appId;
-    if(!has){ FM.cloud.configured = false; return; }
-    FM.cloud.configured = true;
-
-    // carga dinámica (solo si hay internet; si no, no crashea)
-    if(!navigator.onLine){
-      toast('Cloud','Sin internet: Cloud desactivado.', 'warn', 2600);
-      return;
-    }
-
-    // si ya existe firebase, no cargar
-    if(!window.firebase){
-      const s1 = document.createElement('script');
-      s1.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js';
-      const s2 = document.createElement('script');
-      s2.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js';
-      const s3 = document.createElement('script');
-      s3.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js';
-      const s4 = document.createElement('script');
-      s4.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js';
-
-      await new Promise((res,rej)=>{ s1.onload=res; s1.onerror=rej; document.head.appendChild(s1); });
-      await new Promise((res,rej)=>{ s2.onload=res; s2.onerror=rej; document.head.appendChild(s2); });
-      await new Promise((res,rej)=>{ s3.onload=res; s3.onerror=rej; document.head.appendChild(s3); });
-      await new Promise((res,rej)=>{ s4.onload=res; s4.onerror=rej; document.head.appendChild(s4); });
-    }
-
-    firebase.initializeApp({
-      apiKey: fb.apiKey, authDomain: fb.authDomain, databaseURL: fb.databaseURL,
-      projectId: fb.projectId, appId: fb.appId, storageBucket: fb.storageBucket || undefined
-    });
-
-    FM.cloud.loggedIn = !!firebase.auth().currentUser;
-    toast('Cloud','Firebase listo (login opcional).', 'ok', 1800);
-  }catch(e){
-    console.warn(e);
-    toast('Cloud','No se pudo iniciar (opcional).', 'warn', 2600);
-  }
-};
-
-FM.cloud.syncAll = async function(){
-  try{
-    if(!FM.cloud.configured || !window.firebase) return;
-    const u = firebase.auth().currentUser;
-    if(!u){ toast('Cloud','Inicia sesión primero.', 'warn'); return; }
-
-    const base = `factumiral/${u.uid}`;
-    const db = firebase.database();
-    await db.ref(`${base}/proveedor`).set(FM.db.proveedor);
-    await db.ref(`${base}/clientes`).set(FM.db.clientes);
-    await db.ref(`${base}/productos`).set(FM.db.productos);
-    await db.ref(`${base}/taras`).set(FM.db.taras);
-    await db.ref(`${base}/facturas`).set(FM.db.facturas);
-    await db.ref(`${base}/ajustes`).set(FM.db.ajustes);
-    await db.ref(`${base}/ventas`).set(FM.db.ventas);
-
-    toast('Cloud','Sync completo.', 'ok');
-  }catch(e){
-    console.warn(e);
-    toast('Cloud','Error sincronizando.', 'warn');
-  }
-};
-
-FM.cloud.uploadPDF = async function(blob){
-  try{
-    if(!FM.cloud.configured || !window.firebase) return null;
-    const u = firebase.auth().currentUser;
-    if(!u) return null;
-    const fb = FM.db.ajustes?.firebase || {};
-    if(!fb.storageBucket) return null;
-
-    const storage = firebase.storage();
-    const path = `factumiral/${u.uid}/pdf/${FM.current.numero}.pdf`;
-    const ref = storage.ref().child(path);
-    await ref.put(blob, { contentType:'application/pdf' });
-    return await ref.getDownloadURL();
-  }catch(e){
-    console.warn(e);
-    return null;
-  }
-};
-
-(function bindCloudButtons(){
-  on($('#btnFbTest'),'click', async ()=>{
-    await FM.cloud.initIfConfigured();
-    if(FM.cloud.configured) toast('Cloud','Config detectada.', 'ok');
-    else toast('Cloud','Falta configuración.', 'warn');
-  });
-
-  on($('#btnFbLogout'),'click', async ()=>{
+    // logo (simple cherry icon placeholder in B/W) - vector-ish
+    // (No external image needed; simple circle pair + stem)
     try{
-      if(window.firebase){
-        await firebase.auth().signOut();
-        FM.cloud.loggedIn = false;
-        toast('Cloud','Sesión cerrada.', 'ok');
+      const cx = W - M - 18;
+      const cy = y0 + 7;
+      doc.setDrawColor(20);
+      doc.setFillColor(240);
+      doc.circle(cx, cy, 4, 'F');
+      doc.circle(cx+7, cy+1.5, 4, 'F');
+      doc.setDrawColor(20);
+      doc.line(cx+1.5, cy-4, cx+4, cy-10);
+      doc.line(cx+8.5, cy-2.5, cx+4, cy-10);
+    }catch{}
+
+    // Invoice meta (right)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(String(F.num||''), W - M, y0 + 7, { align:'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(`Fecha: ${ddmmyyyy(F.fecha)} (${dayNameES(F.fecha)})`, W - M, y0 + 12, { align:'right' });
+
+    // Big header panel background
+    doc.setDrawColor(30);
+    doc.setFillColor(245);
+    doc.roundedRect(M, y0 + 14, W - 2*M, headerH, 3, 3, 'F');
+
+    // Provider (left)
+    const px = M + 4;
+    const py = y0 + 19;
+    doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text('Proveedor', px, py);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9);
+    const provLines = [
+      String(prov.nombre||''),
+      String(prov.nif||''),
+      String(prov.dir||''),
+      String(prov.tel||''),
+      String(prov.email||'')
+    ].filter(Boolean);
+    doc.text(provLines, px, py + 5);
+
+    // Client (right)
+    const cx = W - M - 4;
+    doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text('Cliente', cx, py, { align:'right' });
+    doc.setFont('helvetica','normal'); doc.setFontSize(9);
+    const cliLines = [
+      String(cli.nombre||''),
+      String(cli.nif||''),
+      String(cli.dir||''),
+      String(cli.tel||''),
+      String(cli.email||'')
+    ].filter(Boolean);
+    doc.text(cliLines, cx, py + 5, { align:'right' });
+
+    // QR center
+    const qBoxW = 30;
+    const qBoxX = (W/2) - (qBoxW/2);
+    const qBoxY = y0 + 19;
+    doc.setDrawColor(30);
+    doc.setFillColor(255);
+    doc.roundedRect(qBoxX, qBoxY, qBoxW, qBoxW, 2, 2, 'FD');
+    doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.text('QR', W/2, qBoxY - 2, { align:'center' });
+
+    // Include QR ONLY if we have a valid dataURL (rule)
+    if (qrDataUrl) {
+      try {
+        doc.addImage(qrDataUrl, 'PNG', qBoxX+2, qBoxY+2, qBoxW-4, qBoxW-4);
+        doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
+        // small text line under QR for fallback
+        const small = (qrTxt || '').toString();
+        const clipped = small.length > 44 ? (small.slice(0,44) + '…') : small;
+        doc.text(clipped, W/2, qBoxY + qBoxW + 3, { align:'center' });
+      } catch {
+        // if addImage fails, we keep QR empty (rule)
       }
-    }catch{
-      toast('Cloud','No disponible.', 'warn');
+    } else {
+      // QR not available => nothing printed (rule)
     }
-  });
 
-  on($('#btnPdfNube'),'click', async ()=>{
-    const res = await FM.renderPDF();
-    if(!res || !res.blob){
-      toast('Cloud','Genera PDF real (jsPDF) para subir.', 'warn');
-      return;
+    // After header
+    let y = y0 + 14 + headerH + 8;
+
+    // Tags / Observaciones brief
+    doc.setFont('helvetica','normal'); doc.setFontSize(9);
+    if (String(F.tags||'').trim()) {
+      doc.text(`Tags: ${String(F.tags||'').trim()}`, M, y);
+      y += 5;
     }
-    await FM.cloud.initIfConfigured();
-    if(!FM.cloud.configured){ toast('Cloud','No configurado.', 'warn'); return; }
-    const url = await FM.cloud.uploadPDF(res.blob);
-    if(url){
-      FM.current.cloud = FM.current.cloud || {};
-      FM.current.cloud.pdfUrl = url;
-      // guarda factura para persistir url
-      const idx = (FM.db.facturas||[]).findIndex(f=>f.id===FM.current.id);
-      if(idx>=0) FM.db.facturas[idx] = structuredClone(FM.current);
-      save(K.FACT, FM.db.facturas);
-      toast('Cloud','PDF subido.', 'ok');
-      FM.renderLists();
-    }else{
-      toast('Cloud','No se pudo subir PDF.', 'warn');
+    if (String(F.obs||'').trim()) {
+      const obs = String(F.obs||'').trim();
+      const lines = doc.splitTextToSize(`Observaciones: ${obs}`, W - 2*M);
+      doc.text(lines, M, y);
+      y += (lines.length * 4) + 2;
     }
-  });
 
-  on($('#btnCloudSync'),'click', async ()=>{
-    await FM.cloud.initIfConfigured();
-    await FM.cloud.syncAll();
-  });
-})();
+    // Table rows
+    const rows = lineasValidas(F).map(l => ([
+      String(l.producto||''),
+      String((l.modo||'').toUpperCase()),
+      num2(l.cantidad),
+      num2(l.bruto),
+      num2(l.taraKg),
+      num2(l.neto),
+      fmtEuro(toNum(l.precio)),
+      String(l.origen||''),
+      fmtEuro(toNum(l.importe))
+    ]));
 
-/* =========================
-   ARRANQUE FINAL: QR + Recalc + Listados
-========================= */
-(function finalBoot_3C(){
-  // recalcula + QR real
-  FM.recalcInvoice();
-  FM.renderQR();
-  FM.renderLists();
+    const head = [[
+      'Producto','Modo','Cant','Bruto','Tara','Neto','Precio','Origen','Importe'
+    ]];
 
-  // Contabilidad render si está desbloqueada y existe UI
-  if(FM.unlocked?.cont) renderContabilidad();
+    const hasAutoTable = !!doc.autoTable;
 
-  // init cloud opcional sin crashear
-  FM.cloud.initIfConfigured();
-})();
-/* =========================================================
-   FIX RENDER + SEED (PRODUCTOS / FACTURAS) — compatible con TU index.html
-   Usa: #productosBody y #facturasBody
-========================================================= */
-(function FM_FIX_RENDER(){
-  // helpers safe
-  const $ = (s)=>document.querySelector(s);
-  const $$ = (s)=>Array.from(document.querySelectorAll(s));
-  const safe = (fn)=>{ try{ return fn(); }catch(e){ console.warn('[FM_FIX]', e); return null; } };
+    if (hasAutoTable) {
+      doc.autoTable({
+        startY: y,
+        head,
+        body: rows.length ? rows : [['—','—','—','—','—','—','—','—','—']],
+        theme: 'grid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 8.5,
+          textColor: 20,
+          lineColor: 40,
+          lineWidth: 0.1,
+          cellPadding: 2
+        },
+        headStyles: {
+          fillColor: [15,15,15],
+          textColor: 255,
+          fontStyle: 'bold'
+        },
+        alternateRowStyles: { fillColor: [245,245,245] },
+        columnStyles: {
+          0: { cellWidth: 44 },
+          1: { cellWidth: 12 },
+          2: { cellWidth: 12, halign:'right' },
+          3: { cellWidth: 14, halign:'right' },
+          4: { cellWidth: 14, halign:'right' },
+          5: { cellWidth: 14, halign:'right' },
+          6: { cellWidth: 18, halign:'right' },
+          7: { cellWidth: 25 },
+          8: { cellWidth: 18, halign:'right' }
+        },
+        didDrawPage: (data) => {
+          // Footer per page (page numbering later)
+          const page = doc.internal.getNumberOfPages();
+          doc.setFont('helvetica','normal');
+          doc.setFontSize(8);
+          doc.setTextColor(60);
+          doc.text('Factu Miral — B/W PRO', M, H - 8);
+          doc.text(`Página ${page}`, W - M, H - 8, { align:'right' });
+          doc.setTextColor(20);
 
-  // keys estables (si tu app ya define otras, NO pasa nada)
-  window.K_PRODUCTOS = window.K_PRODUCTOS || 'factumiral_productos';
-  window.K_FACTURAS  = window.K_FACTURAS  || 'factumiral_facturas';
-  window.K_CLIENTES  = window.K_CLIENTES  || 'factumiral_clientes';
-  window.K_TARAS     = window.K_TARAS     || 'factumiral_taras';
-  window.K_AJUSTES   = window.K_AJUSTES   || 'factumiral_ajustes';
+          // "Suma y sigue" if not last page will be added after table by checking later (simple)
+        }
+      });
 
-  // load/save si no existen (por si tu app.js no los dejó globales)
-  window.load = window.load || function(k,fallback){
-    try{ const v = JSON.parse(localStorage.getItem(k)||''); return (v ?? fallback); }catch{ return fallback; }
-  };
-  window.save = window.save || function(k,v){ localStorage.setItem(k, JSON.stringify(v)); };
+      y = doc.lastAutoTable.finalY + 8;
+    } else {
+      // Fallback simple table (no autotable)
+      doc.setFont('helvetica','bold'); doc.setFontSize(9);
+      doc.text('Líneas', M, y); y += 4;
+      doc.setFont('helvetica','normal'); doc.setFontSize(8);
+      const maxRowsPerPage = 28;
+      let r = 0;
+      while (r < rows.length) {
+        if (y > H - 30) { doc.addPage(); y = M; }
+        const chunk = rows.slice(r, r + maxRowsPerPage);
+        chunk.forEach(rr => {
+          const line = `${rr[0]} | ${rr[1]} | Cant ${rr[2]} | Br ${rr[3]} | Ta ${rr[4]} | Ne ${rr[5]} | ${rr[6]} | ${rr[7]} | ${rr[8]}`;
+          const lines = doc.splitTextToSize(line, W - 2*M);
+          doc.text(lines, M, y);
+          y += lines.length * 3.6;
+        });
+        r += maxRowsPerPage;
+        if (r < rows.length) {
+          doc.setFont('helvetica','bold');
+          doc.text('SUMA Y SIGUE…', M, H - 12);
+          doc.setFont('helvetica','normal');
+          doc.addPage();
+          y = M;
+        }
+      }
+      y += 6;
+    }
 
-  // uid si no existe
-  window.uid = window.uid || function(){
-    return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9);
-  };
+    // Totals box
+    if (y > H - 55) { doc.addPage(); y = M; }
+    doc.setDrawColor(30);
+    doc.setFillColor(245);
+    doc.roundedRect(M, y, W - 2*M, 34, 3, 3, 'F');
 
-  // escapeHtml si no existe
-  window.escapeHtml = window.escapeHtml || function(s){
-    return String(s??'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[m]));
-  };
+    const txL = M + 4;
+    const txR = W - M - 4;
+    let ty = y + 7;
 
-  // money si no existe (formato ES)
-  window.money = window.money || function(n){
-    const x = Number(n||0);
-    return x.toLocaleString('es-ES',{minimumFractionDigits:2, maximumFractionDigits:2});
-  };
+    doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text('Totales', txL, ty);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9);
 
-  // DB base
-  window.FM = window.FM || {};
-  FM.db = FM.db || {};
-  FM.db.productos = load(K_PRODUCTOS, Array.isArray(FM.db.productos)?FM.db.productos:[]);
-  FM.db.facturas  = load(K_FACTURAS,  Array.isArray(FM.db.facturas)?FM.db.facturas:[]);
-  FM.db.clientes  = load(K_CLIENTES,  Array.isArray(FM.db.clientes)?FM.db.clientes:[]);
-  FM.db.taras     = load(K_TARAS,     Array.isArray(FM.db.taras)?FM.db.taras:[]);
-  FM.db.ajustes   = load(K_AJUSTES,   FM.db.ajustes||{});
+    ty += 6;
+    doc.text('Subtotal', txL, ty);
+    doc.text(fmtEuro(F.totals.subtotal), txR, ty, { align:'right' });
 
-  // 1) LISTA OFICIAL: si no existe en runtime, la creamos aquí (multilínea -> array)
-  const OFFICIAL_RAW = (window.OFFICIAL_PRODUCTS && window.OFFICIAL_PRODUCTS.join)
-    ? ''
-    : `
-GRANNY FRANCIA
-MANZANA PINK LADY
-MANDARINA COLOMBE
-KIWI ZESPRI GOLD
-PARAGUAYO
-KIWI TOMASIN PLANCHA
-PERA RINCON DEL SOTO
-MELOCOTON PRIMERA
-AGUACATE GRANEL
-MARACUYÁ
-MANZANA GOLDEN 24
-PLATANO CANARIO PRIMERA
-MANDARINA HOJA
-MANZANA GOLDEN 20
-NARANJA TOMASIN
-NECTARINA
-NUECES
-SANDIA
-LIMON SEGUNDA
-MANZANA FUJI
-NARANJA MESA SONRISA
-JENGIBRE
-BATATA
-AJO PRIMERA
-CEBOLLA NORMAL
-CALABAZA GRANDE
-PATATA LAVADA
-TOMATE CHERRY RAMA
-TOMATE CHERRY PERA
-TOMATE DANIELA
-TOMATE ROSA PRIMERA
-CEBOLLINO
-TOMATE ASURCADO MARRON
-TOMATE RAMA
-PIMIENTO PADRON
-ZANAHORIA
-PEPINO
-CEBOLLETA
-PUERROS
-BROCOLI
-JUDIA VERDE
-BERENJENA
-PIMIENTO ITALIANO VERDE
-PIMIENTO ITALIANO ROJO
-CHAMPIÑON
-UVA ROJA
-UVA BLANCA
-ALCACHOFA
-CALABACIN
-COLIFLOR
-BATAVIA
-ICEBERG
-MANDARINA SEGUNDA
-MANZANA GOLDEN 28
-NARANJA ZUMO
-KIWI SEGUNDA
-MANZANA ROYAL GALA 24
-PLATANO CANARIO SUELTO
-CEREZA
-FRESAS
-ARANDANOS
-ESPINACA
-PEREJIL
-CILANTRO
-ACELGAS
-PIMIENTO VERDE
-PIMIENTO ROJO
-MACHO VERDE
-MACHO MADURO
-YUCA
-AVOCADO
-CEBOLLA ROJA
-MENTA
-HABANERO
-RABANITOS
-POMELO
-PAPAYA
-REINETA 28
-NISPERO
-ALBARICOQUE
-TOMATE PERA
-TOMATE BOLA
-TOMATE PINK
-VALVENOSTA GOLDEN
-MELOCOTON ROJO
-MELON GALIA
-APIO
-NARANJA SANHUJA
-LIMON PRIMERA
-MANGO
-MELOCOTON AMARILLO
-VALVENOSTA ROJA
-PIÑA
-NARANJA HOJA
-PERA CONFERENCIA SEGUNDA
-CEBOLLA DULCE
-TOMATE ASURCADO AZUL
-ESPARRAGOS BLANCOS
-ESPARRAGOS TRIGUEROS
-REINETA PRIMERA
-AGUACATE PRIMERA
-COCO
-NECTARINA SEGUNDA
-REINETA 24
-NECTARINA CARNE BLANCA
-GUINDILLA
-REINETA VERDE
-PATATA 25KG
-PATATA 5 KG
-TOMATE RAFF
-REPOLLO
-KIWI ZESPRI
-PARAGUAYO SEGUNDA
-MELON
-REINETA 26
-TOMATE ROSA
-MANZANA CRIPS
-ALOE VERA PIEZAS
-TOMATE ENSALADA
-PATATA 10KG
-MELON BOLLO
-CIRUELA ROJA
-LIMA
-GUINEO VERDE
-SETAS
-BANANA
-BONIATO
-FRAMBUESA
-BREVAS
-PERA AGUA
-YAUTIA
-YAME
-OKRA
-MANZANA MELASSI
-CACAHUETE
-SANDIA NEGRA
-SANDIA RAYADA
-HIGOS
-KUMATO
-KIWI CHILE
-MELOCOTON AMARILLO SEGUNDA
-HIERBABUENA
-REMOLACHA
-LECHUGA ROMANA
-KAKI
-CIRUELA CLAUDIA
-PERA LIMONERA
-CIRUELA AMARILLA
-HIGOS BLANCOS
-UVA ALVILLO
-LIMON EXTRA
-PITAHAYA ROJA
-HIGO CHUMBO
-CLEMENTINA
-GRANADA
-NECTARINA PRIMERA BIS
-CHIRIMOYA
-UVA CHELVA
-PIMIENTO CALIFORNIA VERDE
-KIWI TOMASIN
-PIMIENTO CALIFORNIA ROJO
-MANDARINA SATSUMA
-CASTAÑA
-MANZANA KANZI
-PERA ERCOLINA
-NABO
-UVA ALVILLO NEGRA
-CHAYOTE
-ROYAL GALA 28
-MANDARINA PRIMERA
-PIMIENTO PINTON
-MELOCOTON AMARILLO DE CALANDA
-HINOJOS
-MANDARINA DE HOJA
-UVA ROJA PRIMERA
-UVA BLANCA PRIMERA
-`.trim();
+    ty += 5;
+    if (F.transporteOn) {
+      doc.text(`Transporte (${toNum(F.transportePct)}%)`, txL, ty);
+      doc.text(fmtEuro(F.totals.transporte), txR, ty, { align:'right' });
+      ty += 5;
+    }
 
-  const officialList = (window.OFFICIAL_PRODUCTS && window.OFFICIAL_PRODUCTS.join)
-    ? window.OFFICIAL_PRODUCTS
-    : Array.from(new Set(OFFICIAL_RAW.split('\n').map(s=>s.trim()).filter(Boolean).map(s=>s.toUpperCase())));
+    if (F.ivaIncluido) {
+      doc.text('IVA', txL, ty);
+      doc.text('Incluido', txR, ty, { align:'right' });
+      ty += 5;
+    } else {
+      doc.text(`IVA (${toNum(F.ivaPct)}%)`, txL, ty);
+      doc.text(fmtEuro(F.totals.iva), txR, ty, { align:'right' });
+      ty += 5;
+    }
 
-  // 2) SEED productos si está vacío
-  function seedProductos(){
-    if(Array.isArray(FM.db.productos) && FM.db.productos.length) return;
-    FM.db.productos = officialList.map(n=>({
-      id: uid(),
-      nombre: n,
-      modo: 'kg',
-      kgCaja: 0,
-      pKg: 0, pCaja: 0, pUd: 0,
-      coste: 0,
-      origen: '',
-      envaseId: '',
-      hist: []
-    }));
-    save(K_PRODUCTOS, FM.db.productos);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text('TOTAL', txL, ty);
+    doc.text(fmtEuro(F.totals.total), txR, ty, { align:'right' });
+
+    // Pagos / Pendiente
+    ty += 6;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9);
+    doc.text(`Pagado: ${fmtEuro(F.totals.pagado)} · Pendiente: ${fmtEuro(F.totals.pendiente)}`, txL, ty);
+
+    // Footer message
+    const footer = F.ivaIncluido
+      ? 'IVA incluido en los precios.'
+      : 'IVA desglosado según configuración.';
+    doc.setFont('helvetica','normal'); doc.setFontSize(8);
+    doc.setTextColor(80);
+    doc.text(footer, M, H - 14);
+    doc.setTextColor(20);
+
+    // Final page numbering "Página X/Y"
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let p=1; p<=totalPages; p++){
+      doc.setPage(p);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8);
+      doc.setTextColor(60);
+      doc.text(`Página ${p}/${totalPages}`, W - M, H - 8, { align:'right' });
+      doc.setTextColor(20);
+    }
+
+    // Blob
+    const blob = doc.output('blob');
+    return blob;
+
+    function num2(n){
+      const x = toNum(n);
+      return x ? String(x).replace('.',',') : '';
+    }
   }
 
-  // 3) RENDER productos en TU tbody real: #productosBody
-  FM.renderProductos = function(){
-    const body = $('#productosBody');
-    if(!body) return;
-    const q = ($('#productosBuscar')?.value || '').trim().toUpperCase();
+  /* =========================
+     PDF VIEWER (internal, no download)
+     - modal with iframe/object
+     - close / print / open tab / share
+  ========================= */
+  let _lastPdfUrl = '';
 
-    const rows = (FM.db.productos||[])
-      .filter(p=> !q || (p.nombre||'').toUpperCase().includes(q))
-      .slice(0, 2000)
-      .map(p=>{
-        const hist = Array.isArray(p.hist) ? p.hist.slice(0,5).map(h=>`${money(h.p||0)} (${h.d||''})`).join(' · ') : '';
-        return `
-          <tr>
-            <td><b>${escapeHtml(p.nombre||'')}</b></td>
-            <td class="mono">${escapeHtml((p.modo||'kg').toUpperCase())}</td>
-            <td class="mono">${money(p.kgCaja||0)}</td>
-            <td class="mono">${money(p.pKg||0)}</td>
-            <td class="mono">${money(p.pCaja||0)}</td>
-            <td class="mono">${money(p.pUd||0)}</td>
-            <td class="mono">${money(p.coste||0)}</td>
-            <td>${escapeHtml(p.origen||'')}</td>
-            <td>${escapeHtml(p.envaseId||'')}</td>
-            <td class="mono">${escapeHtml(hist||'')}</td>
-            <td class="mono">—</td>
-          </tr>
-        `;
-      }).join('');
+  function revokeLastPdfUrl(){
+    try { if (_lastPdfUrl) URL.revokeObjectURL(_lastPdfUrl); } catch {}
+    _lastPdfUrl = '';
+  }
 
-    body.innerHTML = rows || `<tr><td colspan="11" class="muted">Sin productos</td></tr>`;
-  };
+  function FACTU_generarPDF(){
+    const F = getF();
+    if (!F) { toast('No hay factura'); return; }
 
-  // 4) RENDER facturas en TU tbody real: #facturasBody
-  FM.renderFacturas = function(){
-    const body = $('#facturasBody');
-    if(!body) return;
+    const blob = generatePdfBlob(F);
+    if (!blob) return;
 
-    const q = ($('#facturasBuscar')?.value || '').trim().toUpperCase();
-    const list = (FM.db.facturas || []).slice().sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
+    revokeLastPdfUrl();
+    const url = URL.createObjectURL(blob);
+    _lastPdfUrl = url;
 
-    const rows = list
-      .filter(f=>{
-        if(!q) return true;
-        const s = `${f.numero||''} ${f.clienteNombre||''} ${f.tags||''} ${f.fechaES||f.fecha||''}`.toUpperCase();
-        return s.includes(q);
-      })
-      .map(f=>`
+    // Save last URL on invoice model (local only). Cloud uses 3C cloud functions.
+    F.pdfLocalUrl = url;
+
+    // Also provide download fallback if button exists
+    const a = $('#pdfDownloadLink');
+    if (a) {
+      a.href = url;
+      a.download = makePdfFilename(F);
+    }
+
+    toast('PDF generado');
+    return { blob, url };
+  }
+
+  function FACTU_verPDF(){
+    const F = getF();
+    if (!F) { toast('No hay factura'); return; }
+
+    // Ensure we have a fresh PDF
+    const out = FACTU_generarPDF();
+    if (!out?.url) return;
+
+    const frame = $('#pdfFrame');
+    const obj = $('#pdfObject');
+    const area = $('#pdfViewerArea');
+
+    if (frame) frame.src = out.url;
+    if (obj) obj.data = out.url;
+
+    // prefer iframe if exists else object
+    if (area) {
+      // do nothing; area is container
+    }
+
+    openModal('#modalPdf');
+
+    // wire buttons once
+    if (!FACTU_verPDF._wired) {
+      FACTU_verPDF._wired = true;
+
+      on($('#btnPdfClose'), 'click', () => { closeModal('#modalPdf'); });
+      on($('#btnPdfPrint'), 'click', () => {
+        const fr = $('#pdfFrame');
+        try { fr?.contentWindow?.print?.(); } catch { window.open(_lastPdfUrl || '', '_blank'); }
+      });
+      on($('#btnPdfOpenTab'), 'click', () => {
+        if (_lastPdfUrl) window.open(_lastPdfUrl, '_blank');
+      });
+      on($('#btnPdfShare'), 'click', async () => {
+        if (!_lastPdfUrl) return;
+        try {
+          if (navigator.share) {
+            const F2 = getF();
+            const fn = makePdfFilename(F2);
+            const res = await fetch(_lastPdfUrl);
+            const b = await res.blob();
+            const file = new File([b], fn, { type:'application/pdf' });
+            await navigator.share({ title: fn, text: `Factura ${F2?.num || ''}`, files: [file] });
+          } else {
+            toast('Compartir no disponible en este dispositivo');
+          }
+        } catch {
+          toast('No se pudo compartir');
+        }
+      });
+    }
+  }
+
+  /* =========================
+     CLOUD (Firebase) — OPTIONAL, NO CRASH
+     - Only runs if firebase SDK is present + config filled.
+  ========================= */
+  function isFirebaseSdkPresent(){
+    return !!window.firebase;
+  }
+
+  function isFirebaseConfigured(){
+    const c = S.ajustes?.cloud || {};
+    const keys = ['apiKey','authDomain','databaseURL','projectId','appId'];
+    return keys.every(k => String(c[k]||'').trim());
+  }
+
+  function firebaseInitSafe(){
+    try{
+      if (!isFirebaseSdkPresent()) return null;
+      if (!isFirebaseConfigured()) return null;
+
+      if (!S._fbApp) {
+        const c = S.ajustes.cloud;
+        // compat API support
+        if (window.firebase.initializeApp) {
+          S._fbApp = window.firebase.apps?.length ? window.firebase.app() : window.firebase.initializeApp(c);
+        }
+      }
+      return S._fbApp || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function cloudUploadPdfSafe(blob, F){
+    try{
+      const app = firebaseInitSafe();
+      if (!app) return null;
+
+      // Storage optional
+      const fb = window.firebase;
+      const storage = fb.storage?.();
+      if (!storage) return null;
+
+      const fn = makePdfFilename(F);
+      const path = `factu_miral/pdfs/${String(S._cloudUserId||'public')}/${fn}`;
+      const ref = storage.ref().child(path);
+      const snap = await ref.put(blob);
+      const url = await snap.ref.getDownloadURL();
+      return url;
+    } catch {
+      return null;
+    }
+  }
+
+  async function FACTU_pdfToCloud(){
+    const F = getF();
+    if (!F) { toast('No hay factura'); return; }
+    if (!isFirebaseSdkPresent()) { toast('Cloud: Firebase no cargado'); return; }
+    if (!isFirebaseConfigured()) { toast('Cloud: falta configurar ajustes'); return; }
+
+    const out = FACTU_generarPDF();
+    if (!out?.blob) return;
+
+    toast('Subiendo a nube…');
+    const url = await cloudUploadPdfSafe(out.blob, F);
+    if (url) {
+      F.pdfUrl = url;
+      // persist invoice
+      const idx = (S.facturas||[]).findIndex(x => x.id === F.id);
+      if (idx >= 0) {
+        S.facturas[idx] = { ...S.facturas[idx], pdfUrl: url };
+        save(K.FACTURAS, S.facturas);
+      }
+      toast('PDF subido a nube');
+      if (typeof window.FACTU_renderFacturas === 'function') window.FACTU_renderFacturas();
+    } else {
+      toast('No se pudo subir (Storage no disponible o error)');
+    }
+  }
+
+  /* =========================
+     CONTABILIDAD (PIN) — KPIs + filtros + export CSV
+  ========================= */
+  function contabilidadLocked(){
+    return !S._contaUnlocked;
+  }
+
+  function lockContabilidad(){
+    S._contaUnlocked = false;
+    renderContabilidad();
+  }
+
+  function unlockContabilidad(pin){
+    if (!isPinOk(pin)) { toast('PIN incorrecto'); return; }
+    S._contaUnlocked = true;
+    toast('Contabilidad desbloqueada');
+    renderContabilidad();
+  }
+
+  function facturaMatchesFilters(f, fDesde, fHasta, clienteId, tagTxt){
+    const fecha = String(f.fecha||'');
+    if (fDesde && fecha < fDesde) return false;
+    if (fHasta && fecha > fHasta) return false;
+    if (clienteId && String(f.clienteId||'') !== String(clienteId)) return false;
+    if (tagTxt) {
+      const tags = String(f.tags||'').toLowerCase();
+      if (!tags.includes(String(tagTxt||'').toLowerCase().trim())) return false;
+    }
+    return true;
+  }
+
+  function computeKPIs(facts){
+    let ventas = 0, iva = 0, margen = 0, n = 0;
+    for (const f of facts) {
+      n++;
+      ventas += toNum(f?.totals?.total);
+      iva += (f.ivaIncluido ? 0 : toNum(f?.totals?.iva));
+      // margen: si hay coste en producto
+      let m = 0;
+      for (const l of (f.lineas||[])) {
+        const prod = (S.productos||[]).find(p => p.id === l.productoId) || null;
+        const coste = toNum(prod?.coste);
+        if (!(coste > 0)) continue;
+
+        if (l.modo === 'kg') m += (toNum(l.neto) * (toNum(l.precio) - coste));
+        else m += (toNum(l.cantidad) * (toNum(l.precio) - coste));
+      }
+      margen += m;
+    }
+    return {
+      ventas: round2(ventas),
+      iva: round2(iva),
+      margen: round2(margen),
+      nFacturas: n
+    };
+  }
+
+  function groupByMonth(facts){
+    const map = new Map();
+    for (const f of facts) {
+      const d = String(f.fecha||'');
+      const key = d.slice(0,7); // YYYY-MM
+      map.set(key, (map.get(key)||0) + toNum(f?.totals?.total));
+    }
+    return Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+  }
+
+  function topByCliente(facts, topN=8){
+    const map = new Map();
+    for (const f of facts) {
+      const key = String(f.clienteSnap?.nombre||'—');
+      map.set(key, (map.get(key)||0) + toNum(f?.totals?.total));
+    }
+    return Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,topN);
+  }
+
+  function topByProducto(facts, topN=10){
+    const map = new Map();
+    for (const f of facts) {
+      for (const l of (f.lineas||[])) {
+        const name = String(l.producto||'—');
+        if (!name.trim()) continue;
+        map.set(name, (map.get(name)||0) + toNum(l.importe));
+      }
+    }
+    return Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,topN);
+  }
+
+  function pendientesDeCobro(facts){
+    const arr = facts
+      .filter(f => toNum(f?.totals?.pendiente) > 0.01)
+      .map(f => ({
+        num: f.num,
+        fecha: f.fecha,
+        cliente: f.clienteSnap?.nombre||'',
+        pendiente: toNum(f?.totals?.pendiente),
+        total: toNum(f?.totals?.total),
+        tags: f.tags||'',
+        id: f.id
+      }))
+      .sort((a,b)=>b.pendiente-a.pendiente);
+    return arr;
+  }
+
+  function exportCsvContabilidad(facts){
+    const rows = [];
+    rows.push(['fecha','num','cliente','total','iva','pendiente','tags'].join(';'));
+    for (const f of facts) {
+      const fecha = ddmmyyyy(f.fecha);
+      const total = round2(toNum(f?.totals?.total));
+      const iva = f.ivaIncluido ? 0 : round2(toNum(f?.totals?.iva));
+      const pend = round2(toNum(f?.totals?.pendiente));
+      const tags = String(f.tags||'').replaceAll(';',',');
+      rows.push([fecha, f.num, String(f.clienteSnap?.nombre||'').replaceAll(';',','), total, iva, pend, tags].join(';'));
+    }
+    return rows.join('\n');
+  }
+
+  function downloadTextFile(filename, text){
+    const blob = new Blob([text], { type:'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  }
+
+  function renderContabilidad(){
+    const box = $('#contaBox');
+    if (!box) return;
+
+    if (contabilidadLocked()) {
+      setHtml('#contaBox', `
+        <div class="panel">
+          <div class="hTitle">Contabilidad 🔒</div>
+          <div class="muted small">Introduce PIN para desbloquear.</div>
+          <div style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+            <input id="contaPinInput" type="password" inputmode="numeric" placeholder="PIN" style="max-width:160px"/>
+            <button class="btn" id="btnContaUnlock">Desbloquear</button>
+          </div>
+        </div>
+      `);
+      on($('#btnContaUnlock'), 'click', () => unlockContabilidad(val('#contaPinInput')));
+      on($('#contaPinInput'), 'keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); unlockContabilidad(val('#contaPinInput')); }
+      });
+      return;
+    }
+
+    const desde = val('#contaDesde');
+    const hasta = val('#contaHasta');
+    const clienteId = val('#contaCliente');
+    const tag = val('#contaTag').trim();
+
+    const factsAll = (S.facturas || []).slice();
+    const facts = factsAll.filter(f => facturaMatchesFilters(f, desde, hasta, clienteId, tag));
+
+    const kpi = computeKPIs(facts);
+    const byMonth = groupByMonth(facts);
+    const topCli = topByCliente(facts, 8);
+    const topProd = topByProducto(facts, 10);
+    const pend = pendientesDeCobro(factsAll); // pendientes global (más útil)
+
+    // table results
+    const rows = facts
+      .slice()
+      .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')) || String(b.num||'').localeCompare(String(a.num||'')))
+      .map(f => `
         <tr>
-          <td class="mono"><b>${escapeHtml(f.numero||'')}</b></td>
-          <td class="mono">${escapeHtml(f.fechaES||f.fecha||'')}</td>
-          <td>${escapeHtml(f.clienteNombre||'')}</td>
-          <td>${escapeHtml(f.tags||'')}</td>
-          <td class="mono">${money(f.total||0)} €</td>
-          <td>${escapeHtml(f.estado||'')}</td>
-          <td class="mono">—</td>
+          <td>${esc(ddmmyyyy(f.fecha))}</td>
+          <td><a href="#" data-openfact="${esc(f.id)}">${esc(f.num)}</a></td>
+          <td>${esc(f.clienteSnap?.nombre||'')}</td>
+          <td style="text-align:right"><b>${fmtEuro(toNum(f?.totals?.total))}</b></td>
+          <td style="text-align:right">${f.ivaIncluido ? 'incl.' : fmtEuro(toNum(f?.totals?.iva))}</td>
+          <td style="text-align:right">${fmtEuro(toNum(f?.totals?.pendiente))}</td>
+          <td>${esc(f.tags||'')}</td>
         </tr>
       `).join('');
 
-    body.innerHTML = rows || `<tr><td colspan="7" class="muted">Sin facturas</td></tr>`;
-  };
+    setHtml('#contaBox', `
+      <div class="panel">
+        <div class="row" style="justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div>
+            <div class="hTitle">Contabilidad</div>
+            <div class="muted small">Filtros + KPIs + dashboard mensual + export.</div>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btnGhost" id="btnContaLock">Bloquear 🔒</button>
+            <button class="btn" id="btnContaExport">Exportar CSV</button>
+          </div>
+        </div>
 
-  // 5) HOOKS: refrescar al buscar + al entrar en tabs
-  function hookSearch(){
-    $('#productosBuscar')?.addEventListener('input', ()=>FM.renderProductos());
-    $('#facturasBuscar')?.addEventListener('input', ()=>FM.renderFacturas());
-  }
+        <div class="grid2" style="margin-top:12px;">
+          <div class="card">
+            <div class="cardTitle">KPIs</div>
+            <div class="totRow"><span>Ventas</span><b>${fmtEuro(kpi.ventas)}</b></div>
+            <div class="totRow"><span>IVA</span><b>${fmtEuro(kpi.iva)}</b></div>
+            <div class="totRow"><span>Nº facturas</span><b>${kpi.nFacturas}</b></div>
+            <div class="totRow"><span>Margen (si coste)</span><b>${fmtEuro(kpi.margen)}</b></div>
+          </div>
 
-  function hookTabs(){
-    // si tu app ya maneja tabs, esto solo añade refresco al click
-    $('#tabBtnProductos')?.addEventListener('click', ()=>safe(()=>FM.renderProductos()));
-    $('#tabBtnFacturas')?.addEventListener('click', ()=>safe(()=>FM.renderFacturas()));
-  }
+          <div class="card">
+            <div class="cardTitle">Dashboard mensual</div>
+            <div class="muted small">Ventas por mes (según filtros)</div>
+            <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">
+              ${byMonth.length ? byMonth.map(([m,v]) => `
+                <div class="totRow"><span>${esc(m)}</span><b>${fmtEuro(v)}</b></div>
+              `).join('') : `<div class="muted small">Sin datos.</div>`}
+            </div>
+          </div>
+        </div>
 
-  // 6) BOOT
-  function boot(){
-    seedProductos();
-    // asegura arrays
-    if(!Array.isArray(FM.db.facturas)) FM.db.facturas = [];
-    save(K_FACTURAS, FM.db.facturas);
+        <div class="grid2" style="margin-top:12px;">
+          <div class="card">
+            <div class="cardTitle">Top clientes</div>
+            <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
+              ${topCli.length ? topCli.map(([n,v]) => `
+                <div class="totRow"><span>${esc(n)}</span><b>${fmtEuro(v)}</b></div>
+              `).join('') : `<div class="muted small">Sin datos.</div>`}
+            </div>
+          </div>
 
-    hookSearch();
-    hookTabs();
+          <div class="card">
+            <div class="cardTitle">Top productos</div>
+            <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
+              ${topProd.length ? topProd.map(([n,v]) => `
+                <div class="totRow"><span>${esc(n)}</span><b>${fmtEuro(v)}</b></div>
+              `).join('') : `<div class="muted small">Sin datos.</div>`}
+            </div>
+          </div>
+        </div>
 
-    // render inicial (por si ya estás en esos tabs)
-    FM.renderProductos();
-    FM.renderFacturas();
+        <div class="card" style="margin-top:12px;">
+          <div class="cardTitle">Pendientes de cobro (global)</div>
+          ${pend.length ? `
+            <div class="tableWrap" style="margin-top:8px; overflow:auto;">
+              <table class="tbl">
+                <thead>
+                  <tr><th>Fecha</th><th>Nº</th><th>Cliente</th><th style="text-align:right">Pendiente</th><th style="text-align:right">Total</th><th>Tags</th></tr>
+                </thead>
+                <tbody>
+                  ${pend.slice(0,25).map(p => `
+                    <tr>
+                      <td>${esc(ddmmyyyy(p.fecha))}</td>
+                      <td><a href="#" data-openfact="${esc(p.id)}">${esc(p.num)}</a></td>
+                      <td>${esc(p.cliente)}</td>
+                      <td style="text-align:right"><b>${fmtEuro(p.pendiente)}</b></td>
+                      <td style="text-align:right">${fmtEuro(p.total)}</td>
+                      <td>${esc(p.tags)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+              <div class="muted small" style="margin-top:8px">Mostrando 25 mayores pendientes.</div>
+            </div>
+          ` : `<div class="muted small">Sin pendientes.</div>`}
+        </div>
 
-    console.log('[FACTU MIRAL] FIX OK | productos:', FM.db.productos.length, 'facturas:', FM.db.facturas.length);
-  }
+        <div class="card" style="margin-top:12px;">
+          <div class="cardTitle">Resultados</div>
+          <div class="tableWrap" style="margin-top:8px; overflow:auto;">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>Fecha</th><th>Nº</th><th>Cliente</th>
+                  <th style="text-align:right">Total</th>
+                  <th style="text-align:right">IVA</th>
+                  <th style="text-align:right">Pendiente</th>
+                  <th>Tags</th>
+                </tr>
+              </thead>
+              <tbody>${rows || `<tr><td colspan="7" class="muted small">Sin facturas.</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `);
 
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', boot, {once:true});
-  } else boot();
-/* =========================================================
-   PRODUCTOS EDITABLES — compatible con TU index.html
-   IDs: #productosBody #productosBuscar #btnProductosNuevo #btnProductosGuardar #btnProductosEliminar
-        #proEdNombre #proEdModo #proEdKgCaja #proEdPkg #proEdPcaja #proEdPud #proEdCoste #proEdOrigen #proEdEnvase
-========================================================= */
-(function FM_PRODUCTOS_EDIT(){
-  const $ = (s)=>document.querySelector(s);
-  const esc = (s)=> (window.escapeHtml ? escapeHtml(s) : String(s??''));
-  const num = (v)=> {
-    if(v===null || v===undefined) return 0;
-    const s = String(v).trim().replace(',', '.');
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : 0;
-  };
+    on($('#btnContaLock'), 'click', () => lockContabilidad());
+    on($('#btnContaExport'), 'click', () => {
+      const csv = exportCsvContabilidad(facts);
+      const name = `contabilidad_${(desde||'all')}_${(hasta||'all')}.csv`.replaceAll('/','-');
+      downloadTextFile(name, csv);
+      toast('CSV exportado');
+    });
 
-  // keys/DB
-  window.K_PRODUCTOS = window.K_PRODUCTOS || 'factumiral_productos';
-  window.K_TARAS     = window.K_TARAS     || 'factumiral_taras';
-  window.load = window.load || function(k,f){ try{ const v=JSON.parse(localStorage.getItem(k)||''); return v ?? f; }catch{ return f; } };
-  window.save = window.save || function(k,v){ localStorage.setItem(k, JSON.stringify(v)); };
-  window.uid  = window.uid  || function(){ return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9); };
-
-  window.FM = window.FM || {};
-  FM.db = FM.db || {};
-  FM.db.productos = load(K_PRODUCTOS, Array.isArray(FM.db.productos)?FM.db.productos:[]);
-  FM.db.taras     = load(K_TARAS, Array.isArray(FM.db.taras)?FM.db.taras:[]);
-
-  FM.state = FM.state || {};
-  FM.state.selProdId = FM.state.selProdId || null;
-
-  function getProd(id){
-    return (FM.db.productos||[]).find(p=>p.id===id) || null;
-  }
-
-  function fillEnvasesSelect(selectedId){
-    const sel = $('#proEdEnvase');
-    if(!sel) return;
-    const taras = Array.isArray(FM.db.taras) ? FM.db.taras : [];
-    sel.innerHTML = `<option value="">— Sin envase —</option>` + taras.map(t=>{
-      return `<option value="${esc(t.id)}">${esc(t.nombre||'')} · ${num(t.peso||t.pesoKg||t.tara||t.kg||0).toFixed(2)} kg</option>`;
-    }).join('');
-    sel.value = selectedId || '';
-  }
-
-  function renderHistorial(p){
-    const box = $('#proEdHistorial');
-    if(!box) return;
-    const hist = Array.isArray(p?.hist) ? p.hist.slice(0,5) : [];
-    if(!hist.length){ box.textContent = '—'; return; }
-    box.innerHTML = hist.map(h=>{
-      const d = esc(h.d || h.fecha || '');
-      const pr = (window.money ? money(h.p||0) : (h.p||0));
-      const modo = esc((h.m || h.modo || '').toUpperCase());
-      return `<div class="histItem"><span class="mono">${d}</span> · <b>${pr}</b> <span class="muted">${modo}</span></div>`;
-    }).join('');
-  }
-
-  function loadEditor(id){
-    const p = getProd(id);
-    FM.state.selProdId = p ? p.id : null;
-
-    $('#proEdNombre').value = p?.nombre || '';
-    $('#proEdModo').value   = p?.modo || 'kg';
-    $('#proEdKgCaja').value = (p?.kgCaja ?? 0) || '';
-    $('#proEdPkg').value    = (p?.pKg ?? 0) || '';
-    $('#proEdPcaja').value  = (p?.pCaja ?? 0) || '';
-    $('#proEdPud').value    = (p?.pUd ?? 0) || '';
-    $('#proEdCoste').value  = (p?.coste ?? 0) || '';
-    $('#proEdOrigen').value = p?.origen || '';
-
-    fillEnvasesSelect(p?.envaseId || '');
-    renderHistorial(p || {hist:[]});
-
-    // feedback visual (marca fila seleccionada)
-    document.querySelectorAll('#productosBody tr').forEach(tr=>{
-      tr.classList.toggle('is-selected', tr.dataset.id === FM.state.selProdId);
+    $$('[data-openfact]').forEach(a => {
+      on(a, 'click', (e) => {
+        e.preventDefault();
+        const id = a.getAttribute('data-openfact');
+        if (typeof window.FACTU_loadFacturaById === 'function') {
+          window.FACTU_loadFacturaById(id);
+          setActiveTab('tabFactura');
+        }
+      });
     });
   }
 
-  function clearEditor(){
-    FM.state.selProdId = null;
-    $('#proEdNombre').value = '';
-    $('#proEdModo').value   = 'kg';
-    $('#proEdKgCaja').value = '';
-    $('#proEdPkg').value    = '';
-    $('#proEdPcaja').value  = '';
-    $('#proEdPud').value    = '';
-    $('#proEdCoste').value  = '';
-    $('#proEdOrigen').value = '';
-    fillEnvasesSelect('');
-    $('#proEdHistorial').textContent = '—';
-    document.querySelectorAll('#productosBody tr').forEach(tr=>tr.classList.remove('is-selected'));
-    $('#proEdNombre')?.focus();
+  function wireContabilidadFilters(){
+    // if these inputs exist, render on changes
+    ['#contaDesde','#contaHasta','#contaCliente','#contaTag'].forEach(sel => {
+      const el = $(sel);
+      if (!el) return;
+      on(el, 'input', () => renderContabilidad());
+      on(el, 'change', () => renderContabilidad());
+    });
+    on($('#btnContaUnlockInline'), 'click', () => unlockContabilidad(val('#contaPinInline')));
   }
 
-  function readEditor(){
-    const nombre = ($('#proEdNombre').value || '').trim().toUpperCase();
+  /* =========================
+     VENTAS DIARIAS (PIN) — San Pablo / San Lesmes / Santiago
+     - efectivo + tarjeta + total + gastos
+     - reportes diario / semanal / mensual / rango
+  ========================= */
+  function ventasLocked(){
+    return !S._ventasUnlocked;
+  }
+
+  function unlockVentas(pin){
+    if (!isPinOk(pin)) { toast('PIN incorrecto'); return; }
+    S._ventasUnlocked = true;
+    toast('Ventas desbloqueadas');
+    renderVentas();
+  }
+
+  function lockVentas(){
+    S._ventasUnlocked = false;
+    renderVentas();
+  }
+
+  function weekKeyISO(dateIso){
+    // ISO week key: YYYY-Www
+    // minimal ISO week calc
+    const d = new Date(dateIso + 'T00:00:00');
+    const day = (d.getUTCDay() + 6) % 7; // Mon=0
+    d.setUTCDate(d.getUTCDate() - day + 3); // Thursday
+    const firstThu = new Date(Date.UTC(d.getUTCFullYear(),0,4));
+    const firstDay = (firstThu.getUTCDay() + 6) % 7;
+    firstThu.setUTCDate(firstThu.getUTCDate() - firstDay + 3);
+    const week = 1 + Math.round((d - firstThu) / (7*24*3600*1000));
+    const y = d.getUTCFullYear();
+    return `${y}-W${String(week).padStart(2,'0')}`;
+  }
+
+  function ventasInRange(desde, hasta, tienda){
+    ensureVentasLoaded();
+    let arr = S.ventas.slice();
+    if (desde) arr = arr.filter(v => String(v.fecha||'') >= desde);
+    if (hasta) arr = arr.filter(v => String(v.fecha||'') <= hasta);
+    if (tienda && tienda !== 'ALL') arr = arr.filter(v => String(v.tienda||'') === tienda);
+    arr.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+    return arr;
+  }
+
+  function ventasKPIs(arr){
+    let ef=0, ta=0, ga=0, n=0;
+    for (const v of arr){
+      n++;
+      ef += toNum(v.efectivo);
+      ta += toNum(v.tarjeta);
+      ga += toNum(v.gastos);
+    }
+    const tot = ef + ta;
     return {
-      nombre,
-      modo: ($('#proEdModo').value || 'kg'),
-      kgCaja: num($('#proEdKgCaja').value),
-      pKg: num($('#proEdPkg').value),
-      pCaja: num($('#proEdPcaja').value),
-      pUd: num($('#proEdPud').value),
-      coste: num($('#proEdCoste').value),
-      origen: ($('#proEdOrigen').value || '').trim(),
-      envaseId: ($('#proEdEnvase').value || '').trim()
+      n,
+      efectivo: round2(ef),
+      tarjeta: round2(ta),
+      total: round2(tot),
+      gastos: round2(ga),
+      neto: round2(tot - ga)
     };
   }
 
-  // ✅ Render tabla con botón Editar (y selección por click)
-  FM.renderProductos = function(){
-    const body = $('#productosBody');
-    if(!body) return;
-
-    const q = ($('#productosBuscar')?.value || '').trim().toUpperCase();
-    const list = (FM.db.productos || [])
-      .filter(p=> !q || (p.nombre||'').toUpperCase().includes(q))
-      .slice(0, 2500);
-
-    body.innerHTML = list.map(p=>{
-      const hist = Array.isArray(p.hist) && p.hist.length ? `${p.hist.length}×` : '—';
-      return `
-        <tr data-id="${esc(p.id)}" class="${p.id===FM.state.selProdId?'is-selected':''}">
-          <td><b>${esc(p.nombre||'')}</b></td>
-          <td class="mono">${esc((p.modo||'kg').toUpperCase())}</td>
-          <td class="mono">${(window.money?money(p.kgCaja||0):(p.kgCaja||0))}</td>
-          <td class="mono">${(window.money?money(p.pKg||0):(p.pKg||0))}</td>
-          <td class="mono">${(window.money?money(p.pCaja||0):(p.pCaja||0))}</td>
-          <td class="mono">${(window.money?money(p.pUd||0):(p.pUd||0))}</td>
-          <td class="mono">${(window.money?money(p.coste||0):(p.coste||0))}</td>
-          <td>${esc(p.origen||'')}</td>
-          <td class="mono">${esc(p.envaseId||'')}</td>
-          <td class="mono">${esc(hist)}</td>
-          <td class="mono">
-            <button class="btn btn--ghost btn--xs jsEditProd" type="button">Editar</button>
-          </td>
-        </tr>
-      `;
-    }).join('') || `<tr><td colspan="11" class="muted">Sin productos</td></tr>`;
-
-    // hooks fila + botón editar
-    body.querySelectorAll('tr[data-id]').forEach(tr=>{
-      tr.addEventListener('click', (e)=>{
-        const id = tr.dataset.id;
-        // si clic en botón, también vale
-        if(id) loadEditor(id);
-      });
-    });
-    body.querySelectorAll('.jsEditProd').forEach(btn=>{
-      btn.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        const tr = btn.closest('tr[data-id]');
-        if(tr?.dataset?.id) loadEditor(tr.dataset.id);
-      });
-    });
-
-    // si no hay selección y hay lista, preselecciona primero (opcional)
-    if(!FM.state.selProdId && list.length){
-      loadEditor(list[0].id);
-    } else {
-      // refresca highlight
-      document.querySelectorAll('#productosBody tr').forEach(tr=>{
-        tr.classList.toggle('is-selected', tr.dataset.id === FM.state.selProdId);
-      });
+  function groupVentas(arr, mode){
+    const map = new Map();
+    for (const v of arr){
+      const key = mode === 'week'
+        ? weekKeyISO(v.fecha)
+        : (mode === 'month' ? String(v.fecha||'').slice(0,7) : String(v.fecha||''));
+      const prev = map.get(key) || { efectivo:0, tarjeta:0, gastos:0, n:0 };
+      prev.efectivo += toNum(v.efectivo);
+      prev.tarjeta += toNum(v.tarjeta);
+      prev.gastos += toNum(v.gastos);
+      prev.n += 1;
+      map.set(key, prev);
     }
-  };
+    const out = Array.from(map.entries()).map(([k,o]) => ({
+      key:k,
+      n:o.n,
+      efectivo: round2(o.efectivo),
+      tarjeta: round2(o.tarjeta),
+      total: round2(o.efectivo + o.tarjeta),
+      gastos: round2(o.gastos),
+      neto: round2((o.efectivo + o.tarjeta) - o.gastos)
+    }));
+    out.sort((a,b)=>b.key.localeCompare(a.key));
+    return out;
+  }
 
-  // ✅ Guardar
-  function onGuardar(){
-    const data = readEditor();
-    if(!data.nombre){
-      alert('Falta el nombre del producto.');
-      $('#proEdNombre')?.focus();
+  function renderVentas(){
+    const box = $('#ventasBox');
+    if (!box) return;
+
+    ensureVentasLoaded();
+
+    if (ventasLocked()){
+      setHtml('#ventasBox', `
+        <div class="panel">
+          <div class="hTitle">Ventas diarias 🔒</div>
+          <div class="muted small">SAN PABLO · SAN LESMES · SANTIAGO</div>
+          <div class="muted small" style="margin-top:6px">Introduce PIN para desbloquear.</div>
+          <div style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+            <input id="ventasPinInput" type="password" inputmode="numeric" placeholder="PIN" style="max-width:160px"/>
+            <button class="btn" id="btnVentasUnlock">Desbloquear</button>
+          </div>
+        </div>
+      `);
+      on($('#btnVentasUnlock'), 'click', () => unlockVentas(val('#ventasPinInput')));
+      on($('#ventasPinInput'), 'keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); unlockVentas(val('#ventasPinInput')); }
+      });
       return;
     }
 
-    // evita duplicados (nombre)
-    const dup = (FM.db.productos||[]).find(p=>p.nombre===data.nombre && p.id!==FM.state.selProdId);
-    if(dup){
-      alert('Ya existe un producto con ese nombre.');
-      return;
+    const desde = val('#ventasDesde');
+    const hasta = val('#ventasHasta');
+    const tienda = val('#ventasTienda') || 'ALL';
+
+    const arr = ventasInRange(desde, hasta, tienda);
+    const kpi = ventasKPIs(arr);
+
+    const byDay = groupVentas(arr, 'day');
+    const byWeek = groupVentas(arr, 'week');
+    const byMonth = groupVentas(arr, 'month');
+
+    setHtml('#ventasBox', `
+      <div class="panel">
+        <div class="row" style="justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div>
+            <div class="hTitle">Ventas diarias</div>
+            <div class="muted small">Reporte por fecha, semanal, mensual y rango.</div>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btnGhost" id="btnVentasLock">Bloquear 🔒</button>
+            <button class="btn" id="btnVentaNueva">+ Nueva venta</button>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:12px;">
+          <div class="card">
+            <div class="cardTitle">KPIs (según filtros)</div>
+            <div class="totRow"><span>Registros</span><b>${kpi.n}</b></div>
+            <div class="totRow"><span>Efectivo</span><b>${fmtEuro(kpi.efectivo)}</b></div>
+            <div class="totRow"><span>Tarjeta</span><b>${fmtEuro(kpi.tarjeta)}</b></div>
+            <div class="totRow"><span>Total</span><b>${fmtEuro(kpi.total)}</b></div>
+            <div class="totRow"><span>Gastos</span><b>${fmtEuro(kpi.gastos)}</b></div>
+            <div class="totRow"><span>Neto</span><b>${fmtEuro(kpi.neto)}</b></div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Resumen rápido</div>
+            <div class="muted small">Últimos 7 días (según tienda/filtros)</div>
+            <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">
+              ${(byDay.slice(0,7)).map(r => `
+                <div class="totRow">
+                  <span>${esc(ddmmyyyy(r.key))} (${esc(dayNameES(r.key))})</span>
+                  <b>${fmtEuro(r.total)}</b>
+                </div>
+              `).join('') || `<div class="muted small">Sin datos.</div>`}
+            </div>
+          </div>
+        </div>
+
+        <div class="grid3" style="margin-top:12px;">
+          <div class="card">
+            <div class="cardTitle">Diario</div>
+            <div class="tableWrap" style="margin-top:8px; overflow:auto;">
+              <table class="tbl">
+                <thead><tr><th>Fecha</th><th style="text-align:right">Efectivo</th><th style="text-align:right">Tarjeta</th><th style="text-align:right">Total</th><th style="text-align:right">Gastos</th><th style="text-align:right">Neto</th></tr></thead>
+                <tbody>
+                  ${byDay.map(r => `
+                    <tr>
+                      <td>${esc(ddmmyyyy(r.key))}</td>
+                      <td style="text-align:right">${fmtEuro(r.efectivo)}</td>
+                      <td style="text-align:right">${fmtEuro(r.tarjeta)}</td>
+                      <td style="text-align:right"><b>${fmtEuro(r.total)}</b></td>
+                      <td style="text-align:right">${fmtEuro(r.gastos)}</td>
+                      <td style="text-align:right"><b>${fmtEuro(r.neto)}</b></td>
+                    </tr>
+                  `).join('') || `<tr><td colspan="6" class="muted small">Sin datos.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Semanal</div>
+            <div class="tableWrap" style="margin-top:8px; overflow:auto;">
+              <table class="tbl">
+                <thead><tr><th>Semana</th><th style="text-align:right">Total</th><th style="text-align:right">Gastos</th><th style="text-align:right">Neto</th></tr></thead>
+                <tbody>
+                  ${byWeek.map(r => `
+                    <tr>
+                      <td>${esc(r.key)} <span class="muted small">(${r.n} días)</span></td>
+                      <td style="text-align:right"><b>${fmtEuro(r.total)}</b></td>
+                      <td style="text-align:right">${fmtEuro(r.gastos)}</td>
+                      <td style="text-align:right"><b>${fmtEuro(r.neto)}</b></td>
+                    </tr>
+                  `).join('') || `<tr><td colspan="4" class="muted small">Sin datos.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Mensual</div>
+            <div class="tableWrap" style="margin-top:8px; overflow:auto;">
+              <table class="tbl">
+                <thead><tr><th>Mes</th><th style="text-align:right">Total</th><th style="text-align:right">Gastos</th><th style="text-align:right">Neto</th></tr></thead>
+                <tbody>
+                  ${byMonth.map(r => `
+                    <tr>
+                      <td>${esc(r.key)} <span class="muted small">(${r.n} días)</span></td>
+                      <td style="text-align:right"><b>${fmtEuro(r.total)}</b></td>
+                      <td style="text-align:right">${fmtEuro(r.gastos)}</td>
+                      <td style="text-align:right"><b>${fmtEuro(r.neto)}</b></td>
+                    </tr>
+                  `).join('') || `<tr><td colspan="4" class="muted small">Sin datos.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="cardTitle">Registros</div>
+          <div class="tableWrap" style="margin-top:8px; overflow:auto;">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>Fecha</th><th>Tienda</th>
+                  <th style="text-align:right">Efectivo</th>
+                  <th style="text-align:right">Tarjeta</th>
+                  <th style="text-align:right">Gastos</th>
+                  <th style="text-align:right">Total</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${arr.map(v => `
+                  <tr>
+                    <td>${esc(ddmmyyyy(v.fecha))} <span class="muted small">(${esc(dayNameES(v.fecha))})</span></td>
+                    <td>${esc(v.tienda||'')}</td>
+                    <td style="text-align:right">${fmtEuro(toNum(v.efectivo))}</td>
+                    <td style="text-align:right">${fmtEuro(toNum(v.tarjeta))}</td>
+                    <td style="text-align:right">${fmtEuro(toNum(v.gastos))}</td>
+                    <td style="text-align:right"><b>${fmtEuro(toNum(v.efectivo)+toNum(v.tarjeta))}</b></td>
+                    <td style="text-align:right">
+                      <button class="btn btnTiny btnGhost" data-editventa="${esc(v.id)}">Editar</button>
+                      <button class="btn btnTiny btnDangerGhost" data-delventa="${esc(v.id)}">Eliminar</button>
+                    </td>
+                  </tr>
+                `).join('') || `<tr><td colspan="7" class="muted small">Sin registros.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="cardTitle">Export</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+            <button class="btn btnGhost" id="btnVentasExportCSV">Exportar CSV</button>
+          </div>
+        </div>
+      </div>
+    `);
+
+    on($('#btnVentasLock'), 'click', () => lockVentas());
+    on($('#btnVentaNueva'), 'click', () => openVentaEditor(''));
+    on($('#btnVentasExportCSV'), 'click', () => {
+      const csv = exportVentasCsv(ventasInRange(desde, hasta, tienda));
+      downloadTextFile(`ventas_${(desde||'all')}_${(hasta||'all')}_${tienda}.csv`.replaceAll('/','-'), csv);
+      toast('CSV exportado');
+    });
+
+    $$('[data-editventa]').forEach(b => on(b, 'click', () => openVentaEditor(b.getAttribute('data-editventa'))));
+    $$('[data-delventa]').forEach(b => on(b, 'click', () => deleteVenta(b.getAttribute('data-delventa'))));
+  }
+
+  function exportVentasCsv(arr){
+    const rows = [];
+    rows.push(['fecha','dia','tienda','efectivo','tarjeta','gastos','total','notas'].join(';'));
+    for (const v of arr.slice().sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||'')))) {
+      const fecha = ddmmyyyy(v.fecha);
+      const dia = dayNameES(v.fecha);
+      const ef = round2(toNum(v.efectivo));
+      const ta = round2(toNum(v.tarjeta));
+      const ga = round2(toNum(v.gastos));
+      const tot = round2(ef+ta);
+      const notas = String(v.notas||'').replaceAll(';',',');
+      rows.push([fecha, dia, v.tienda, ef, ta, ga, tot, notas].join(';'));
+    }
+    return rows.join('\n');
+  }
+
+  function openVentaEditor(id){
+    ensureVentasLoaded();
+    const v = id ? (S.ventas.find(x => x.id === id) || null) : null;
+    S._ventaEditId = v?.id || '';
+
+    setVal('#vFecha', v?.fecha || isoToday());
+    setVal('#vTienda', v?.tienda || 'SAN PABLO');
+    setVal('#vEfectivo', v ? String(toNum(v.efectivo)).replace('.',',') : '');
+    setVal('#vTarjeta', v ? String(toNum(v.tarjeta)).replace('.',',') : '');
+    setVal('#vGastos', v ? String(toNum(v.gastos)).replace('.',',') : '');
+    setVal('#vNotas', v?.notas || '');
+
+    setText('#ventaEditorTitle', v ? 'Editar venta' : 'Nueva venta');
+    openModal('#modalVenta');
+  }
+
+  function saveVenta(){
+    ensureVentasLoaded();
+    const id = S._ventaEditId || uid();
+    const obj = {
+      id,
+      fecha: val('#vFecha') || isoToday(),
+      tienda: val('#vTienda') || 'SAN PABLO',
+      efectivo: round2(toNum(val('#vEfectivo'))),
+      tarjeta: round2(toNum(val('#vTarjeta'))),
+      gastos: round2(toNum(val('#vGastos'))),
+      notas: val('#vNotas')
+    };
+
+    const idx = S.ventas.findIndex(x => x.id === id);
+    if (idx >= 0) S.ventas[idx] = { ...S.ventas[idx], ...obj };
+    else S.ventas.unshift(obj);
+
+    save(K.VENTAS, S.ventas);
+    closeModal('#modalVenta');
+    toast('Venta guardada');
+    renderVentas();
+  }
+
+  function deleteVenta(id){
+    ensureVentasLoaded();
+    if (!id) return;
+    if (!confirm('Eliminar venta?')) return;
+    S.ventas = S.ventas.filter(v => v.id !== id);
+    save(K.VENTAS, S.ventas);
+    toast('Venta eliminada');
+    renderVentas();
+  }
+
+  function wireVentasFilters(){
+    ['#ventasDesde','#ventasHasta','#ventasTienda'].forEach(sel => {
+      const el = $(sel);
+      if (!el) return;
+      on(el, 'change', () => renderVentas());
+      on(el, 'input', () => renderVentas());
+    });
+
+    // venta modal buttons
+    on($('#btnVentaGuardar'), 'click', () => saveVenta());
+    on($('#btnVentaCancelar'), 'click', () => closeModal('#modalVenta'));
+    on($('#btnVentaCerrarX'), 'click', () => closeModal('#modalVenta'));
+  }
+
+  /* =========================
+     AJUSTES TAB — IVA / Transporte / PIN / QR / Cloud
+  ========================= */
+  function renderAjustes(){
+    // Inputs exist? If not, skip
+    setVal('#ajIvaPct', S.ajustes?.ivaPct ?? 4);
+    setVal('#ajTransportePct', S.ajustes?.transportePct ?? 10);
+    setVal('#ajPin', S.ajustes?.pin ?? '8410');
+    setVal('#ajQrPlantilla', S.ajustes?.qrPlantilla ?? 'NIF={NIF}&NUM={NUM}&FECHA={FECHA}&TOTAL={TOTAL}');
+
+    // provider fields
+    const p = S.ajustes?.proveedor || {};
+    setVal('#ajProvNombre', p.nombre || '');
+    setVal('#ajProvNif', p.nif || '');
+    setVal('#ajProvDir', p.dir || '');
+    setVal('#ajProvTel', p.tel || '');
+    setVal('#ajProvEmail', p.email || '');
+
+    // cloud config
+    const c = S.ajustes?.cloud || {};
+    setVal('#ajFbApiKey', c.apiKey || '');
+    setVal('#ajFbAuthDomain', c.authDomain || '');
+    setVal('#ajFbDbUrl', c.databaseURL || '');
+    setVal('#ajFbProjectId', c.projectId || '');
+    setVal('#ajFbAppId', c.appId || '');
+    setVal('#ajFbStorageBucket', c.storageBucket || '');
+  }
+
+  function saveAjustesFromUI(){
+    const ivaPct = round2(toNum(val('#ajIvaPct') || 4));
+    const transportePct = round2(toNum(val('#ajTransportePct') || 10));
+    const pin = (val('#ajPin') || '8410').trim() || '8410';
+    const qrPlantilla = val('#ajQrPlantilla') || 'NIF={NIF}&NUM={NUM}&FECHA={FECHA}&TOTAL={TOTAL}';
+
+    const proveedor = {
+      nombre: val('#ajProvNombre'),
+      nif: val('#ajProvNif'),
+      dir: val('#ajProvDir'),
+      tel: val('#ajProvTel'),
+      email: val('#ajProvEmail')
+    };
+
+    const cloud = {
+      apiKey: val('#ajFbApiKey'),
+      authDomain: val('#ajFbAuthDomain'),
+      databaseURL: val('#ajFbDbUrl'),
+      projectId: val('#ajFbProjectId'),
+      appId: val('#ajFbAppId'),
+      storageBucket: val('#ajFbStorageBucket')
+    };
+
+    S.ajustes = { ...(S.ajustes||{}), ivaPct, transportePct, pin, qrPlantilla, proveedor, cloud };
+    save(K.AJUSTES, S.ajustes);
+
+    toast('Ajustes guardados');
+
+    // Update current invoice defaults (without forcing)
+    const F = getF();
+    if (F) {
+      F.ivaPct = ivaPct;
+      F.transportePct = transportePct;
+      // providerSnap used for PDF; keep invoice provider snap aligned
+      F.proveedorSnap = { ...proveedor };
+      if (typeof window.FACTU_renderContabilidad === 'function') window.FACTU_renderContabilidad();
     }
 
-    if(FM.state.selProdId){
-      const p = getProd(FM.state.selProdId);
-      if(!p) return;
-      Object.assign(p, data);
-    } else {
-      FM.db.productos.unshift({
-        id: uid(),
-        ...data,
-        hist: []
-      });
-      FM.state.selProdId = FM.db.productos[0].id;
+    // if QR exists on screen, refresh (3B)
+    try { if (typeof window.FACTU_refreshQr === 'function') window.FACTU_refreshQr(); } catch {}
+  }
+
+  function wireAjustes(){
+    on($('#btnAjustesGuardar'), 'click', () => saveAjustesFromUI());
+  }
+
+  /* =========================
+     SHORTCUTS PRO
+     - Ctrl+S guardar factura
+     - Ctrl+P PDF
+     - Ctrl+F buscar (focus search of current tab)
+  ========================= */
+  function focusSearchForActiveTab(){
+    // detect visible tab by aria or class
+    const tabs = [
+      { tab:'#tabFacturas', search:'#buscarFacturas' },
+      { tab:'#tabClientes', search:'#buscarClientes' },
+      { tab:'#tabProductos', search:'#buscarProductos' },
+      { tab:'#tabTaras', search:'#buscarTaras' },
+      { tab:'#tabContabilidad', search:'#contaTag' },
+      { tab:'#tabVentas', search:'#ventasDesde' } // first filter
+    ];
+    for (const t of tabs) {
+      const el = $(t.tab);
+      if (!el) continue;
+      const visible = el.classList.contains('isActive') || el.style.display !== 'none';
+      if (visible) {
+        const s = $(t.search);
+        s?.focus();
+        s?.select?.();
+        return true;
+      }
     }
-
-    save(K_PRODUCTOS, FM.db.productos);
-    FM.renderProductos();
-    loadEditor(FM.state.selProdId);
+    // fallback to any search input
+    const any = $('#buscarFacturas') || $('#buscarClientes') || $('#buscarProductos');
+    any?.focus();
+    any?.select?.();
+    return !!any;
   }
 
-  // ✅ Nuevo
-  function onNuevo(){
-    clearEditor();
-  }
+  function wireShortcuts(){
+    if (wireShortcuts._wired) return;
+    wireShortcuts._wired = true;
 
-  // ✅ Eliminar (protección simple: no eliminar si usado en facturas, si tienes facturas en FM.db.facturas)
-  function onEliminar(){
-    if(!FM.state.selProdId) return;
-    const p = getProd(FM.state.selProdId);
-    if(!p) return;
+    on(document, 'keydown', (e) => {
+      const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+      const mod = isMac ? e.metaKey : e.ctrlKey;
 
-    // protección si existen facturas y el producto aparece en líneas
-    const facts = Array.isArray(FM.db.facturas) ? FM.db.facturas : load(window.K_FACTURAS||'factumiral_facturas', []);
-    const usado = (facts||[]).some(f=>{
-      const lines = f.lineas || f.items || [];
-      return Array.isArray(lines) && lines.some(l => (l.producto||l.nombre||'').toUpperCase() === (p.nombre||'').toUpperCase());
-    });
-    if(usado){
-      alert('No se puede eliminar: el producto está usado en facturas.');
-      return;
-    }
+      if (!mod) return;
 
-    if(!confirm(`Eliminar producto:\n${p.nombre}\n\n¿Seguro?`)) return;
-    FM.db.productos = (FM.db.productos||[]).filter(x=>x.id!==FM.state.selProdId);
-    save(K_PRODUCTOS, FM.db.productos);
-    clearEditor();
-    FM.renderProductos();
-  }
+      // Ctrl+S
+      if (e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (typeof window.FACTU_guardarFactura === 'function') window.FACTU_guardarFactura();
+        return;
+      }
 
-  // hooks botones + búsqueda + recarga envases
-  function hooks(){
-    $('#btnProductosGuardar')?.addEventListener('click', onGuardar);
-    $('#btnProductosNuevo')?.addEventListener('click', onNuevo);
-    $('#btnProductosEliminar')?.addEventListener('click', onEliminar);
+      // Ctrl+P
+      if (e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        FACTU_verPDF();
+        return;
+      }
 
-    $('#productosBuscar')?.addEventListener('input', ()=>FM.renderProductos());
-
-    // si editas taras, repuebla el select
-    document.addEventListener('FM_TARAS_CHANGED', ()=>{
-      FM.db.taras = load(K_TARAS, FM.db.taras||[]);
-      fillEnvasesSelect($('#proEdEnvase')?.value || '');
-    });
-
-    // Enter en nombre => guardar rápido
-    $('#proEdNombre')?.addEventListener('keydown', (e)=>{
-      if(e.key==='Enter'){ e.preventDefault(); onGuardar(); }
+      // Ctrl+F
+      if (e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        focusSearchForActiveTab();
+        return;
+      }
     });
   }
 
-  function boot(){
-    hooks();
-    // render inicial
-    FM.renderProductos();
-    fillEnvasesSelect($('#proEdEnvase')?.value || '');
+  /* =========================
+     WIRING MAIN BUTTONS (if exist)
+  ========================= */
+  function wirePdfButtons(){
+    on($('#btnGenerarPDF'), 'click', () => FACTU_generarPDF());
+    on($('#btnVerPDF'), 'click', () => FACTU_verPDF());
+    on($('#btnPdfCloud'), 'click', () => FACTU_pdfToCloud());
   }
 
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', boot, {once:true});
-  } else boot();
+  /* =========================
+     PUBLIC API (for 3A/3B)
+  ========================= */
+  window.FACTU_generarPDF = FACTU_generarPDF;
+  window.FACTU_verPDF = FACTU_verPDF;
+  window.FACTU_pdfToCloud = FACTU_pdfToCloud;
+
+  window.FACTU_renderContabilidad = renderContabilidad;
+  window.FACTU_renderVentas = renderVentas;
+
+  window.FACTU_lockContabilidad = lockContabilidad;
+  window.FACTU_lockVentas = lockVentas;
+
+  /* =========================
+     INIT 3C
+  ========================= */
+  function init3C(){
+    // Wire
+    wirePdfButtons();
+    wireContabilidadFilters();
+    wireVentasFilters();
+    wireAjustes();
+    wireShortcuts();
+
+    // Render initial screens if tabs exist
+    try { renderAjustes(); } catch {}
+    try { renderContabilidad(); } catch {}
+    try { renderVentas(); } catch {}
+
+    // Venta modal extra wires if modal exists
+    on($('#btnVentaGuardar'), 'click', () => saveVenta());
+    on($('#btnVentaCancelar'), 'click', () => closeModal('#modalVenta'));
+    on($('#btnVentaClose'), 'click', () => closeModal('#modalVenta'));
+  }
+
+  try { init3C(); } catch (e) { console.error(e); }
 
 })();
-
