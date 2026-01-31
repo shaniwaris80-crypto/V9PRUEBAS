@@ -1,801 +1,133 @@
-<!-- =========================================================
-PARTE 1/5 — FACTU MIRAL (B/W PRO)
-Archivo: index.html  (COMPLETO, REGENERADO)
-- Offline first (LocalStorage)
-- Cloud opcional (Firebase)
-- PDF PRO (jsPDF + AutoTable) con visor interno
-- QR en pantalla + QR en PDF (si no falla)
-- Contabilidad + Ventas diarias protegidas con PIN
-========================================================= -->
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0b0b" />
-  <title>FACTU MIRAL — B/W PRO</title>
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
-
-  <!-- App CSS -->
-  <link rel="stylesheet" href="./style.css" />
-
-  <!-- PDF libs (CDN). Offline-first: si ya se cargaron una vez, el navegador suele cachearlas.
-       Si quieres 100% offline, puedes descargarlas al repo y cambiar estos src a locales. -->
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-
-  <!-- (Opcional) Firebase v8 compat. Solo necesario si vas a usar Cloud.
-       Si no lo configuras, la app NO debe fallar. -->
-  <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-
-<script src="app.js"></script>
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Factu Miral 🍒</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
-
 <body>
-  <!-- =========================================================
-    TOP BAR
-  ========================================================== -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="brandLogo" aria-hidden="true">
-        <!-- Cereza B/W -->
-        <svg width="34" height="34" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
-          <rect width="160" height="160" rx="28" fill="#fff"/>
-          <path d="M72 46c10-16 28-26 48-26" stroke="#111" stroke-width="8" fill="none" stroke-linecap="round"/>
-          <path d="M70 50c-4 30-8 40-20 56" stroke="#111" stroke-width="7" fill="none" stroke-linecap="round"/>
-          <path d="M102 48c-2 26 0 36 10 58" stroke="#111" stroke-width="7" fill="none" stroke-linecap="round"/>
-          <circle cx="54" cy="118" r="22" fill="#111"/>
-          <circle cx="108" cy="120" r="22" fill="#111"/>
-          <path d="M120 20c-14 2-24 10-30 22" stroke="#111" stroke-width="8" fill="none" stroke-linecap="round"/>
-        </svg>
-      </div>
-      <div class="brandTxt">
-        <div class="brandTitle">FACTU MIRAL</div>
-        <div class="brandSub">B/W PRO · Offline first</div>
-      </div>
-    </div>
+    <header class="main-header">
+        <div class="logo-area">
+            <span class="cherry-logo">🍒</span>
+            <h1>FACTU <span class="thin">MIRAL</span></h1>
+        </div>
+        <nav class="main-tabs">
+            <button class="tab-btn active" onclick="showTab('factura')">FACTURA</button>
+            <button class="tab-btn" onclick="showTab('listado')">HISTORIAL</button>
+            <button class="tab-btn" onclick="showTab('conta')">CONTA 🔒</button>
+            <button class="tab-btn" onclick="showTab('ajustes')">⚙️</button>
+        </nav>
+    </header>
 
-    <div class="topActions">
-      <button id="btnLockPanel" class="btn btnGhost" type="button" title="PIN para Contabilidad y Ventas">🔒 PIN</button>
-
-      <div class="pill">
-        <span id="dotCloud" class="dot off" aria-hidden="true"></span>
-        <span id="pillCloudTxt">Cloud off</span>
-      </div>
-
-      <button id="btnQuickNew" class="btn" type="button" title="Nueva factura">+ Nueva</button>
-      <button id="btnQuickSave" class="btn btnGhost" type="button" title="Guardar (Ctrl+S)">Guardar</button>
-      <button id="btnQuickPdf" class="btn btnGhost" type="button" title="PDF (Ctrl+P)">PDF</button>
-    </div>
-  </header>
-
-  <!-- =========================================================
-    TABS
-  ========================================================== -->
-  <nav class="tabs" role="tablist" aria-label="Secciones">
-    <button class="tab isActive" data-tab="tabFactura" type="button" role="tab">Factura</button>
-    <button class="tab" data-tab="tabFacturas" type="button" role="tab">Facturas</button>
-    <button class="tab" data-tab="tabClientes" type="button" role="tab">Clientes</button>
-    <button class="tab" data-tab="tabProductos" type="button" role="tab">Productos</button>
-    <button class="tab" data-tab="tabTaras" type="button" role="tab">Taras</button>
-    <button class="tab" data-tab="tabContabilidad" type="button" role="tab">Contabilidad 🔒</button>
-    <button class="tab" data-tab="tabVentas" type="button" role="tab">Ventas 🔒</button>
-    <button class="tab" data-tab="tabAjustes" type="button" role="tab">Ajustes</button>
-  </nav>
-
-  <!-- =========================================================
-    MAIN
-  ========================================================== -->
-  <main class="main">
-
-    <!-- ===========================
-      TAB: FACTURA (principal)
-    ============================ -->
-    <section id="tabFactura" class="page isActive" role="tabpanel" aria-label="Factura">
-      <div class="panel panelHero">
-        <div class="heroGrid">
-
-          <!-- PROVEEDOR -->
-          <div class="heroCard">
-            <div class="heroHead">
-              <div class="heroTitle">PROVEEDOR</div>
-              <button id="btnGuardarProveedor" class="btn btnTiny btnGhost" type="button">Guardar</button>
+    <main id="app-content">
+        <section id="tab-factura" class="tab-content active">
+            <div class="top-bar">
+                <button class="btn-pro" onclick="nuevaFactura()">+ NUEVA</button>
+                <div id="factura-num-display" style="font-weight:bold">FA-0000</div>
+                <button class="btn-pro" onclick="guardarFactura()">GUARDAR</button>
+                <button class="btn-pro btn-bw" onclick="exportarPDF()">PDF PRO</button>
+                <button class="btn-pro btn-bw" onclick="enviarWhatsApp()">WHATSAPP</button>
             </div>
 
-            <div class="formGrid">
-              <label class="field">
-                <span>Nombre</span>
-                <input id="provNombre" type="text" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>NIF</span>
-                <input id="provNif" type="text" autocomplete="off" />
-              </label>
-              <label class="field col2">
-                <span>Dirección</span>
-                <input id="provDir" type="text" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>Teléfono</span>
-                <input id="provTel" type="text" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>Email</span>
-                <input id="provEmail" type="email" autocomplete="off" />
-              </label>
-            </div>
-          </div>
-
-          <!-- QR -->
-          <div class="heroCard heroQR">
-            <div class="heroHead">
-              <div class="heroTitle">QR TRIBUTARIO</div>
-              <button id="btnCopyQrText" class="btn btnTiny btnGhost" type="button">Copiar</button>
-            </div>
-
-            <div class="qrWrap">
-              <div class="qrBox">
-                <canvas id="qrCanvas" width="220" height="220" aria-label="QR"></canvas>
-                <div id="qrFallback" class="qrFallback" style="display:none">QR no disponible</div>
-              </div>
-              <div class="qrMeta">
-                <label class="field">
-                  <span>Texto QR (plantilla ajustes)</span>
-                  <textarea id="qrText" rows="6" spellcheck="false"></textarea>
-                </label>
-                <div class="qrSmall">
-                  <div class="hintTitle">Texto visible bajo QR (por si falla)</div>
-                  <div id="qrTextSmall" class="qrSmallText">—</div>
+            <div class="header-grid">
+                <div class="card provider-card">
+                    <h3>PROVEEDOR</h3>
+                    <input type="text" id="p-nom" value="Mohammad Arslan Waris">
+                    <input type="text" id="p-nif" value="X6389988J">
+                    <input type="text" id="p-dir" value="Calle San Pablo 17, 09003 Burgos">
+                    <input type="text" id="p-tel" value="631 667 893">
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- CLIENTE -->
-          <div class="heroCard">
-            <div class="heroHead">
-              <div class="heroTitle">CLIENTE</div>
-              <div class="heroBtns">
-                <button id="btnNuevoClienteFactura" class="btn btnTiny btnGhost" type="button">Nuevo</button>
-                <button id="btnGuardarClienteFactura" class="btn btnTiny btnGhost" type="button">Guardar</button>
-              </div>
-            </div>
-
-            <label class="field">
-              <span>Seleccionar</span>
-              <select id="selCliente"></select>
-            </label>
-
-            <div class="formGrid">
-              <label class="field col2">
-                <span>Nombre fiscal</span>
-                <input id="cliNombre" type="text" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>NIF/CIF</span>
-                <input id="cliNif" type="text" autocomplete="off" />
-              </label>
-              <label class="field col2">
-                <span>Dirección</span>
-                <input id="cliDir" type="text" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>Teléfono</span>
-                <input id="cliTel" type="text" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>Email</span>
-                <input id="cliEmail" type="email" autocomplete="off" />
-              </label>
-            </div>
-          </div>
-
-        </div><!-- heroGrid -->
-
-        <!-- META + ACCIONES -->
-        <div class="invoiceMeta">
-          <div class="metaLeft">
-            <label class="field">
-              <span>Nº factura</span>
-              <input id="inpNumeroFactura" type="text" autocomplete="off" />
-            </label>
-
-            <label class="field">
-              <span>Fecha</span>
-              <input id="inpFechaFactura" type="date" />
-            </label>
-
-            <label class="field">
-              <span>Tags</span>
-              <input id="inpTags" type="text" placeholder="San Pablo, reparto, ... (texto libre)" autocomplete="off"/>
-            </label>
-
-            <label class="field col2">
-              <span>Notas internas</span>
-              <input id="inpNotas" type="text" autocomplete="off"/>
-            </label>
-
-            <label class="field col2">
-              <span>Observaciones</span>
-              <textarea id="inpObservaciones" rows="2"></textarea>
-            </label>
-          </div>
-
-          <div class="metaRight">
-            <div class="actionsGrid">
-              <button id="btnNuevaFactura" class="btn" type="button">+ Nueva factura</button>
-              <button id="btnDuplicarFactura" class="btn btnGhost" type="button">Duplicar</button>
-              <button id="btnEliminarFactura" class="btn btnDanger" type="button">Eliminar</button>
-
-              <button id="btnGuardarFactura" class="btn" type="button">Guardar factura</button>
-              <button id="btnGenerarPDF" class="btn btnGhost" type="button">Generar PDF</button>
-              <button id="btnVerPDF" class="btn btnGhost" type="button">Ver PDF</button>
-              <button id="btnPdfCloud" class="btn btnGhost" type="button">PDF + Nube</button>
-              <button id="btnWhatsApp" class="btn btnGhost" type="button">WhatsApp</button>
+                <div class="qr-container">
+                    <div id="qrcode"></div>
+                    <small>AEAT QR</small>
+                </div>
+                <div class="card client-card">
+                    <h3>CLIENTE</h3>
+                    <select id="cli-select" onchange="seleccionarCliente()"></select>
+                    <input type="text" id="c-nom" placeholder="Nombre Fiscal">
+                    <input type="text" id="c-nif" placeholder="NIF/CIF">
+                    <input type="text" id="c-dir" placeholder="Dirección">
+                </div>
             </div>
 
-            <div class="toggles">
-              <label class="check">
-                <input id="chkTransporte" type="checkbox" />
-                <span>Transporte</span>
-              </label>
-
-              <label class="check">
-                <input id="chkIvaIncluido" type="checkbox" />
-                <span>IVA incluido (sin desglose)</span>
-              </label>
-
-              <button id="btnAddIva4" class="btn btnTiny btnGhost" type="button">Añadir 4% IVA al total</button>
-            </div>
-          </div>
-        </div>
-
-      </div><!-- panelHero -->
-
-      <!-- GRID PRO -->
-      <div class="panel">
-        <div class="panelHead">
-          <div class="panelTitle">GRID PRO · 1 línea por producto</div>
-          <div class="panelBtns">
-            <button id="btnAddLine" class="btn btnTiny" type="button">+ Añadir línea</button>
-            <button id="btnClearLines" class="btn btnTiny btnGhost" type="button">Vaciar líneas</button>
-          </div>
-        </div>
-
-        <div class="gridWrap">
-          <div class="gridHeader">
-            <div>Producto</div>
-            <div>Modo</div>
-            <div>Cantidad</div>
-            <div>Bruto (kg)</div>
-            <div>Tara (kg/ud)</div>
-            <div>Neto (kg)</div>
-            <div>Precio</div>
-            <div>Origen</div>
-            <div>Importe</div>
-            <div></div>
-          </div>
-
-          <div id="gridLines" class="gridLines">
-            <!-- app.js genera 5 líneas por defecto -->
-          </div>
-        </div>
-
-        <div class="totalsBar">
-          <div class="totalsLeft">
-            <div class="kpi">
-              <div class="kpiLabel">Subtotal</div>
-              <div id="tSubtotal" class="kpiVal">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpiLabel">Transporte</div>
-              <div id="tTransporte" class="kpiVal">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpiLabel">IVA</div>
-              <div id="tIva" class="kpiVal">0,00 €</div>
-            </div>
-          </div>
-
-          <div class="totalsRight">
-            <div class="kpi big">
-              <div class="kpiLabel">TOTAL</div>
-              <div id="tTotal" class="kpiVal">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpiLabel">Pagado</div>
-              <div id="tPagado" class="kpiVal">0,00 €</div>
-            </div>
-            <div class="kpi">
-              <div class="kpiLabel">Pendiente</div>
-              <div id="tPendiente" class="kpiVal">0,00 €</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Pagos -->
-        <div class="panelSub">
-          <div class="panelSubTitle">Pagos y estado</div>
-          <div class="payGrid">
-            <label class="field">
-              <span>Método pago</span>
-              <select id="metodoPago">
-                <option value="efectivo">Efectivo</option>
-                <option value="transferencia">Transferencia</option>
-                <option value="tarjeta">Tarjeta</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Estado</span>
-              <select id="estadoFactura">
-                <option value="impagada">Impagada</option>
-                <option value="parcial">Parcial</option>
-                <option value="pagada">Pagada</option>
-              </select>
-            </label>
-
-            <div class="payAdd">
-              <label class="field">
-                <span>Pago (importe)</span>
-                <input id="pagoImporte" inputmode="decimal" type="number" step="0.01" />
-              </label>
-              <label class="field">
-                <span>Fecha pago</span>
-                <input id="pagoFecha" type="date" />
-              </label>
-              <button id="btnAddPago" class="btn btnGhost" type="button">+ Añadir pago</button>
-            </div>
-          </div>
-
-          <div id="listaPagos" class="listMini"></div>
-        </div>
-
-      </div><!-- panel -->
-
-    </section>
-
-    <!-- ===========================
-      TAB: FACTURAS (listado)
-    ============================ -->
-    <section id="tabFacturas" class="page" role="tabpanel" aria-label="Facturas">
-      <div class="panel">
-        <div class="panelHead">
-          <div class="panelTitle">Facturas</div>
-          <div class="panelBtns">
-            <input id="buscarFacturas" class="input" type="text" placeholder="Buscar (nº, cliente, tag)  · Ctrl+F" />
-          </div>
-        </div>
-
-        <div class="filters">
-          <label class="field">
-            <span>Desde</span>
-            <input id="fDesde" type="date" />
-          </label>
-          <label class="field">
-            <span>Hasta</span>
-            <input id="fHasta" type="date" />
-          </label>
-          <label class="field">
-            <span>Tag</span>
-            <input id="fTag" type="text" placeholder="Ej: San Pablo" />
-          </label>
-          <label class="field">
-            <span>Cliente</span>
-            <input id="fCliente" type="text" placeholder="Nombre cliente" />
-          </label>
-        </div>
-
-        <div id="listaFacturas" class="list"></div>
-      </div>
-    </section>
-
-    <!-- ===========================
-      TAB: CLIENTES
-    ============================ -->
-    <section id="tabClientes" class="page" role="tabpanel" aria-label="Clientes">
-      <div class="twoCol">
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Listado</div>
-            <div class="panelBtns">
-              <input id="buscarClientes" class="input" type="text" placeholder="Buscar cliente (Ctrl+F)" />
-            </div>
-          </div>
-          <div id="listaClientes" class="list"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Editor</div>
-            <div class="panelBtns">
-              <button id="btnNuevoCliente" class="btn btnTiny" type="button">Nuevo</button>
-              <button id="btnGuardarCliente" class="btn btnTiny btnGhost" type="button">Guardar</button>
-              <button id="btnEliminarCliente" class="btn btnTiny btnDanger" type="button">Eliminar</button>
-              <button id="btnLimpiarCliente" class="btn btnTiny btnGhost" type="button">Limpiar</button>
-            </div>
-          </div>
-
-          <div class="formGrid">
-            <label class="field col2"><span>Nombre fiscal</span><input id="cNombre" type="text"></label>
-            <label class="field"><span>Alias/comercial</span><input id="cAlias" type="text"></label>
-            <label class="field"><span>NIF/CIF</span><input id="cNif" type="text"></label>
-            <label class="field col2"><span>Dirección</span><input id="cDir" type="text"></label>
-            <label class="field"><span>Teléfono</span><input id="cTel" type="text"></label>
-            <label class="field"><span>Email</span><input id="cEmail" type="email"></label>
-            <label class="field col2"><span>Notas</span><textarea id="cNotas" rows="2"></textarea></label>
-          </div>
-
-          <div class="panelSub">
-            <div class="panelSubTitle">Plantilla por cliente</div>
-            <div class="formGrid">
-              <label class="check"><input id="cTplIvaIncluido" type="checkbox"><span>IVA incluido por defecto</span></label>
-              <label class="check"><input id="cTplTransporte" type="checkbox"><span>Transporte por defecto</span></label>
-              <label class="field"><span>Método pago por defecto</span><input id="cTplPago" type="text" placeholder="efectivo / transferencia / tarjeta"></label>
-              <label class="field col2"><span>Tags automáticos</span><input id="cTplTagsAuto" type="text"></label>
-              <label class="field col2"><span>Notas estándar</span><input id="cTplNotasStd" type="text"></label>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ===========================
-      TAB: PRODUCTOS
-    ============================ -->
-    <section id="tabProductos" class="page" role="tabpanel" aria-label="Productos">
-      <div class="twoCol">
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Listado</div>
-            <div class="panelBtns">
-              <input id="buscarProductos" class="input" type="text" placeholder="Buscar producto (Ctrl+F)" />
-            </div>
-          </div>
-          <div id="listaProductos" class="list"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Editor</div>
-            <div class="panelBtns">
-              <button id="btnNuevoProducto" class="btn btnTiny" type="button">Nuevo</button>
-              <button id="btnGuardarProducto" class="btn btnTiny btnGhost" type="button">Guardar</button>
-              <button id="btnEliminarProducto" class="btn btnTiny btnDanger" type="button">Eliminar</button>
-              <button id="btnLimpiarProducto" class="btn btnTiny btnGhost" type="button">Limpiar</button>
-            </div>
-          </div>
-
-          <div class="formGrid">
-            <label class="field col2"><span>Nombre</span><input id="pNombre" type="text" placeholder="EJ: TOMATE DANIELA"></label>
-
-            <label class="field">
-              <span>Modo por defecto</span>
-              <select id="pModo">
-                <option value="kg">kg</option>
-                <option value="caja">caja</option>
-                <option value="ud">ud</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Kg por caja</span>
-              <input id="pKgCaja" inputmode="decimal" type="number" step="0.01" />
-            </label>
-
-            <label class="field"><span>Precio €/kg</span><input id="pPrecioKg" inputmode="decimal" type="number" step="0.01" /></label>
-            <label class="field"><span>Precio €/caja</span><input id="pPrecioCaja" inputmode="decimal" type="number" step="0.01" /></label>
-            <label class="field"><span>Precio €/ud</span><input id="pPrecioUd" inputmode="decimal" type="number" step="0.01" /></label>
-
-            <label class="field"><span>Coste (margen)</span><input id="pCoste" inputmode="decimal" type="number" step="0.01" /></label>
-            <label class="field col2"><span>Origen por defecto</span><input id="pOrigen" type="text" /></label>
-
-            <!-- ✅ NUEVO: Tara/envase por defecto -->
-            <label class="field col2">
-              <span>Envase/Tara por defecto (auto-aplicar en factura)</span>
-              <select id="pTaraDefault">
-                <option value="">— Sin envase —</option>
-              </select>
-            </label>
-
-            <label class="field col2">
-              <span>Historial (solo pantalla)</span>
-              <textarea id="pHist" rows="5" readonly></textarea>
-            </label>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===========================
-      TAB: TARAS
-    ============================ -->
-    <section id="tabTaras" class="page" role="tabpanel" aria-label="Taras">
-      <div class="twoCol">
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Listado</div>
-            <div class="panelBtns">
-              <input id="buscarTaras" class="input" type="text" placeholder="Buscar tara (Ctrl+F)" />
-            </div>
-          </div>
-          <div id="listaTaras" class="list"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Editor</div>
-            <div class="panelBtns">
-              <button id="btnNuevaTara" class="btn btnTiny" type="button">Nueva</button>
-              <button id="btnGuardarTara" class="btn btnTiny btnGhost" type="button">Guardar</button>
-              <button id="btnEliminarTara" class="btn btnTiny btnDanger" type="button">Eliminar</button>
-              <button id="btnLimpiarTara" class="btn btnTiny btnGhost" type="button">Limpiar</button>
-            </div>
-          </div>
-
-          <div class="formGrid">
-            <label class="field col2"><span>Nombre</span><input id="tNombre" type="text" placeholder="Caja plástico ESMO"></label>
-            <label class="field"><span>Peso tara (kg) por unidad</span><input id="tPeso" inputmode="decimal" type="number" step="0.01" placeholder="0.30"></label>
-            <label class="field col2"><span>Notas</span><input id="tNotas" type="text"></label>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===========================
-      TAB: CONTABILIDAD (PIN)
-    ============================ -->
-    <section id="tabContabilidad" class="page" role="tabpanel" aria-label="Contabilidad">
-      <div id="lockedOverlayCont" class="lockedOverlay">
-        🔒 Contabilidad protegida. Introduce PIN (8410).
-        <div class="lockedBtns">
-          <button id="btnContUnlock" class="btn" type="button">Desbloquear</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panelHead">
-          <div class="panelTitle">Contabilidad</div>
-          <div class="panelBtns">
-            <button id="btnContLock" class="btn btnTiny btnGhost" type="button">Bloquear</button>
-            <button id="btnContCSV" class="btn btnTiny btnGhost" type="button">Export CSV</button>
-          </div>
-        </div>
-
-        <div class="filters">
-          <label class="field"><span>Desde</span><input id="cDesde" type="date"></label>
-          <label class="field"><span>Hasta</span><input id="cHasta" type="date"></label>
-          <label class="field"><span>Cliente</span><input id="cCliente" type="text" placeholder="Buscar cliente"></label>
-          <label class="field"><span>Tag</span><input id="cTag" type="text" placeholder="Buscar tag"></label>
-        </div>
-
-        <div class="kpis">
-          <div class="kpiCard"><div class="kpiLabel">Ventas</div><div id="kpiVentas" class="kpiVal">0,00 €</div></div>
-          <div class="kpiCard"><div class="kpiLabel">IVA</div><div id="kpiIva" class="kpiVal">0,00 €</div></div>
-          <div class="kpiCard"><div class="kpiLabel">Facturas</div><div id="kpiNumFact" class="kpiVal">0</div></div>
-          <div class="kpiCard"><div class="kpiLabel">Margen</div><div id="kpiMargen" class="kpiVal">0,00 €</div></div>
-          <div class="kpiCard"><div class="kpiLabel">Pendientes</div><div id="kpiPendientes" class="kpiVal">0,00 €</div></div>
-        </div>
-
-        <div id="tablaContabilidad" class="list"></div>
-      </div>
-    </section>
-
-    <!-- ===========================
-      TAB: VENTAS (PIN)
-    ============================ -->
-    <section id="tabVentas" class="page" role="tabpanel" aria-label="Ventas">
-      <div id="lockedOverlayVentas" class="lockedOverlay">
-        🔒 Ventas protegidas. Introduce PIN (8410).
-        <div class="lockedBtns">
-          <button id="btnVentasUnlock" class="btn" type="button">Desbloquear</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panelHead">
-          <div class="panelTitle">Ventas diarias</div>
-          <div class="panelBtns">
-            <button id="btnVentasLock" class="btn btnTiny btnGhost" type="button">Bloquear</button>
-          </div>
-        </div>
-
-        <div class="filters">
-          <label class="field">
-            <span>Fecha</span>
-            <input id="vFecha" type="date">
-          </label>
-
-          <label class="field">
-            <span>Tienda</span>
-            <select id="vTienda">
-              <option value="san_pablo">San Pablo</option>
-              <option value="san_lesmes">San Lesmes</option>
-              <option value="santiago">Santiago</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Efectivo</span>
-            <input id="vEfectivo" inputmode="decimal" type="number" step="0.01">
-          </label>
-
-          <label class="field">
-            <span>Tarjeta</span>
-            <input id="vTarjeta" inputmode="decimal" type="number" step="0.01">
-          </label>
-
-          <label class="field">
-            <span>Gastos</span>
-            <input id="vGastos" inputmode="decimal" type="number" step="0.01">
-          </label>
-
-          <label class="field col2">
-            <span>Notas</span>
-            <input id="vNotas" type="text" placeholder="Opcional">
-          </label>
-
-          <button id="btnAddVenta" class="btn" type="button">Guardar venta</button>
-        </div>
-
-        <div class="filters">
-          <label class="field"><span>Desde</span><input id="vDesde" type="date"></label>
-          <label class="field"><span>Hasta</span><input id="vHasta" type="date"></label>
-        </div>
-
-        <pre id="ventasReport" class="report"></pre>
-        <div id="listaVentas" class="list"></div>
-      </div>
-    </section>
-
-    <!-- ===========================
-      TAB: AJUSTES
-    ============================ -->
-    <section id="tabAjustes" class="page" role="tabpanel" aria-label="Ajustes">
-      <div class="twoCol">
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Ajustes</div>
-            <div class="panelBtns">
-              <button id="btnGuardarAjustes" class="btn btnTiny" type="button">Guardar</button>
-              <button id="btnReloadAjustes" class="btn btnTiny btnGhost" type="button">Recargar</button>
-            </div>
-          </div>
-
-          <div class="formGrid">
-            <label class="field">
-              <span>IVA (%)</span>
-              <input id="ajIva" inputmode="decimal" type="number" step="0.01" value="4">
-            </label>
-
-            <label class="field">
-              <span>Transporte (%)</span>
-              <input id="ajTransporte" inputmode="decimal" type="number" step="0.01" value="10">
-            </label>
-
-            <label class="field">
-              <span>PIN (Contabilidad/Ventas)</span>
-              <input id="ajPin" type="password" value="8410">
-            </label>
-
-            <label class="field col2">
-              <span>Plantilla QR (AEAT)</span>
-              <input id="ajQrPlantilla" type="text" value="NIF={NIF}&NUM={NUM}&FECHA={FECHA}&TOTAL={TOTAL}">
-            </label>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panelHead">
-            <div class="panelTitle">Cloud (Firebase) — Opcional</div>
-            <div class="panelBtns">
-              <button id="btnCloudInit" class="btn btnTiny btnGhost" type="button">Preparar</button>
-            </div>
-          </div>
-
-          <div class="formGrid">
-            <label class="field col2">
-              <span>Config Firebase (JSON)</span>
-              <textarea id="fbCfg" rows="10" spellcheck="false" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"...","projectId":"...","appId":"...","storageBucket":"..."}'></textarea>
-            </label>
-
-            <label class="field">
-              <span>Email</span>
-              <input id="cloudEmail" type="email" autocomplete="off">
-            </label>
-
-            <label class="field">
-              <span>Password</span>
-              <input id="cloudPass" type="password" autocomplete="off">
-            </label>
-
-            <div class="btnRow col2">
-              <button id="btnCloudLogin" class="btn" type="button">Login</button>
-              <button id="btnCloudLogout" class="btn btnGhost" type="button">Logout</button>
-              <button id="btnCloudSync" class="btn btnGhost" type="button">Sync → Nube</button>
-              <button id="btnCloudPull" class="btn btnGhost" type="button">Cargar ← Nube</button>
+            <div class="grid-wrapper">
+                <div class="grid-header">
+                    <span>PRODUCTO</span><span>MODO</span><span>CANT</span><span>BRUTO</span><span>TARA</span><span>NETO</span><span>PRECIO</span><span>TOTAL</span>
+                </div>
+                <div id="lineas-factura"></div>
+                <div class="grid-footer-btns">
+                    <button onclick="agregarLinea()">+ Añadir Línea</button>
+                    <button onclick="reiniciarLineas()">Vaciar Todo</button>
+                </div>
             </div>
 
-            <div class="note col2">
-              Si no configuras Cloud, el sistema sigue funcionando offline sin errores.
+            <div class="totales-container">
+                <div class="obs-box">
+                    <textarea id="f-obs" placeholder="Observaciones e información adicional..."></textarea>
+                    <div class="tags-box">
+                        <input type="text" id="f-tags" placeholder="Tags (ej: San Pablo, Urgente)">
+                    </div>
+                </div>
+                <div class="totales-calculos">
+                    <div class="t-row">Subtotal: <span id="res-sub">0.00</span>€</div>
+                    <div class="t-row">
+                        IVA (4%): <input type="checkbox" id="iva-toggle" checked onchange="calcTotalFinal()"> 
+                        <span id="res-iva">0.00</span>€
+                    </div>
+                    <div class="t-row">
+                        Transporte (10%): <input type="checkbox" id="trans-toggle" onchange="calcTotalFinal()"> 
+                        <span id="res-trans">0.00</span>€
+                    </div>
+                    <div class="t-row total-grande">TOTAL: <span id="res-total">0.00</span>€</div>
+                    <div class="t-row status-pago">
+                        Metodo: 
+                        <select id="f-metodo">
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Tarjeta">Tarjeta</option>
+                            <option value="Transferencia">Transferencia</option>
+                        </select>
+                    </div>
+                </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </section>
+        </section>
 
-  </main>
+        <section id="tab-listado" class="tab-content">
+            <div class="search-area">
+                <input type="text" id="search-input" placeholder="Buscar por cliente o fecha..." onkeyup="renderHistorial()">
+            </div>
+            <div id="historial-lista"></div>
+        </section>
 
-  <!-- =========================================================
-    MODAL: PIN
-  ========================================================== -->
-  <div id="pinModal" class="modal" aria-hidden="true">
-    <div class="modalBackdrop" data-close="true"></div>
-    <div class="modalCard">
-      <div class="modalHead">
-        <div class="modalTitle">Acceso protegido</div>
-        <button class="btn btnTiny btnGhost" id="btnPinCancel" type="button">Cerrar</button>
-      </div>
+        <section id="tab-conta" class="tab-content">
+            <div id="conta-lock">
+                <div class="lock-box">
+                    <h2>CONTABILIDAD PROTEGIDA</h2>
+                    <input type="password" id="pin-input" placeholder="Introduce PIN (8410)">
+                    <button onclick="accederConta()">DESBLOQUEAR</button>
+                </div>
+            </div>
+            <div id="conta-panel" style="display:none">
+                <div class="tienda-selector">
+                    <button onclick="renderConta('Global')">Global</button>
+                    <button onclick="renderConta('San Pablo')">San Pablo</button>
+                    <button onclick="renderConta('San Lesmes')">San Lesmes</button>
+                    <button onclick="renderConta('Santiago')">Santiago</button>
+                </div>
+                <div class="stats-grid">
+                    <div class="s-card">TOTAL<br><strong id="s-total">0€</strong></div>
+                    <div class="s-card">EFECTIVO<br><strong id="s-efec">0€</strong></div>
+                    <div class="s-card">TARJETA<br><strong id="s-tarj">0€</strong></div>
+                </div>
+                <div id="reporte-detalle"></div>
+            </div>
+        </section>
+    </main>
 
-      <input id="pinTarget" type="hidden" value="contabilidad" />
-
-      <div class="modalBody">
-        <p class="muted">Introduce PIN para desbloquear Contabilidad / Ventas.</p>
-
-        <label class="field">
-          <span>PIN</span>
-          <input id="pinInput" type="password" inputmode="numeric" placeholder="8410" autocomplete="off" />
-        </label>
-
-        <div class="btnRow">
-          <button id="btnPinOk" class="btn" type="button">OK</button>
-          <button id="btnPinBoth" class="btn btnGhost" type="button">Desbloquear ambos</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- =========================================================
-    MODAL: PDF VIEWER
-  ========================================================== -->
-  <div id="pdfModal" class="modal" aria-hidden="true">
-    <div class="modalBackdrop" data-close="true"></div>
-    <div class="modalCard modalWide">
-      <div class="modalHead">
-        <div class="modalTitle">PDF — Vista previa</div>
-        <div class="modalBtns">
-          <button id="btnPdfPrint" class="btn btnTiny btnGhost" type="button">Imprimir</button>
-          <button id="btnPdfOpenTab" class="btn btnTiny btnGhost" type="button">Abrir pestaña</button>
-          <button id="btnPdfClose" class="btn btnTiny" type="button">Cerrar</button>
-        </div>
-      </div>
-
-      <div id="pdfModalBody" class="modalBody pdfBody isEmpty">
-        <object id="pdfObj" class="pdfObj" data="" type="application/pdf"></object>
-        <iframe id="pdfFrame" class="pdfFrame" src="" title="PDF"></iframe>
-      </div>
-    </div>
-  </div>
-
-  <!-- =========================================================
-    TOAST
-  ========================================================== -->
-  <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
-
-  <!-- =========================================================
-    APP JS (PEGAR app.js COMPLETO generado en 3A + 3B + 3C)
-  ========================================================== -->
-  <script defer src="./app.js"></script>
+    <datalist id="lista-productos"></datalist>
 </body>
+<script src="app.js"></script>
 </html>
