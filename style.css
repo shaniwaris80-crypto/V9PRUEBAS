@@ -1303,4 +1303,44 @@ textarea{ resize: vertical; }
   #contabDashboard .kpis{ grid-template-columns: 1fr; }
   #contabDashboard .barRow{ grid-template-columns: 58px 1fr 76px; }
 }
+/* =========================================================
+   PATCH LAYOUT — Evitar solape del cuadro META sobre CLIENTE
+   Pegar al FINAL de style.css
+========================================================= */
+
+.fm-invHeader{ display:grid; gap:12px; }
+
+/* barra superior (meta) */
+.fm-invMeta{
+  display:flex;
+  justify-content:flex-end;
+  align-items:flex-start;
+}
+
+/* grid 3 columnas: proveedor | qr | cliente */
+.fm-invGrid{
+  display:grid;
+  grid-template-columns: minmax(0,1fr) 140px minmax(0,1fr);
+  gap:12px;
+  align-items:start;
+}
+
+/* caja meta: fija ancho y evita overlay */
+.fm-metaCard{
+  position: static !important;
+  top:auto !important; right:auto !important; left:auto !important; bottom:auto !important;
+  z-index:auto !important;
+  max-width: 360px;
+  width: 360px;
+}
+
+/* si no cabe, que en desktop reduzca */
+@media (max-width: 980px){
+  .fm-invGrid{ grid-template-columns: 1fr; }
+  .fm-invMeta{ justify-content:stretch; }
+  .fm-metaCard{ width: 100%; max-width: none; }
+}
+
+/* por si tu core usa absolute en algún wrapper */
+.fm-metaCard *{ position: static; }
 
