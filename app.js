@@ -4468,5 +4468,158 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
     new MutationObserver(scanGrid).observe(grid, { childList:true, subtree:true });
   }
 })();
+/* =========================================================
+   PATCH DEFINITIVO — PRECIO EN GRID CON DECIMALES (iOS + filtros)
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
 
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  // Detectar input de PRECIO sin depender de una clase exacta
+  function isPrecioInput(el){
+    if (!el || el.tagName !== 'INPUT') return false;
+    const ph = (el.placeholder||'').toLowerCase();
+    const nm = (el.name||'').toLowerCase();
+    const id = (el.id||'').toLowerCase();
+    const cl = (el.className||'').toLowerCase();
+    const df = (el.dataset?.field||'').toLowerCase();
+    const dk = (el.dataset?.k||'').toLowerCase();
+    return ph.includes('precio') || nm.includes('precio') || id.includes('precio') || cl.includes('precio') || df === 'precio' || dk === 'precio';
+  }
+
+  // Sanitizar: permitir solo dígitos + 1 coma decimal (punto -> coma)
+  function sanitizePrecio(v){
+    v = String(v ?? '').replace(/\s+/g,'');
+    v = v.replace(/[^\d.,-]/g,'');
+    v = v.replaceAll('.', ',');       // ES
+    // una sola coma
+    const i = v.indexOf(',');
+    if (i !== -1) v = v.slice(0,i+1) + v.slice(i+1).replaceAll(',', '');
+    // '-' solo al inicio
+    if (v.includes('-')) v = (v[0] === '-' ? '-' : '') + v.replaceAll('-', '');
+    return v;
+  }
+
+  function forcePrecioAttrs(el){
+    if (!el || el.dataset.fmPrecioFix === '1') return;
+    el.dataset.fmPrecioFix = '1';
+
+    // IMPORTANTÍSIMO para iPhone: decimal, no numeric
+    try { el.type = 'text'; } catch {}
+    el.setAttribute('inputmode', 'decimal');
+    el.setAttribute('enterkeyhint', 'next');
+
+    // Si existe pattern solo dígitos, borra el decimal => lo quitamos
+    el.removeAttribute('pattern');
+
+    el.setAttribute('autocomplete','off');
+    el.setAttribute('autocorrect','off');
+    el.setAttribute('autocapitalize','off');
+    el.setAttribute('spellcheck','false');
+  }
+
+  function insertAtCursor(el, text){
+    const s = el.selectionStart ?? el.value.length;
+    const e = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0,s) + text + el.value.slice(e);
+    const p = s + text.length;
+    try { el.setSelectionRange(p,p); } catch {}
+  }
+
+  // Guardar "intento de entrada" para reponerlo si el core lo borra
+  function rememberIntent(el, data){
+    el.dataset.fmPrev = el.value ?? '';
+    el.dataset.fmData = data ?? '';
+    el.dataset.fmSelS = String(el.selectionStart ?? (el.value?.length||0));
+    el.dataset.fmSelE = String(el.selectionEnd ?? (el.value?.length||0));
+  }
+
+  function restoreIfBlocked(el){
+    const data = el.dataset.fmData || '';
+    const prev = el.dataset.fmPrev || '';
+    // si intentó meter . o , y el valor no cambió, insertamos nosotros
+    if ((data === '.' || data === ',') && el.value === prev) {
+      if (!(el.value || '').includes(',')) {
+        // insertar coma en la posición anterior del cursor
+        const pos = Number(el.dataset.fmSelS || el.value.length);
+        try { el.setSelectionRange(pos, pos); } catch {}
+        insertAtCursor(el, ',');
+      }
+    }
+    // limpiar intent
+    el.dataset.fmData = '';
+    el.dataset.fmPrev = '';
+  }
+
+  // 1) Aplicar atributos a todos los precios actuales y futuros
+  function scan(){
+    $$('#gridBody input').forEach(el => {
+      if (isPrecioInput(el)) forcePrecioAttrs(el);
+    });
+  }
+  scan();
+
+  const grid = $('#gridBody');
+  if (grid && !grid.__fmObs){
+    grid.__fmObs = true;
+    new MutationObserver(scan).observe(grid, { childList:true, subtree:true });
+  }
+
+  // 2) Capturar antes de que el core filtre: antes de input
+  document.addEventListener('beforeinput', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+    rememberIntent(el, e.data);
+  }, true);
+
+  // 3) Si keydown bloquea . o , : lo metemos nosotros
+  document.addEventListener('keydown', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+
+    if (e.key === '.' || e.key === ',' || e.key === 'Decimal') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if ((el.value || '').includes(',')) return;
+      insertAtCursor(el, ',');
+      el.dispatchEvent(new Event('input', { bubbles:true }));
+    }
+  }, true);
+
+  // 4) Input: si el core borró el decimal, lo reponemos y sanitizamos
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+
+    // Si otro listener deja solo dígitos, nosotros restauramos la coma
+    restoreIfBlocked(el);
+
+    const v = sanitizePrecio(el.value);
+    if (v !== el.value) el.value = v;
+
+    // (opcional) impedir que listeners posteriores vuelvan a borrar la coma
+    // ojo: esto NO puede parar los que ya corrieron antes, pero sí los de después.
+    e.stopImmediatePropagation();
+  }, true);
+
+  // 5) Pegar: permitir coma/punto
+  document.addEventListener('paste', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+
+    e.preventDefault();
+    const txt = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    const clean = sanitizePrecio(txt);
+    insertAtCursor(el, clean);
+    el.dispatchEvent(new Event('input', { bubbles:true }));
+  }, true);
+
+})();
 
