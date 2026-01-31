@@ -3221,7 +3221,7 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
     // Pagination calc
     // Header space: we draw blocks + maybe QR (fixed)
     const headerYTop = M.t;
-    const headerH = 58; // fijo
+    const headerH = 74; // fijo
     const tableStartY = headerYTop + headerH + 6;
 
     // Last page totals area
@@ -3282,7 +3282,7 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
 
       // Provider / Client boxes
       const leftBoxX = M.l;
-      const leftBoxY = headerYTop + 12;
+      const leftBoxY = headerYTop + 26;
       const boxH = 30;
       const halfW = (W - M.l - M.r - 6) / 2;
 
