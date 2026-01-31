@@ -3959,3 +3959,96 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }
 
 })();
+/* =========================================================
+   PATCH PRO — PRECIO ACEPTA "." y "," (gana a filtros del core)
+   Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const isPrecio = (el) => {
+    if (!el || el.tagName !== 'INPUT') return false;
+    const ph = (el.placeholder||'').toLowerCase();
+    const nm = (el.name||'').toLowerCase();
+    const id = (el.id||'').toLowerCase();
+    const cl = (el.className||'').toLowerCase();
+    const dk = (el.dataset?.k||'').toLowerCase();
+    const df = (el.dataset?.field||'').toLowerCase();
+    return ph.includes('precio') || nm.includes('precio') || id.includes('precio') || cl.includes('precio') || dk === 'precio' || df === 'precio';
+  };
+
+  const sanitize = (raw) => {
+    let v = String(raw ?? '').replace(/\s+/g,'');
+    v = v.replace(/[^\d.,-]/g,'');
+    v = v.replaceAll('.', ',');      // ES: coma
+    const i = v.indexOf(',');
+    if (i !== -1) v = v.slice(0,i+1) + v.slice(i+1).replaceAll(',', '');
+    if (v.includes('-')) v = (v[0]==='-'?'-':'') + v.replaceAll('-', '');
+    return v;
+  };
+
+  const insertAtCursor = (el, text) => {
+    const s = el.selectionStart ?? el.value.length;
+    const e = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0,s) + text + el.value.slice(e);
+    const p = s + text.length;
+    try { el.setSelectionRange(p,p); } catch {}
+  };
+
+  // Forzar atributos para teclado decimal
+  const forceDecimalAttrs = (el) => {
+    if (el.dataset.fmDec === '1') return;
+    el.dataset.fmDec = '1';
+    try { el.type = 'text'; } catch {}
+    el.setAttribute('inputmode','decimal');
+    el.removeAttribute('pattern'); // si pattern era solo dígitos, bloquea
+    el.setAttribute('autocomplete','off');
+    el.setAttribute('autocorrect','off');
+    el.setAttribute('autocapitalize','off');
+    el.setAttribute('spellcheck','false');
+  };
+
+  // 1) keydown (captura) -> si "." o "," lo insertamos nosotros
+  document.addEventListener('keydown', (e) => {
+    const el = e.target;
+    if (!isPrecio(el)) return;
+    forceDecimalAttrs(el);
+
+    if (e.key === '.' || e.key === ',' || e.key === 'Decimal') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if ((el.value||'').includes(',')) return;
+      insertAtCursor(el, ',');
+      el.dispatchEvent(new Event('input', { bubbles:true }));
+    }
+  }, true);
+
+  // 2) beforeinput (iOS) -> si intenta meter "." o "," lo convertimos a ","
+  document.addEventListener('beforeinput', (e) => {
+    const el = e.target;
+    if (!isPrecio(el)) return;
+    forceDecimalAttrs(el);
+
+    if (e.data === '.' || e.data === ',') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if ((el.value||'').includes(',')) return;
+      insertAtCursor(el, ',');
+      el.dispatchEvent(new Event('input', { bubbles:true }));
+    }
+  }, true);
+
+  // 3) input (captura) -> sanitiza y además corta otros sanitizadores
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!isPrecio(el)) return;
+    forceDecimalAttrs(el);
+
+    // Importantísimo: parar otros listeners que borren la coma
+    e.stopImmediatePropagation();
+
+    const v = sanitize(el.value);
+    if (v !== el.value) el.value = v;
+  }, true);
+})();
+
