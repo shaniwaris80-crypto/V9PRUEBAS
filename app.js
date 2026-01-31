@@ -1,4 +1,4 @@
-c/* =========================================================
+/* =========================================================
 PARTE 3/4 — FACTU MIRAL (B/W PRO) — app.js (A)  ✅
 - Pegar ESTE archivo como: app.js
 - Esta PARTE deja TODO operativo en local:
