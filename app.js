@@ -4091,4 +4091,159 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }, true); // CAPTURING: gana a listeners del core
 
 })();
+/* =========================================================
+   PATCH FUERTE — PRECIO ACEPTA "." y "," (iOS + handlers bloqueando)
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  function parseNumES(v){
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim().replace(/\s+/g,'').replace(',', '.');
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function fmt2ES(n){
+    if (!Number.isFinite(n)) return '';
+    return n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function sanitizeDecimalES(raw){
+    let v = String(raw ?? '').replace(/\s+/g,'');
+    // permitir solo dígitos y separadores
+    v = v.replace(/[^\d.,-]/g, '');
+
+    // convertir puntos a coma (para ES)
+    v = v.replaceAll('.', ',');
+
+    // permitir SOLO una coma
+    const firstComma = v.indexOf(',');
+    if (firstComma !== -1) {
+      v = v.slice(0, firstComma + 1) + v.slice(firstComma + 1).replaceAll(',', '');
+    }
+    // opcional: quitar '-' si no está al inicio
+    if (v.includes('-')) {
+      v = (v[0] === '-' ? '-' : '') + v.replaceAll('-', '');
+    }
+    return v;
+  }
+
+  function insertAtCursor(el, text){
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const before = el.value.slice(0, start);
+    const after  = el.value.slice(end);
+    el.value = before + text + after;
+    const pos = start + text.length;
+    try { el.setSelectionRange(pos, pos); } catch {}
+  }
+
+  function hardFixPrecioInput(input){
+    if (!input || input.__hardPrecioFix) return;
+    input.__hardPrecioFix = true;
+
+    // FORZAR: text + teclado decimal
+    try { input.type = 'text'; } catch {}
+    input.setAttribute('inputmode', 'decimal');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('enterkeyhint', 'next');
+
+    // IMPORTANTÍSIMO: si el core bloquea "."/"," en keydown,
+    // aquí lo interceptamos y lo metemos nosotros.
+    input.addEventListener('keydown', (e) => {
+      const k = e.key;
+
+      // Aceptar teclas decimales aunque estén bloqueadas por otros listeners
+      if (k === '.' || k === ',' || k === 'Decimal') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        // si ya hay coma, no insertar otra
+        if ((input.value || '').includes(',')) return;
+
+        insertAtCursor(input, ',');
+        // disparar input para recalcular
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+
+      // No tocar números normales
+      if (/^\d$/.test(k)) return;
+
+      // Dejar backspace, delete, flechas, etc.
+      const ok = ['Backspace','Delete','ArrowLeft','ArrowRight','Home','End','Tab'];
+      if (ok.includes(k)) return;
+
+      // Enter: no lo anulamos aquí (tu core ya lo usa para avanzar)
+    }, true); // capture
+
+    // BEFOREINPUT: en iOS a veces entra por aquí
+    input.addEventListener('beforeinput', (e) => {
+      const data = e.data;
+
+      if (data === '.' || data === ',') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        if ((input.value || '').includes(',')) return;
+        insertAtCursor(input, ',');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, true);
+
+    // INPUT: sanitizar manteniendo coma
+    input.addEventListener('input', () => {
+      const v = sanitizeDecimalES(input.value);
+      if (v !== input.value) input.value = v;
+    }, true);
+
+    // PASTE: sanitizar
+    input.addEventListener('paste', (e) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const txt = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+      const v = sanitizeDecimalES(txt);
+      // insertar en cursor
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      const before = input.value.slice(0, start);
+      const after  = input.value.slice(end);
+      input.value = sanitizeDecimalES(before + v + after);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, true);
+
+    // BLUR: formatear a 2 decimales (opcional pero PRO)
+    input.addEventListener('blur', () => {
+      const n = parseNumES(input.value);
+      if (n === null) return;
+      input.value = fmt2ES(n);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, true);
+  }
+
+  function scan(){
+    $$('#gridBody .precio').forEach(hardFixPrecioInput);
+  }
+
+  // aplicar ya
+  scan();
+
+  // aplicar a filas nuevas
+  const grid = $('#gridBody');
+  if (grid && !grid.__hardPrecioObs){
+    grid.__hardPrecioObs = true;
+    const mo = new MutationObserver(() => scan());
+    mo.observe(grid, { childList:true, subtree:true });
+  }
+
+})();
 
