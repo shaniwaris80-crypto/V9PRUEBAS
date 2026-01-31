@@ -3221,7 +3221,7 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
     // Pagination calc
     // Header space: we draw blocks + maybe QR (fixed)
     const headerYTop = M.t;
-    const headerH = 58; // fijo
+    const headerH = 74; // fijo
     const tableStartY = headerYTop + headerH + 6;
 
     // Last page totals area
@@ -3282,7 +3282,7 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
 
       // Provider / Client boxes
       const leftBoxX = M.l;
-      const leftBoxY = headerYTop + 12;
+      const leftBoxY = headerYTop + 26;
       const boxH = 30;
       const halfW = (W - M.l - M.r - 6) / 2;
 
@@ -4354,6 +4354,119 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
     run();
   }
   window.addEventListener('resize', run, { passive:true });
+})();
+/* =========================================================
+   PATCH FUERTE — PRECIO ACEPTA "." y "," (iOS + filtros)
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  function sanitizeDecimalES(raw){
+    let v = String(raw ?? '').replace(/\s+/g,'');
+    v = v.replace(/[^\d.,-]/g,'');   // deja dígitos y separadores
+    v = v.replaceAll('.', ',');      // ES -> coma
+    // solo una coma
+    const i = v.indexOf(',');
+    if (i !== -1) v = v.slice(0, i+1) + v.slice(i+1).replaceAll(',', '');
+    // '-' solo al inicio
+    if (v.includes('-')) v = (v[0] === '-' ? '-' : '') + v.replaceAll('-', '');
+    return v;
+  }
+
+  function insertAtCursor(el, text){
+    const start = el.selectionStart ?? el.value.length;
+    const end   = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0,start) + text + el.value.slice(end);
+    const p = start + text.length;
+    try { el.setSelectionRange(p,p); } catch {}
+  }
+
+  function findPrecioInput(row){
+    const ins = $$('input', row);
+
+    // prioridad: class/name/id/placeholder que contenga "precio"
+    const byKey = (i) => {
+      const c = (i.className||'').toLowerCase();
+      const n = (i.name||'').toLowerCase();
+      const d = (i.id||'').toLowerCase();
+      const p = (i.placeholder||'').toLowerCase();
+      return c.includes('precio') || n.includes('precio') || d.includes('precio') || p.includes('precio');
+    };
+    let price = ins.find(byKey);
+
+    // fallback: si tu grid tiene un span de importe, el precio suele estar justo antes del origen/importe
+    if (!price) {
+      // intenta el último input numérico editable (pero NO neto/tara)
+      const cand = ins.filter(i => !i.disabled && i.type !== 'hidden');
+      price = cand.find(i => (i.inputMode||'').toLowerCase().includes('decimal')) || cand[cand.length-1] || null;
+    }
+    return price;
+  }
+
+  function fixPrecio(input){
+    if (!input || input.dataset.fmPrecioFixed === '1') return;
+    input.dataset.fmPrecioFixed = '1';
+
+    // Forzar TEXT + decimal keyboard
+    try { input.type = 'text'; } catch {}
+    input.setAttribute('inputmode','decimal');
+    input.setAttribute('autocomplete','off');
+    input.setAttribute('autocorrect','off');
+    input.setAttribute('autocapitalize','off');
+    input.setAttribute('spellcheck','false');
+    input.removeAttribute('pattern'); // por si bloquea
+    input.style.webkitTextSecurity = 'none';
+
+    // keydown captura: si tecleas "." o "," y está bloqueado, lo metemos nosotros
+    input.addEventListener('keydown', (e) => {
+      const k = e.key;
+      if (k === '.' || k === ',' || k === 'Decimal') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if ((input.value||'').includes(',')) return;
+        insertAtCursor(input, ',');
+        input.dispatchEvent(new Event('input', { bubbles:true }));
+      }
+    }, true);
+
+    // beforeinput (iOS)
+    input.addEventListener('beforeinput', (e) => {
+      const d = e.data;
+      if (d === '.' || d === ',') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if ((input.value||'').includes(',')) return;
+        insertAtCursor(input, ',');
+        input.dispatchEvent(new Event('input', { bubbles:true }));
+      }
+    }, true);
+
+    // input sanitize (permite coma)
+    input.addEventListener('input', () => {
+      const v = sanitizeDecimalES(input.value);
+      if (v !== input.value) input.value = v;
+    }, true);
+  }
+
+  function scanGrid(){
+    $$('#gridBody .gridRow').forEach(row => {
+      const p = findPrecioInput(row);
+      if (p) fixPrecio(p);
+    });
+  }
+
+  // aplicar ya
+  scanGrid();
+
+  // aplicar a filas nuevas
+  const grid = $('#gridBody');
+  if (grid && !grid.__fmPrecioObs){
+    grid.__fmPrecioObs = true;
+    new MutationObserver(scanGrid).observe(grid, { childList:true, subtree:true });
+  }
 })();
 
 
