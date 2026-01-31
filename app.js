@@ -3632,5 +3632,62 @@ Requisitos de librerías (si no están, no crashea):
   ensurePdfModalButtons();
 
   status('PARTE 4 lista: PDF PRO + Cloud opcional activados');
+  /* ===========================
+PATCH SEGURO: PROVEEDOR POR DEFECTO (NO SOBREESCRIBE)
+Pegar AL FINAL del app.js
+=========================== */
+(() => {
+  'use strict';
+
+  const fillProviderIfEmpty = () => {
+    const provNombre = document.querySelector('#provNombre');
+    // si aún no existe el DOM del formulario factura, salimos
+    if (!provNombre) return;
+
+    // Si existe tu función original, úsala (sin tocar nada)
+    if (typeof window.setProviderDefaultsIfEmpty === 'function') {
+      try { window.setProviderDefaultsIfEmpty(); } catch {}
+    } else {
+      // Fallback ultra-seguro: solo rellena si está vacío
+      const setIfEmpty = (sel, val) => {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        if ((el.value || '').trim()) return; // NO sobreescribe
+        el.value = val;
+        // disparamos input por si tu app guarda en estado al escribir
+        try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch {}
+        try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch {}
+      };
+
+      setIfEmpty('#provNombre', 'Mohammad Arslan Waris');
+      setIfEmpty('#provNif',    'X6389988J');
+      setIfEmpty('#provDir',    'Calle San Pablo 17, 09003 Burgos');
+      setIfEmpty('#provTel',    '631 667 893');
+      setIfEmpty('#provEmail',  'shaniwaris80@gmail.com');
+    }
+  };
+
+  // Ejecuta al cargar (con pequeño delay para no interferir con tu init)
+  const boot = () => setTimeout(fillProviderIfEmpty, 80);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+  } else {
+    boot();
+  }
+
+  // Ejecuta cuando vuelves a la pestaña factura (sin depender de tu código interno)
+  document.addEventListener('click', (e) => {
+    const t = e.target && e.target.closest ? e.target.closest('[data-tab],button,a') : null;
+    if (!t) return;
+
+    // detecta cosas típicas: data-tab="factura" / texto del botón "Factura" etc.
+    const dt = (t.getAttribute('data-tab') || '').toLowerCase();
+    const tx = (t.textContent || '').toLowerCase();
+
+    if (dt.includes('factura') || tx.includes('factura')) {
+      setTimeout(fillProviderIfEmpty, 80);
+    }
+  }, true);
+
 
 })();
