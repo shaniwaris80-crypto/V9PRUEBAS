@@ -4622,4 +4622,1093 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }, true);
 
 })();
+/* =========================================================
+   FACTU MIRAL — PRO PATCH PACK v2.0 (SAFE / NO-CORE-TOUCH)
+   ✅ Pegar AL FINAL de app.js
+   Incluye:
+   1) Undo borrar línea
+   2) Chips últimos precios (tocables)
+   3) Pegado masivo (WhatsApp/Excel) -> líneas
+   4) Duplicar línea
+   5) Validación visual (tara>bruto, neto>bruto, precio vacío)
+   6) Auto-crear producto (toggle)
+   7) Series anual FA-YYYY-000123 (toggle)
+   8) Export CSV contabilidad/ventas
+   9) Factura rápida por cliente (última)
+   10) Guardar PDF offline (IndexedDB) capturando blob PDF
+   + EXTRA: Decimales en precio manual (iOS) sí o sí
+========================================================= */
+(() => {
+  'use strict';
+
+  /* -----------------------------
+     Helpers
+  ----------------------------- */
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  const escapeHtml = (s) => (s ?? '').toString()
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'","&#039;");
+
+  const debounce = (fn, ms=250) => { let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+  const uid = () => (crypto?.randomUUID?.() ? crypto.randomUUID() : ('id_'+Math.random().toString(16).slice(2)+Date.now()));
+  const now = () => Date.now();
+
+  function toast(title, msg=''){
+    let wrap = $('#toasts');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'toasts';
+      document.body.appendChild(wrap);
+    }
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.innerHTML = `<div class="toast__title">${escapeHtml(title)}</div>${msg?`<div class="toast__msg">${escapeHtml(msg)}</div>`:''}`;
+    wrap.appendChild(el);
+    setTimeout(()=> el.style.opacity='0', 2600);
+    setTimeout(()=> el.remove(), 3100);
+  }
+
+  /* -----------------------------
+     Patch Settings (localStorage)
+  ----------------------------- */
+  const KSET = 'fm_patch_settings_v2';
+  const defSet = {
+    autoCreateProduct: true,
+    annualSeries: true,
+    annualSeriesPrefix: 'FA',
+    annualSeriesPad: 6,
+    enablePriceChips: true,
+    enablePasteMass: true,
+    enableUndoDelete: true,
+    enableDuplicateLine: true,
+    enableCsvExport: true,
+    enableQuickInvoice: true,
+    enablePdfOffline: true
+  };
+
+  const getSet = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem(KSET) || '');
+      return { ...defSet, ...(s || {}) };
+    } catch { return { ...defSet }; }
+  };
+  const saveSet = (obj) => {
+    try { localStorage.setItem(KSET, JSON.stringify({ ...getSet(), ...obj })); } catch {}
+  };
+
+  /* -----------------------------
+     parseNum ES (coma/punto)
+  ----------------------------- */
+  function parseNumES(v){
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+
+    let s = String(v).trim();
+    if (!s) return null;
+    s = s.replace(/\s+/g,'');
+
+    // 1.234,56 => 1234.56 | 1,234.56 => 1234.56
+    if (s.includes(',') && s.includes('.')) {
+      const lastComma = s.lastIndexOf(',');
+      const lastDot = s.lastIndexOf('.');
+      if (lastComma > lastDot) s = s.replaceAll('.','').replace(',','.');
+      else s = s.replaceAll(',','');
+    } else if (s.includes(',')) s = s.replace(',','.');
+
+    s = s.replace(/[^0-9.\-]/g,'');
+    if (!s || s === '-' || s === '.') return null;
+
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /* =========================================================
+     EXTRA FIX: DECIMALES EN PRECIO MANUAL (iOS)
+     - Fuerza inputmode decimal
+     - Quita pattern solo dígitos
+     - Inserta coma si "." o "," están bloqueados por el core
+  ========================================================= */
+  function isPrecioInput(el){
+    if (!el || el.tagName !== 'INPUT') return false;
+    const ph = (el.placeholder||'').toLowerCase();
+    const nm = (el.name||'').toLowerCase();
+    const id = (el.id||'').toLowerCase();
+    const cl = (el.className||'').toLowerCase();
+    const df = (el.dataset?.field||'').toLowerCase();
+    const dk = (el.dataset?.k||'').toLowerCase();
+    return ph.includes('precio') || nm.includes('precio') || id.includes('precio') || cl.includes('precio') || df === 'precio' || dk === 'precio';
+  }
+
+  function sanitizePrecio(v){
+    v = String(v ?? '').replace(/\s+/g,'');
+    v = v.replace(/[^\d.,-]/g,'');
+    v = v.replaceAll('.', ',');
+    const i = v.indexOf(',');
+    if (i !== -1) v = v.slice(0,i+1) + v.slice(i+1).replaceAll(',', '');
+    if (v.includes('-')) v = (v[0]==='-'?'-':'') + v.replaceAll('-', '');
+    return v;
+  }
+
+  function forcePrecioAttrs(el){
+    if (!el || el.dataset.fmPrecioFix === '1') return;
+    el.dataset.fmPrecioFix = '1';
+    try { el.type = 'text'; } catch {}
+    el.setAttribute('inputmode','decimal');
+    el.setAttribute('enterkeyhint','next');
+    el.removeAttribute('pattern');
+    el.setAttribute('autocomplete','off');
+    el.setAttribute('autocorrect','off');
+    el.setAttribute('autocapitalize','off');
+    el.setAttribute('spellcheck','false');
+  }
+
+  function insertAtCursor(el, txt){
+    const s = el.selectionStart ?? el.value.length;
+    const e = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0,s) + txt + el.value.slice(e);
+    const p = s + txt.length;
+    try { el.setSelectionRange(p,p); } catch {}
+  }
+
+  // Forzar en focusin (por si el core reescribe inputmode)
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+  }, true);
+
+  // Meter coma si core bloquea "." o ","
+  document.addEventListener('keydown', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+
+    if (e.key === '.' || e.key === ',' || e.key === 'Decimal') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if ((el.value||'').includes(',')) return;
+      insertAtCursor(el, ',');
+      el.dispatchEvent(new Event('input', { bubbles:true }));
+    }
+  }, true);
+
+  // Sanitizar y proteger coma
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!isPrecioInput(el)) return;
+    forcePrecioAttrs(el);
+    const v = sanitizePrecio(el.value);
+    if (v !== el.value) el.value = v;
+  }, true);
+
+  /* =========================================================
+     0) Detectores comunes (grid/rows/buttons)
+  ========================================================= */
+  const getGrid = () => $('#gridBody') || $('.gridBody') || document.querySelector('[data-grid="body"]');
+
+  const getRows = () => {
+    const g = getGrid();
+    if (!g) return [];
+    return $$('.gridRow', g).length ? $$('.gridRow', g) : $$('.row', g);
+  };
+
+  function rowFields(row){
+    const prod = row.querySelector('.input--prod') || row.querySelector('input[data-field="producto"]') || row.querySelector('input');
+    const modo = row.querySelector('select') || row.querySelector('select[data-field="modo"]');
+    const precio = row.querySelector('.precio') || row.querySelector('input[data-field="precio"]') || $$('.input',row).find(x=> (x.placeholder||'').toLowerCase().includes('precio')) || null;
+
+    const nums = $$('.input--num', row);
+    const cantidad = nums[0] || row.querySelector('input[data-field="cantidad"]');
+    const bruto    = nums[1] || row.querySelector('input[data-field="bruto"]');
+
+    const taraKg = row.querySelector('.taraKg') || row.querySelector('input[data-field="taraKg"]');
+    const netoKg = row.querySelector('.netoKg') || row.querySelector('input[data-field="neto"]');
+
+    // origen
+    const origen = $$('.input, input', row).find(x => (x.placeholder||'').toLowerCase()==='origen' || (x.dataset?.field||'')==='origen') || null;
+
+    return { prod, modo, cantidad, bruto, taraKg, netoKg, precio, origen };
+  }
+
+  function readRowData(row){
+    const f = rowFields(row);
+    return {
+      producto: (f.prod?.value || '').trim(),
+      modo: f.modo?.value || 'kg',
+      cantidad: (f.cantidad?.value ?? '').toString(),
+      bruto: (f.bruto?.value ?? '').toString(),
+      taraKg: (f.taraKg?.value ?? '').toString(),
+      neto: (f.netoKg?.value ?? '').toString(),
+      precio: (f.precio?.value ?? '').toString(),
+      origen: (f.origen?.value ?? '').toString(),
+    };
+  }
+
+  function fillRowData(row, data){
+    const f = rowFields(row);
+    if (f.prod && data.producto != null) f.prod.value = data.producto;
+    if (f.modo && data.modo != null) f.modo.value = data.modo;
+    if (f.cantidad && data.cantidad != null) f.cantidad.value = data.cantidad;
+    if (f.bruto && data.bruto != null) f.bruto.value = data.bruto;
+    if (f.taraKg && data.taraKg != null) f.taraKg.value = data.taraKg;
+    if (f.netoKg && data.neto != null) f.netoKg.value = data.neto;
+    if (f.precio && data.precio != null) f.precio.value = data.precio;
+    if (f.origen && data.origen != null) f.origen.value = data.origen;
+
+    // disparar recálculo core
+    ['input','change'].forEach(ev=>{
+      row.querySelectorAll('input,select,textarea').forEach(el=>el.dispatchEvent(new Event(ev,{bubbles:true})));
+    });
+  }
+
+  function findAddLineButton(){
+    return $('#btnAddLine') || $('#addLine') || $$('button').find(b => /añadir línea|add line|añadir|add/i.test(b.textContent||''));
+  }
+
+  function addEmptyLine(){
+    const btn = findAddLineButton();
+    if (btn && typeof btn.click === 'function') {
+      btn.click();
+      return true;
+    }
+    return false;
+  }
+
+  /* =========================================================
+     1) Undo borrar línea (SAFE)
+  ========================================================= */
+  let undoTimer = null;
+  let undoPayload = null;
+
+  function showUndoBar(text, onUndo){
+    // borra anterior
+    $('#fmUndo')?.remove();
+
+    const bar = document.createElement('div');
+    bar.id = 'fmUndo';
+    bar.className = 'fm-undo';
+    bar.innerHTML = `
+      <div>
+        <strong>${escapeHtml(text)}</strong>
+        <div class="muted">Pulsa “Deshacer” para restaurar</div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="fm-miniBtn" id="fmUndoNo" type="button">Cerrar</button>
+        <button class="fm-miniBtn primary" id="fmUndoYes" type="button">Deshacer</button>
+      </div>
+    `;
+    document.body.appendChild(bar);
+
+    $('#fmUndoNo')?.addEventListener('click', ()=> bar.remove());
+    $('#fmUndoYes')?.addEventListener('click', ()=> { bar.remove(); onUndo?.(); });
+  }
+
+  function hookUndoDelete(){
+    const set = getSet();
+    if (!set.enableUndoDelete) return;
+
+    document.addEventListener('click', (e) => {
+      const g = getGrid();
+      if (!g) return;
+
+      const btn = e.target?.closest?.('button');
+      if (!btn) return;
+
+      // Detectar botón eliminar por texto / title / aria-label / data-action
+      const t = (btn.textContent||'').toLowerCase();
+      const ttl = (btn.title||'').toLowerCase();
+      const al = (btn.getAttribute('aria-label')||'').toLowerCase();
+      const da = (btn.dataset?.action||'').toLowerCase();
+
+      const isDel = t.includes('eliminar') || t === 'x' || t.includes('✕') || t.includes('🗑') ||
+                    ttl.includes('eliminar') || al.includes('eliminar') || da.includes('delete') || da.includes('remove');
+
+      if (!isDel) return;
+
+      const row = btn.closest('.gridRow,.row');
+      if (!row) return;
+
+      // Guardar snapshot ANTES de que el core lo elimine
+      const snap = readRowData(row);
+      const idx = getRows().indexOf(row);
+
+      undoPayload = { snap, idx, ts: now() };
+
+      // dejar que el core borre. Luego mostramos undo.
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(() => {
+        showUndoBar('Línea eliminada', () => {
+          const ok = addEmptyLine();
+          setTimeout(() => {
+            const rows = getRows();
+            const target = rows[Math.min(undoPayload.idx, rows.length-1)] || rows[rows.length-1];
+            if (target) fillRowData(target, undoPayload.snap);
+            toast('Deshacer', 'Línea restaurada');
+          }, ok ? 80 : 0);
+        });
+
+        // expira a los 6s
+        setTimeout(()=> { $('#fmUndo')?.remove(); undoPayload=null; }, 6500);
+      }, 80);
+    }, true);
+  }
+
+  /* =========================================================
+     2) Historial de precios + Chips tocables
+  ========================================================= */
+  const KPH = 'fm_price_hist_v2'; // { PROD: [p1,p2,p3...] }
+  const getPH = () => { try { return JSON.parse(localStorage.getItem(KPH)||'{}') || {}; } catch { return {}; } };
+  const setPH = (obj) => { try { localStorage.setItem(KPH, JSON.stringify(obj)); } catch {} };
+
+  function pushPriceHist(prod, price){
+    prod = (prod||'').trim().toUpperCase();
+    if (!prod) return;
+    const n = parseNumES(price);
+    if (n === null) return;
+    const ph = getPH();
+    const arr = Array.isArray(ph[prod]) ? ph[prod] : [];
+    // evitar duplicado consecutivo
+    const pStr = n.toFixed(3);
+    const arr2 = arr.filter(x => String(x) !== pStr);
+    arr2.unshift(pStr);
+    ph[prod] = arr2.slice(0, 5);
+    setPH(ph);
+  }
+
+  function ensureChips(row){
+    if (row.querySelector('.fm-chips')) return row.querySelector('.fm-chips');
+    const wrap = document.createElement('div');
+    wrap.className = 'fm-chips';
+    // intentar ponerlo cerca del input precio
+    const f = rowFields(row);
+    const anchor = f.precio?.parentElement || row;
+    anchor.appendChild(wrap);
+    return wrap;
+  }
+
+  function renderChips(row){
+    const set = getSet();
+    if (!set.enablePriceChips) return;
+
+    const f = rowFields(row);
+    const prod = (f.prod?.value || '').trim().toUpperCase();
+    if (!prod) return;
+
+    const ph = getPH();
+    const arr = ph[prod];
+    if (!arr || !arr.length) return;
+
+    const chips = ensureChips(row);
+    chips.innerHTML = '';
+    arr.slice(0,3).forEach(p => {
+      const b = document.createElement('div');
+      b.className = 'fm-chip';
+      // Mostrar ES con coma
+      const show = String(p).replace('.', ',');
+      b.textContent = show;
+      b.addEventListener('click', () => {
+        if (f.precio) {
+          forcePrecioAttrs(f.precio);
+          f.precio.value = show;
+          f.precio.dispatchEvent(new Event('input', { bubbles:true }));
+          toast('Precio', `Aplicado ${show}`);
+        }
+      });
+      chips.appendChild(b);
+    });
+  }
+
+  // guardar historial al guardar factura (leyendo DOM)
+  function hookSavePriceHist(){
+    const btn = $('#btnGuardarFactura') || $('#guardarFactura') || $$('button').find(b => /guardar factura/i.test(b.textContent||''));
+    if (!btn) return;
+
+    btn.addEventListener('click', () => {
+      setTimeout(() => {
+        getRows().forEach(r => {
+          const d = readRowData(r);
+          if (!d.producto) return;
+          pushPriceHist(d.producto, d.precio);
+        });
+      }, 80);
+    }, true);
+  }
+
+  /* =========================================================
+     3) Pegado masivo (WhatsApp/Excel)
+  ========================================================= */
+  function openPasteModal(onApply){
+    const back = document.createElement('div');
+    back.className = 'fm-modalBack';
+    back.innerHTML = `
+      <div class="fm-modal">
+        <div class="fm-modalHead">
+          <div class="fm-modalTitle">Pegado masivo → líneas</div>
+          <button class="fm-miniBtn" id="fmPasteClose" type="button">Cerrar</button>
+        </div>
+        <div class="fm-modalBody">
+          <div style="font-weight:800; opacity:.75; font-size:12px;">
+            Formatos soportados (por línea):
+            <br>• PRODUCTO TAB CANT TAB PRECIO
+            <br>• PRODUCTO  CANT  PRECIO
+            <br>• PRODUCTO xCANT @PRECIO
+          </div>
+          <textarea id="fmPasteTa" placeholder="Ej:
+TOMATE RAMA	10	1,25
+PLATANO CANARIO PRIMERA  4  1,39
+PIMIENTO PADRON x2 @5,99"></textarea>
+        </div>
+        <div class="fm-modalFoot">
+          <button class="fm-miniBtn" id="fmPasteClear" type="button">Limpiar</button>
+          <button class="fm-miniBtn primary" id="fmPasteApply" type="button">Aplicar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(back);
+
+    const close = () => back.remove();
+    $('#fmPasteClose', back)?.addEventListener('click', close);
+    back.addEventListener('click', (e)=>{ if (e.target === back) close(); });
+
+    $('#fmPasteClear', back)?.addEventListener('click', ()=> { $('#fmPasteTa', back).value=''; });
+
+    $('#fmPasteApply', back)?.addEventListener('click', ()=> {
+      const txt = $('#fmPasteTa', back).value || '';
+      close();
+      onApply?.(txt);
+    });
+
+    setTimeout(()=> $('#fmPasteTa', back)?.focus(), 60);
+  }
+
+  function parsePasteLines(txt){
+    const out = [];
+    const lines = (txt||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    for (const line of lines){
+      // x2 @5,99
+      const m = line.match(/^(.*?)(?:\s*x\s*|\s+)(\d+(?:[.,]\d+)?)(?:\s*@\s*|\s+)(\d+(?:[.,]\d+)?)$/i);
+      if (m){
+        out.push({ producto:m[1].trim(), cantidad:m[2], precio:m[3], modo:'kg' });
+        continue;
+      }
+      // TAB o múltiples espacios
+      const parts = line.split(/\t+/).length>1 ? line.split(/\t+/) : line.split(/\s{2,}|\s+\|\s+/);
+      if (parts.length >= 3){
+        out.push({ producto:parts[0].trim(), cantidad:parts[1].trim(), precio:parts[2].trim(), modo:'kg' });
+        continue;
+      }
+      // fallback: último token precio, token anterior cantidad
+      const tokens = line.split(/\s+/);
+      if (tokens.length >= 3){
+        const precio = tokens[tokens.length-1];
+        const cantidad = tokens[tokens.length-2];
+        const producto = tokens.slice(0,-2).join(' ');
+        out.push({ producto, cantidad, precio, modo:'kg' });
+      }
+    }
+    return out;
+  }
+
+  function applyPasteToGrid(items){
+    if (!items.length) { toast('Pegado', 'Nada que aplicar'); return; }
+
+    // Asegurar filas suficientes
+    const need = items.length;
+    let rows = getRows();
+    while (rows.length < need){
+      if (!addEmptyLine()) break;
+      rows = getRows();
+    }
+    rows = getRows();
+
+    for (let i=0; i<items.length; i++){
+      const row = rows[i] || rows[rows.length-1];
+      if (!row) break;
+      const it = items[i];
+      fillRowData(row, {
+        producto: it.producto,
+        modo: it.modo || 'kg',
+        cantidad: it.cantidad,
+        precio: it.precio
+      });
+    }
+    toast('Pegado', `${items.length} línea(s) aplicada(s)`);
+  }
+
+  function injectPasteButton(){
+    const set = getSet();
+    if (!set.enablePasteMass) return;
+    if ($('#fmBtnPaste')) return;
+
+    const btnAdd = findAddLineButton();
+    if (!btnAdd) return;
+
+    const b = document.createElement('button');
+    b.id = 'fmBtnPaste';
+    b.type = 'button';
+    b.className = 'fm-miniBtn';
+    b.textContent = 'Pegar líneas';
+    b.addEventListener('click', () => {
+      openPasteModal((txt)=>{
+        const items = parsePasteLines(txt);
+        applyPasteToGrid(items);
+      });
+    });
+
+    btnAdd.parentElement?.appendChild(b);
+  }
+
+  /* =========================================================
+     4) Duplicar línea (inyecta botón)
+  ========================================================= */
+  function injectDuplicateButtons(){
+    const set = getSet();
+    if (!set.enableDuplicateLine) return;
+
+    getRows().forEach(row => {
+      if (row.querySelector('.fmDup')) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fm-miniBtn fmDup';
+      btn.textContent = 'Duplicar';
+      btn.addEventListener('click', () => {
+        const data = readRowData(row);
+        const ok = addEmptyLine();
+        setTimeout(() => {
+          const rows = getRows();
+          const target = rows[rows.length-1];
+          if (target) fillRowData(target, data);
+          toast('Línea', 'Duplicada');
+        }, ok ? 80 : 0);
+      });
+
+      // colocar al final de la fila (sin conocer tu grid exacto)
+      row.appendChild(btn);
+    });
+  }
+
+  /* =========================================================
+     5) Validación visual PRO (sin bloquear)
+  ========================================================= */
+  function validateRow(row){
+    const f = rowFields(row);
+    const prod = (f.prod?.value||'').trim();
+    if (!prod) { row.classList.remove('fm-bad'); row.querySelector('.fm-rowWarn')?.remove(); return; }
+
+    const bruto = parseNumES(f.bruto?.value);
+    const tara  = parseNumES(f.taraKg?.value);
+    const neto  = parseNumES(f.netoKg?.value);
+    const precio= parseNumES(f.precio?.value);
+
+    const warn = [];
+    if (precio === null) warn.push('Precio vacío');
+    if (bruto !== null && tara !== null && tara > bruto) warn.push('Tara > Bruto');
+    if (bruto !== null && neto !== null && neto > bruto) warn.push('Neto > Bruto');
+
+    row.querySelector('.fm-rowWarn')?.remove();
+
+    if (warn.length){
+      row.classList.add('fm-bad');
+      const w = document.createElement('div');
+      w.className = 'fm-rowWarn';
+      w.textContent = '⚠ ' + warn.join(' · ');
+      row.appendChild(w);
+    } else {
+      row.classList.remove('fm-bad');
+    }
+  }
+
+  const validateAll = debounce(() => getRows().forEach(validateRow), 120);
+
+  /* =========================================================
+     6) Auto-crear producto (si existe S.productos)
+  ========================================================= */
+  function productExistsByName(name){
+    const S = window.S;
+    if (!S || !Array.isArray(S.productos)) return null;
+    const n = (name||'').trim().toUpperCase();
+    if (!n) return null;
+    return S.productos.find(p => (p.nombre||'').trim().toUpperCase() === n) || null;
+  }
+
+  function autoCreateProductIfNeeded(name){
+    const set = getSet();
+    if (!set.autoCreateProduct) return;
+    const S = window.S;
+    if (!S || !Array.isArray(S.productos)) return;
+
+    const n = (name||'').trim();
+    if (!n) return;
+
+    if (productExistsByName(n)) return;
+
+    const p = {
+      id: uid(),
+      nombre: n,
+      modo: 'kg',
+      kgCaja: '',
+      precioKg: '',
+      precioCaja: '',
+      precioUd: '',
+      coste: '',
+      origen: '',
+      taraId: ''
+    };
+
+    S.productos.push(p);
+
+    // intentar guardar usando tu sistema si existe
+    if (typeof window.saveProductos === 'function') window.saveProductos();
+    if (typeof window.save === 'function' && window.K_PRODUCTOS) window.save(window.K_PRODUCTOS, S.productos);
+
+    toast('Producto', `Creado: ${n}`);
+  }
+
+  /* =========================================================
+     7) Serie anual FA-YYYY-000123 (sin romper el FA-YYYYMMDDHHMM)
+     - Solo se aplica si el nº factura está vacío al crear nueva
+  ========================================================= */
+  const KCNT = 'fm_annual_counter_v2'; // { "2026": 123 }
+  const getCnt = () => { try { return JSON.parse(localStorage.getItem(KCNT)||'{}')||{}; } catch { return {}; } };
+  const setCnt = (o) => { try { localStorage.setItem(KCNT, JSON.stringify(o)); } catch {} };
+
+  function nextAnnualNumber(){
+    const set = getSet();
+    if (!set.annualSeries) return null;
+
+    const y = new Date().getFullYear();
+    const cnt = getCnt();
+    const v = (cnt[y]||0) + 1;
+    cnt[y] = v;
+    setCnt(cnt);
+
+    const pad = String(v).padStart(set.annualSeriesPad || 6, '0');
+    return `${set.annualSeriesPrefix || 'FA'}-${y}-${pad}`;
+  }
+
+  function hookNewInvoiceSeries(){
+    const set = getSet();
+    if (!set.annualSeries) return;
+
+    const btn = $('#btnNuevaFactura') || $('#nuevaFactura') || $$('button').find(b => /nueva factura/i.test(b.textContent||''));
+    if (!btn) return;
+
+    btn.addEventListener('click', () => {
+      setTimeout(() => {
+        const el = $('#facNumero');
+        if (!el) return;
+        if ((el.value||'').trim()) return; // si tu core ya lo puso, no tocamos
+        const no = nextAnnualNumber();
+        if (no) { el.value = no; el.dispatchEvent(new Event('input',{bubbles:true})); }
+      }, 60);
+    }, true);
+  }
+
+  /* =========================================================
+     8) Export CSV (Contabilidad/Ventas)
+  ========================================================= */
+  function toCsv(rows){
+    const esc = (x) => {
+      const s = (x ?? '').toString().replaceAll('"','""');
+      return `"${s}"`;
+    };
+    return rows.map(r => r.map(esc).join(',')).join('\n');
+  }
+
+  function downloadText(name, content, type='text/csv'){
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=> URL.revokeObjectURL(url), 1500);
+  }
+
+  function exportVisibleTableCsv(filename){
+    // intenta tabla dentro del tab visible contabilidad/ventas
+    const visible = (el) => el && el.offsetParent !== null;
+
+    const tabs = [
+      $('#tabContabilidad'), $('[data-tabpage="tabContabilidad"]'), $('#contabilidad'),
+      $('#tabVentas'), $('[data-tabpage="tabVentas"]'), $('#ventas')
+    ].filter(Boolean);
+
+    let scope = tabs.find(visible) || document.body;
+
+    const table = $$('table', scope).find(visible) || $$('table', document.body).find(visible);
+    if (!table) { toast('CSV', 'No hay tabla visible'); return; }
+
+    const rows = [];
+    const trs = $$('tr', table);
+    trs.forEach(tr => {
+      const cells = $$('th,td', tr).map(td => (td.innerText||td.textContent||'').trim());
+      if (cells.length) rows.push(cells);
+    });
+
+    if (!rows.length) { toast('CSV', 'Tabla vacía'); return; }
+
+    downloadText(filename, toCsv(rows));
+    toast('CSV', 'Exportado');
+  }
+
+  function injectCsvButtons(){
+    const set = getSet();
+    if (!set.enableCsvExport) return;
+    if ($('#fmCsvBtn')) return;
+
+    // buscar un área de acciones en contabilidad/ventas
+    const host =
+      $('#tabContabilidad') || $('[data-tabpage="tabContabilidad"]') || $('#contabilidad') ||
+      $('#tabVentas') || $('[data-tabpage="tabVentas"]') || $('#ventas') ||
+      document.body;
+
+    const b = document.createElement('button');
+    b.id = 'fmCsvBtn';
+    b.type = 'button';
+    b.className = 'fm-miniBtn';
+    b.textContent = 'Export CSV';
+    b.addEventListener('click', () => {
+      const d = new Date();
+      const fn = `factu_miral_export_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.csv`;
+      exportVisibleTableCsv(fn);
+    });
+
+    host.appendChild(b);
+  }
+
+  /* =========================================================
+     9) Factura rápida por cliente (última)
+  ========================================================= */
+  function getClientIdOrName(){
+    // si tienes select cliente
+    const sel = $('#cliSelect') || $('#clienteSelect') || $('select[name="cliente"]');
+    if (sel && sel.value) return sel.value;
+
+    const name = ($('#cliNombre')?.value || '').trim();
+    return name || null;
+  }
+
+  function findLastInvoiceForClient(key){
+    const S = window.S;
+    if (!S || !Array.isArray(S.facturas)) return null;
+
+    const k = (key||'').toString().trim();
+    if (!k) return null;
+
+    // por id exacto o por nombre
+    const list = S.facturas.slice().sort((a,b)=> (b.ts||0)-(a.ts||0));
+    return list.find(f => f.clienteId === k || (f.clienteNombre||'').trim() === k) || null;
+  }
+
+  function applyInvoiceToCurrent(f){
+    if (!f) return false;
+
+    // Si tu core tiene función de abrir
+    if (typeof window.openFactura === 'function' && f.id) {
+      window.openFactura(f.id);
+      return true;
+    }
+
+    // Fallback: rellenar desde objeto (si tiene líneas)
+    const num = $('#facNumero'); if (num && f.numero) num.value = f.numero;
+    const fecha = $('#facFecha'); if (fecha && f.fecha) fecha.value = f.fecha;
+
+    if ($('#facTags') && f.tags) $('#facTags').value = f.tags;
+    if ($('#facObservaciones') && f.observaciones) $('#facObservaciones').value = f.observaciones;
+
+    if ($('#cliNombre') && f.clienteNombre) $('#cliNombre').value = f.clienteNombre;
+    if ($('#cliNif') && f.clienteNif) $('#cliNif').value = f.clienteNif;
+    if ($('#cliDir') && f.clienteDir) $('#cliDir').value = f.clienteDir;
+
+    const rows = getRows();
+    const lines = f.lineas || f.items || [];
+    for (let i=0;i<Math.min(rows.length, lines.length);i++){
+      const it = lines[i];
+      fillRowData(rows[i], {
+        producto: it.producto || it.nombre || '',
+        modo: it.modo || 'kg',
+        cantidad: it.cantidad ?? '',
+        bruto: it.bruto ?? '',
+        taraKg: it.taraKg ?? '',
+        neto: it.neto ?? '',
+        precio: it.precio ?? '',
+        origen: it.origen ?? ''
+      });
+    }
+    toast('Factura rápida', 'Cargada');
+    return true;
+  }
+
+  function injectQuickInvoiceButton(){
+    const set = getSet();
+    if (!set.enableQuickInvoice) return;
+    if ($('#fmQuickInvoice')) return;
+
+    const host = $('#cliNombre')?.closest('.card,.panel,.box,.section') || $('#cliNombre')?.parentElement;
+    if (!host) return;
+
+    const b = document.createElement('button');
+    b.id = 'fmQuickInvoice';
+    b.type = 'button';
+    b.className = 'fm-miniBtn';
+    b.textContent = 'Factura rápida';
+    b.addEventListener('click', () => {
+      const key = getClientIdOrName();
+      const f = findLastInvoiceForClient(key);
+      if (!f) { toast('Factura rápida', 'No hay factura previa para ese cliente'); return; }
+      applyInvoiceToCurrent(f);
+    });
+
+    host.appendChild(b);
+  }
+
+  /* =========================================================
+     10) PDF Offline (IndexedDB) capturando blob PDF
+     - Captura PDF cuando el core hace URL.createObjectURL(blobPDF)
+     - Botón: Guardar PDF offline
+     - Botón: Ver último PDF offline
+  ========================================================= */
+  const DBN = 'factu_miral_pdf_db_v1';
+  const STORE = 'pdfs';
+
+  function openDb(){
+    return new Promise((res, rej) => {
+      const req = indexedDB.open(DBN, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath:'id' });
+      };
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+  }
+
+  async function savePdfOffline(id, blob){
+    const db = await openDb();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put({ id, ts: now(), blob });
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+
+  async function loadPdfOffline(id){
+    const db = await openDb();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const rq = tx.objectStore(STORE).get(id);
+      rq.onsuccess = () => res(rq.result || null);
+      rq.onerror = () => rej(rq.error);
+    });
+  }
+
+  // Captura automática de último blob PDF creado
+  let lastPdf = { id:null, blob:null };
+  const _origCreate = URL.createObjectURL.bind(URL);
+  URL.createObjectURL = function(obj){
+    try{
+      if (obj && obj.type && String(obj.type).includes('pdf')) {
+        const id = ($('#facNumero')?.value || '').trim() || ('PDF_'+Date.now());
+        lastPdf = { id, blob: obj };
+        window.__fmLastPdf = lastPdf;
+      }
+    } catch {}
+    return _origCreate(obj);
+  };
+
+  function injectPdfOfflineButtons(){
+    const set = getSet();
+    if (!set.enablePdfOffline) return;
+    if ($('#fmPdfSave')) return;
+
+    const host = $('#btnPdf')?.parentElement || $('#btnGuardarFactura')?.parentElement || document.body;
+
+    const b1 = document.createElement('button');
+    b1.id = 'fmPdfSave';
+    b1.type = 'button';
+    b1.className = 'fm-miniBtn';
+    b1.textContent = 'Guardar PDF offline';
+    b1.addEventListener('click', async () => {
+      const id = ($('#facNumero')?.value || '').trim() || (lastPdf.id || '');
+      const blob = lastPdf.blob;
+      if (!blob) { toast('PDF offline', 'Genera PDF primero'); return; }
+      try{
+        await savePdfOffline(id, blob);
+        toast('PDF offline', `Guardado: ${id}`);
+      } catch {
+        toast('PDF offline', 'Error guardando');
+      }
+    });
+
+    const b2 = document.createElement('button');
+    b2.id = 'fmPdfOpen';
+    b2.type = 'button';
+    b2.className = 'fm-miniBtn';
+    b2.textContent = 'Ver PDF offline';
+    b2.addEventListener('click', async () => {
+      const id = ($('#facNumero')?.value || '').trim() || (lastPdf.id || '');
+      if (!id) { toast('PDF offline', 'Sin nº factura'); return; }
+      try{
+        const rec = await loadPdfOffline(id);
+        if (!rec?.blob) { toast('PDF offline', 'No existe guardado'); return; }
+        const url = _origCreate(rec.blob);
+        // abre visor del navegador (no rompe tu visor interno)
+        window.open(url, '_blank');
+      } catch {
+        toast('PDF offline', 'Error abriendo');
+      }
+    });
+
+    host.appendChild(b1);
+    host.appendChild(b2);
+  }
+
+  /* =========================================================
+     Ajustes: UI de toggles (inyectado)
+  ========================================================= */
+  function injectPatchSettingsUI(){
+    if ($('#fmPatchSettings')) return;
+
+    const tab = $('#tabAjustes') || $('[data-tabpage="tabAjustes"]') || $('#ajustes') || document.body;
+    if (!tab) return;
+
+    const set = getSet();
+
+    const box = document.createElement('div');
+    box.id = 'fmPatchSettings';
+    box.className = 'card';
+    box.style.border = '1px solid rgba(0,0,0,.18)';
+    box.style.borderRadius = '16px';
+    box.style.padding = '12px';
+    box.style.marginTop = '10px';
+    box.innerHTML = `
+      <div style="font-weight:900; margin-bottom:8px;">Mejoras PRO (Patch)</div>
+      <div style="display:grid; gap:8px;">
+        ${toggleRow('autoCreateProduct', 'Auto-crear producto al escribir')}
+        ${toggleRow('annualSeries', 'Serie anual FA-YYYY-000123')}
+        ${toggleRow('enablePriceChips', 'Chips últimos precios en línea')}
+        ${toggleRow('enablePasteMass', 'Pegado masivo a líneas')}
+        ${toggleRow('enableUndoDelete', 'Deshacer borrar línea')}
+        ${toggleRow('enableDuplicateLine', 'Duplicar línea')}
+        ${toggleRow('enableCsvExport', 'Export CSV contabilidad/ventas')}
+        ${toggleRow('enableQuickInvoice', 'Factura rápida (última por cliente)')}
+        ${toggleRow('enablePdfOffline', 'Guardar PDF offline (IndexedDB)')}
+      </div>
+      <div style="margin-top:10px; font-size:12px; opacity:.75; font-weight:800;">
+        Nota: Son parches seguros. Si un botón/ID no existe, el parche no actúa.
+      </div>
+    `;
+
+    function toggleRow(key, label){
+      const on = !!set[key];
+      return `
+        <label style="display:flex; gap:10px; align-items:center; justify-content:space-between; border:1px solid rgba(0,0,0,.10); border-radius:12px; padding:8px 10px;">
+          <span style="font-weight:800;">${escapeHtml(label)}</span>
+          <input type="checkbox" data-fm-toggle="${escapeHtml(key)}" ${on?'checked':''} />
+        </label>
+      `;
+    }
+
+    tab.appendChild(box);
+
+    $$('input[data-fm-toggle]', box).forEach(chk => {
+      chk.addEventListener('change', () => {
+        const k = chk.getAttribute('data-fm-toggle');
+        saveSet({ [k]: chk.checked });
+        toast('Ajustes', 'Guardado');
+      });
+    });
+  }
+
+  /* =========================================================
+     Hooks: auto-create product + chips + validation
+  ========================================================= */
+  function hookProductBlurAutoCreate(){
+    document.addEventListener('blur', (e) => {
+      const el = e.target;
+      if (!el) return;
+      // producto input suele ser input--prod
+      const isProd = el.classList?.contains('input--prod') || (el.dataset?.field||'')==='producto';
+      if (!isProd) return;
+      autoCreateProductIfNeeded(el.value);
+      // chips tras elegir producto
+      const row = el.closest('.gridRow,.row');
+      if (row) renderChips(row);
+    }, true);
+  }
+
+  function hookValidationLive(){
+    document.addEventListener('input', (e) => {
+      const row = e.target?.closest?.('.gridRow,.row');
+      if (!row) return;
+      validateAll();
+      // refrescar chips si cambia producto/precio
+      if (e.target && (e.target.classList?.contains('input--prod') || isPrecioInput(e.target))) {
+        renderChips(row);
+      }
+    }, true);
+  }
+
+  /* =========================================================
+     Sticky totales móvil (SAFE)
+  ========================================================= */
+  function makeTotalsSticky(){
+    const t = $('#tTotal') || $('[data-total="total"]');
+    if (!t) return;
+    const card = t.closest('.card,.panel,.box,.paper,.section') || t.parentElement;
+    if (card) card.classList.add('fm-stickyTotals');
+  }
+
+  /* =========================================================
+     Mutation observer para inyecciones (grid dinámico)
+  ========================================================= */
+  function observeGrid(){
+    const g = getGrid();
+    if (!g || g.__fmObs) return;
+    g.__fmObs = true;
+    new MutationObserver(() => {
+      injectDuplicateButtons();
+      getRows().forEach(r => { renderChips(r); validateRow(r); });
+    }).observe(g, { childList:true, subtree:true });
+  }
+
+  /* =========================================================
+     Init
+  ========================================================= */
+  function init(){
+    hookUndoDelete();
+    hookSavePriceHist();
+    hookNewInvoiceSeries();
+
+    injectPatchSettingsUI();
+    injectPasteButton();
+    injectCsvButtons();
+    injectQuickInvoiceButton();
+    injectPdfOfflineButtons();
+
+    injectDuplicateButtons();
+    hookProductBlurAutoCreate();
+    hookValidationLive();
+
+    makeTotalsSticky();
+    observeGrid();
+
+    // Render chips/validate initial
+    setTimeout(() => {
+      getRows().forEach(r => { renderChips(r); validateRow(r); });
+    }, 250);
+
+    toast('Patch PRO', 'Activado (v2.0)');
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once:true });
+  else init();
+
+})();
 
