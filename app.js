@@ -3700,8 +3700,12 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
       // subir a cloud (source of truth = merged)
       await db.ref(root).set(merged);
 
-      toast('Cloud', 'Sync OK (recargando)');
-      updateCloudDiag();
+      toast('Cloud', 'Sync OK (manual)');
+updateCloudDiag();
+
+// ✅ NO recargar automático
+window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { reason: 'sync-ok' } }));
+
 
       // recarga para que el core (PARTE 3) re-levante estado
       setTimeout(()=> location.reload(), 500);
