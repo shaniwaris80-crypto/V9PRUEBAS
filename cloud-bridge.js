@@ -37,7 +37,8 @@
 
     b.querySelector('#fmCloudApply').addEventListener('click', () => {
       // SOLO manual
-      location.reload();
+      location(window.__fmManualReload__ ? window.__fmManualReload__() : location.reload());
+reload();
     });
 
     b.querySelector('#fmCloudDismiss').addEventListener('click', () => b.remove());
