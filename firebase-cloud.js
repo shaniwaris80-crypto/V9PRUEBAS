@@ -1,10 +1,9 @@
 /* =========================================================
-   FACTU MIRAL — firebase-cloud.js (AUTO SYNC)
-   - Offline primero (LocalStorage)
-   - Cloud opcional (Firebase Auth + Realtime Database)
-   - AUTO-PUSH: cuando se guarda cualquier cosa local
-   - AUTO-PULL: cambios en tiempo real desde otros dispositivos
-   - Sin sync manual (solo login/logout + estado)
+   FACTU MIRAL — firebase-cloud.js (AUTO CLOUD SYNC)
+   - No modifica tu app: solo observa LocalStorage y sincroniza.
+   - Auto-push: cada setItem/save sube lo cambiado (por updatedAt).
+   - Auto-pull: realtime listeners bajan cambios de otros dispositivos.
+   - Anti-wipe: NUNCA sube arrays vacíos.
 ========================================================= */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
@@ -17,8 +16,8 @@ import {
 import {
   getDatabase,
   ref,
-  get,
   set,
+  get,
   onChildAdded,
   onChildChanged,
   onValue,
@@ -29,7 +28,7 @@ import {
   'use strict';
 
   /* =========================
-     CONFIG — EDITA SOLO ESTO
+     CONFIG (tu proyecto)
   ========================= */
   const firebaseConfig = {
     apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
@@ -39,514 +38,542 @@ import {
     messagingSenderId: "576821038417",
     appId: "1:576821038417:web:aba329f36563134bb01770",
     measurementId: "G-HJVL8ET49L",
-
     // ✅ SOLO RAÍZ, SIN "/" final, SIN rutas
     databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
   };
 
   /* =========================
-     HELPERS
+     Helpers
   ========================= */
   const $ = (s, r=document) => r.querySelector(s);
-  const nowMs = () => Date.now();
+  const now = () => Date.now();
 
-  function safeJsonParse(s, fallback){
-    try { return JSON.parse(s); } catch { return fallback; }
-  }
-  function loadLocal(key, fallback){
-    const raw = localStorage.getItem(key);
-    if (raw == null) return fallback;
-    return safeJsonParse(raw, fallback);
-  }
-  function saveLocal(key, val){
-    localStorage.setItem(key, JSON.stringify(val));
-  }
-  function updAt(obj){ return (obj && typeof obj.updatedAt === "number") ? obj.updatedAt : 0; }
-
-  function toMap(arr, idKey="id"){
-    const m = {};
-    (Array.isArray(arr) ? arr : []).forEach(o=>{
-      const id = o?.[idKey];
-      if (id) m[id] = o;
-    });
-    return m;
-  }
-  function toArray(map){
-    return Object.values(map || {});
-  }
-  function mergeOneIntoArrayById(arr, id, obj){
-    const out = Array.isArray(arr) ? arr.slice() : [];
-    const idx = out.findIndex(x => x && x.id === id);
-    if (idx >= 0) out[idx] = obj;
-    else out.push(obj);
-    return out;
-  }
+  function safeParse(s, fb){ try { return JSON.parse(s); } catch { return fb; } }
+  function loadLS(k, fb){ const r = localStorage.getItem(k); return r==null ? fb : safeParse(r, fb); }
+  function saveLS(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 
   function cleanDbRoot(url){
     const raw = String(url || '').trim();
     if (!raw) return '';
     const noTrail = raw.replace(/\/+$/,'');
-    const root = noTrail.replace(/^(https?:\/\/[^\/]+).*$/,'$1');
-    return root;
+    return noTrail.replace(/^(https?:\/\/[^\/]+).*$/,'$1');
   }
+
+  function updAt(o){ return (o && typeof o.updatedAt === 'number') ? o.updatedAt : 0; }
 
   function friendlyError(err){
     const msg = String(err?.code || err?.message || err || 'Error');
     if (msg.includes('auth/invalid-credential') || msg.includes('auth/wrong-password')) return '❌ Email/contraseña incorrectos.';
     if (msg.includes('auth/user-not-found')) return '❌ Usuario no existe (Firebase → Authentication → Users).';
-    if (msg.includes('auth/unauthorized-domain')) return '❌ Dominio no autorizado (Firebase Auth → Settings → Authorized domains).';
-    if (msg.toLowerCase().includes('permission_denied')) return '❌ Permission denied (Rules).';
+    if (msg.includes('auth/unauthorized-domain')) return '❌ Dominio no autorizado (Auth → Settings → Authorized domains).';
+    if (msg.toLowerCase().includes('permission_denied')) return '❌ Permission denied (Realtime DB Rules).';
     if (msg.toLowerCase().includes('database url')) return '❌ databaseURL incorrecto (debe ser la raíz del Realtime DB).';
     return `❌ ${msg}`;
   }
 
   /* =========================
-     LOCALSTORAGE KEYS
-     (usa los tuyos si existen)
+     Firebase init (SAFE)
   ========================= */
-  const K = {
-    clientes:  window.K_CLIENTES   || "factumiral_clientes",
-    productos: window.K_PRODUCTOS  || "factumiral_productos",
-    taras:     window.K_TARAS      || "factumiral_taras",
-    facturas:  window.K_FACTURAS   || "factumiral_facturas",
-    ajustes:   window.K_AJUSTES    || "factumiral_ajustes",
-    ventas:    window.K_VENTAS     || "factumiral_ventas",
-    contab:    window.K_CONTAB     || "factumiral_contabilidad"
-  };
+  let app=null, auth=null, db=null;
+  let enabled=false, initError='';
 
-  const KEY_TO_SECTION = new Map([
-    [K.clientes,  { section:"clientes",  type:"array" }],
-    [K.productos, { section:"productos", type:"array" }],
-    [K.taras,     { section:"taras",     type:"array" }],
-    [K.facturas,  { section:"facturas",  type:"array" }],
-    [K.ventas,    { section:"ventas",    type:"arrayVentas" }],
-    [K.contab,    { section:"contabilidad", type:"arrayById" }],
-    [K.ajustes,   { section:"ajustes",   type:"object" }]
-  ]);
-
-  /* =========================
-     INIT FIREBASE (SAFE)
-  ========================= */
-  let app = null;
-  let auth = null;
-  let db = null;
-  let cloudEnabled = false;
-  let cloudInitError = '';
-
-  try {
+  try{
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-
     const root = cleanDbRoot(firebaseConfig.databaseURL);
-    if (!root) {
-      cloudEnabled = false;
-      cloudInitError = 'Falta databaseURL (Realtime Database URL).';
-    } else {
-      db = getDatabase(app, root);
-      cloudEnabled = true;
-    }
-  } catch (e) {
-    cloudEnabled = false;
-    cloudInitError = friendlyError(e);
+    if (!root) throw new Error('Falta databaseURL');
+    db = getDatabase(app, root);
+    enabled = true;
+  }catch(e){
+    enabled = false;
+    initError = friendlyError(e);
   }
 
+  const user = () => auth?.currentUser || null;
+
   /* =========================
-     PATHS CLOUD
+     Cloud paths
   ========================= */
   const base = (uid) => `factumiral/${uid}`;
   const pSection = (uid, section) => `${base(uid)}/${section}`;
   const pItem = (uid, section, id) => `${base(uid)}/${section}/${id}`;
 
-  /* =========================================================
-     AUTO SYNC CORE
-  ========================================================= */
-  // Evitar bucles:
-  let applyingRemote = false;   // escribo local desde cloud
-  let internalWrite = false;    // escribo local desde este módulo
+  /* =========================
+     KEY MAP (auto-detect)
+     - No dependemos de window.K_...
+     - Detecta tus keys reales en LocalStorage
+  ========================= */
+  const MAP_KEY = 'fm_cloud_keymap_v1';
 
-  // Debounce por key (cuando guardas varias veces seguidas)
-  const pushTimers = new Map();          // key -> timeout id
-  const pendingKeys = new Set();         // keys pendientes si no hay login
-  const LS_PENDING = 'fm_cloud_pending_keys';
-
-  // Recordatorio de lo último subido por ID (para no reenviar todo)
-  const pushedAt = {
-    clientes: new Map(),
-    productos: new Map(),
-    taras: new Map(),
-    facturas: new Map(),
-    ventas: new Map(),
-    contabilidad: new Map(),
-    ajustes: 0
+  const DEFAULT_MAP = {
+    clientes: null,
+    productos: null,
+    taras: null,
+    facturas: null,
+    ventas: null,
+    contabilidad: null,
+    ajustes: null
   };
 
-  let listenersActive = false;
-  const activeRefs = []; // para limpiar listeners
+  function scoreKeyForSection(parsed, section){
+    // parsed: array|object
+    // devolvemos score (0-100)
+    let score = 0;
 
-  function persistPending(){
-    try { localStorage.setItem(LS_PENDING, JSON.stringify(Array.from(pendingKeys))); } catch {}
-  }
-  function loadPending(){
-    const arr = loadLocal(LS_PENDING, []);
-    if (Array.isArray(arr)) arr.forEach(k => pendingKeys.add(k));
-  }
-  loadPending();
+    if (section === 'ajustes'){
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        // suele tener pins/iva/transporte/qr etc
+        const s = JSON.stringify(parsed).toLowerCase();
+        if (s.includes('iva')) score += 10;
+        if (s.includes('transporte')) score += 10;
+        if (s.includes('pin')) score += 10;
+        if (s.includes('qr')) score += 10;
+        score += 5;
+      }
+      return score;
+    }
 
-  function cloudUser(){
-    return auth?.currentUser || null;
+    if (!Array.isArray(parsed)) return 0;
+    if (parsed.length === 0) return 0;
+
+    const sample = parsed.slice(0, Math.min(8, parsed.length));
+    const keys = new Set();
+    sample.forEach(o => {
+      if (o && typeof o === 'object') Object.keys(o).forEach(k => keys.add(k.toLowerCase()));
+    });
+
+    const has = (k) => keys.has(k);
+
+    // base: arrays de objetos con id
+    if (sample.some(o => o && typeof o === 'object' && ('id' in o))) score += 10;
+
+    if (section === 'clientes'){
+      if (has('nif') || has('cif')) score += 20;
+      if (has('dir') || has('direccion')) score += 15;
+      if (has('tel') || has('telefono')) score += 10;
+      if (has('email')) score += 10;
+      if (has('nombre') || has('alias')) score += 10;
+    }
+
+    if (section === 'productos'){
+      if (has('modo')) score += 15;
+      if (has('kgporcaja') || has('kgcaja') || has('kg_caja')) score += 15;
+      if (has('precio') || has('preciokg') || has('preciocaja') || has('precioud')) score += 20;
+      if (has('origen')) score += 8;
+      if (has('coste')) score += 8;
+    }
+
+    if (section === 'taras'){
+      if (has('tara') || has('peso') || has('pesotara')) score += 25;
+      if (has('envase') || has('nombre')) score += 10;
+      if (has('notas')) score += 5;
+    }
+
+    if (section === 'facturas'){
+      if (has('numero') || has('nfactura') || has('num')) score += 20;
+      if (has('fecha')) score += 15;
+      if (has('lineas') || has('items') || has('productos')) score += 20;
+      if (has('total') || has('subtotal')) score += 15;
+      if (has('cliente') || has('clienteid')) score += 10;
+      if (has('iva')) score += 5;
+    }
+
+    if (section === 'ventas'){
+      if (has('tienda') || has('store') || has('sede')) score += 20;
+      if (has('efectivo')) score += 15;
+      if (has('tarjeta')) score += 15;
+      if (has('total')) score += 10;
+      if (has('fecha') || has('date')) score += 10;
+    }
+
+    if (section === 'contabilidad'){
+      if (has('kpi') || has('margen') || has('iva')) score += 15;
+      if (has('desde') || has('hasta') || has('mes') || has('trimestre')) score += 10;
+      if (has('total') || has('ventas')) score += 10;
+    }
+
+    return score;
   }
 
-  function canSync(){
-    return cloudEnabled && !!cloudUser();
+  function detectKeyMap(){
+    // si usuario define override, lo usamos
+    if (window.FM_CLOUD_KEYMAP && typeof window.FM_CLOUD_KEYMAP === 'object') {
+      return { ...DEFAULT_MAP, ...window.FM_CLOUD_KEYMAP };
+    }
+
+    const cached = loadLS(MAP_KEY, null);
+    if (cached && typeof cached === 'object') return { ...DEFAULT_MAP, ...cached };
+
+    const allKeys = Object.keys(localStorage);
+    const candidates = allKeys.map(k => {
+      const raw = localStorage.getItem(k) || '';
+      if (raw.length < 10) return null;
+      const parsed = safeParse(raw, null);
+      if (!parsed) return null;
+      return { k, parsed, chars: raw.length };
+    }).filter(Boolean);
+
+    const result = { ...DEFAULT_MAP };
+
+    const sections = ['clientes','productos','taras','facturas','ventas','contabilidad','ajustes'];
+
+    for (const sec of sections){
+      let best = { key:null, score:0, chars:0 };
+      for (const c of candidates){
+        const s = scoreKeyForSection(c.parsed, sec);
+        if (s > best.score || (s === best.score && c.chars > best.chars)){
+          best = { key:c.k, score:s, chars:c.chars };
+        }
+      }
+      // umbral mínimo (para no elegir cualquier cosa)
+      const min = (sec==='ajustes') ? 10 : 25;
+      result[sec] = (best.score >= min) ? best.key : null;
+    }
+
+    saveLS(MAP_KEY, result);
+    return result;
   }
 
-  function schedulePushByKey(key){
-    if (!KEY_TO_SECTION.has(key)) return;
+  let KEYMAP = detectKeyMap();
+
+  /* =========================
+     Last pushed cache (persistente)
+  ========================= */
+  const LP_KEY = 'fm_cloud_lastpushed_v1';
+  const lastPushed = loadLS(LP_KEY, {
+    clientes:{}, productos:{}, taras:{}, facturas:{}, ventas:{}, contabilidad:{}, ajustes:0
+  });
+
+  function saveLastPushed(){ saveLS(LP_KEY, lastPushed); }
+
+  /* =========================
+     Anti-loop flags
+  ========================= */
+  let applyingRemote = false;
+  let internalWrite = false;
+
+  /* =========================
+     Queue pending writes (offline/login)
+  ========================= */
+  const PENDING_KEY = 'fm_cloud_pending_keys_v1';
+  const pending = new Set(loadLS(PENDING_KEY, []));
+  function savePending(){ saveLS(PENDING_KEY, Array.from(pending)); }
+
+  /* =========================
+     Auto-push core
+  ========================= */
+  const timers = new Map(); // lsKey -> timeout
+
+  function schedulePush(lsKey){
+    if (!lsKey) return;
     if (applyingRemote || internalWrite) return;
 
-    // Debounce
-    if (pushTimers.has(key)) clearTimeout(pushTimers.get(key));
-    pushTimers.set(key, setTimeout(() => {
-      pushTimers.delete(key);
-      autoPushKey(key).catch(()=>{});
-    }, 350));
+    // si la key no es de las nuestras, ignorar
+    const watched = Object.values(KEYMAP).includes(lsKey);
+    if (!watched) return;
+
+    if (timers.has(lsKey)) clearTimeout(timers.get(lsKey));
+    timers.set(lsKey, setTimeout(() => {
+      timers.delete(lsKey);
+      autoPushByLsKey(lsKey).catch(()=>{});
+    }, 250));
   }
 
-  async function autoPushKey(key){
-    if (!KEY_TO_SECTION.has(key)) return;
-    if (!cloudEnabled) return;
+  function getSectionByLsKey(lsKey){
+    for (const [sec,k] of Object.entries(KEYMAP)){
+      if (k === lsKey) return sec;
+    }
+    return null;
+  }
 
-    if (!cloudUser()){
-      pendingKeys.add(key);
-      persistPending();
+  function ensureUpdatedAt(arr, lsKey, section){
+    // añade updatedAt si falta (sin disparar loops)
+    let changed = false;
+    const out = arr.map(o=>{
+      if (!o || typeof o !== 'object') return o;
+      if (!o.id) return o;
+      if (typeof o.updatedAt === 'number') return o;
+      changed = true;
+      return { ...o, updatedAt: now() };
+    });
+    if (changed){
+      internalWrite = true;
+      try { saveLS(lsKey, out); } finally { internalWrite = false; }
+    }
+    return out;
+  }
+
+  function ventaId(o){
+    // id recomendado: YYYY-MM-DD|SANPABLO
+    if (o?.id) return o.id;
+    const date = o?.date || o?.fecha || o?.fechaISO || o?.dia;
+    const store = o?.store || o?.tienda || o?.sede || o?.shop;
+    if (date && store) return `${date}|${store}`;
+    return null;
+  }
+
+  async function autoPushByLsKey(lsKey){
+    if (!enabled) return;
+    if (!user()){
+      pending.add(lsKey);
+      savePending();
       return;
     }
 
-    const meta = KEY_TO_SECTION.get(key);
-    const section = meta.section;
-    const uid = cloudUser().uid;
+    const uid = user().uid;
+    const section = getSectionByLsKey(lsKey);
+    if (!section) return;
 
-    if (meta.type === 'object'){
-      const obj = loadLocal(key, null);
-      if (!obj || typeof obj !== 'object') return;
+    const raw = localStorage.getItem(lsKey);
+    if (!raw) return;
 
-      const up = { ...obj };
-      if (typeof up.updatedAt !== 'number') up.updatedAt = nowMs();
+    const parsed = safeParse(raw, null);
+    if (!parsed) return;
 
-      // evita re-push infinito
-      if (up.updatedAt <= pushedAt.ajustes) return;
+    // Ajustes (objeto)
+    if (section === 'ajustes'){
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      const up = { ...parsed };
+      if (typeof up.updatedAt !== 'number') up.updatedAt = now();
 
-      pushedAt.ajustes = up.updatedAt;
-      await set(ref(db, pSection(uid, "ajustes")), up);
-      setStatus(`✅ AutoSync: Ajustes subidos (${new Date().toLocaleTimeString()})`);
+      // anti-spam
+      if (up.updatedAt <= (lastPushed.ajustes || 0)) return;
+
+      await set(ref(db, pSection(uid, 'ajustes')), up);
+      lastPushed.ajustes = up.updatedAt;
+      saveLastPushed();
       return;
     }
 
-    if (meta.type === 'array'){
-      const arr = loadLocal(key, []);
-      if (!Array.isArray(arr) || arr.length === 0) return; // vacío => no sube nada (anti-wipe)
+    // Arrays: anti-wipe (no sube vacío)
+    if (!Array.isArray(parsed) || parsed.length === 0) return;
 
-      for (const item of arr){
-        if (!item || !item.id) continue;
-        const up = { ...item };
-        if (typeof up.updatedAt !== 'number') {
-          // añade updatedAt y lo escribe en local (sin disparar push)
-          up.updatedAt = nowMs();
-          internalWrite = true;
-          try{
-            const fixedArr = arr.map(x => (x?.id === up.id ? up : x));
-            saveLocal(key, fixedArr);
-          } finally {
-            internalWrite = false;
-          }
-        }
+    let arr = parsed;
 
-        const last = pushedAt[section]?.get(up.id) || 0;
-        if (up.updatedAt <= last) continue;
-
-        await set(ref(db, pItem(uid, section, up.id)), up);
-        pushedAt[section].set(up.id, up.updatedAt);
-      }
-
-      setStatus(`✅ AutoSync: ${section} subido (${new Date().toLocaleTimeString()})`);
-      return;
-    }
-
-    if (meta.type === 'arrayVentas'){
-      const arr = loadLocal(key, []);
-      if (!Array.isArray(arr) || arr.length === 0) return;
-
-      for (const item of arr){
-        if (!item) continue;
-
-        // id recomendado: "YYYY-MM-DD|SANPABLO"
-        let id = item.id;
-        const date = item.date || item.fecha || item.fechaISO || item.dia;
-        const store = item.store || item.tienda || item.sede || item.shop;
-        if (!id && date && store) id = `${date}|${store}`;
-
+    // ventas: id puede no existir
+    if (section === 'ventas'){
+      const fixed = [];
+      let changed = false;
+      for (const o of arr){
+        if (!o || typeof o !== 'object') continue;
+        const id = ventaId(o);
         if (!id) continue;
-
-        const up = { ...item, id };
-        if (typeof up.updatedAt !== 'number') up.updatedAt = nowMs();
-
-        const last = pushedAt.ventas.get(id) || 0;
-        if (up.updatedAt <= last) continue;
-
-        await set(ref(db, pItem(uid, "ventas", id)), up);
-        pushedAt.ventas.set(id, up.updatedAt);
+        if (o.id !== id) { changed = true; fixed.push({ ...o, id }); }
+        else fixed.push(o);
       }
-
-      setStatus(`✅ AutoSync: ventas subidas (${new Date().toLocaleTimeString()})`);
-      return;
+      if (changed){
+        internalWrite = true;
+        try { saveLS(lsKey, fixed); } finally { internalWrite = false; }
+      }
+      arr = fixed;
     }
 
-    if (meta.type === 'arrayById'){
-      const arr = loadLocal(key, []);
-      if (!Array.isArray(arr) || arr.length === 0) return;
+    // asegurar updatedAt si falta
+    if (section !== 'ventas') arr = ensureUpdatedAt(arr, lsKey, section);
 
-      for (const item of arr){
-        if (!item) continue;
-        const id = item.id;
-        if (!id) continue;
-        const up = { ...item };
-        if (typeof up.updatedAt !== 'number') up.updatedAt = nowMs();
+    // subir SOLO lo nuevo/modificado por updatedAt
+    const lp = lastPushed[section] || {};
+    for (const o of arr){
+      if (!o || typeof o !== 'object') continue;
 
-        const last = pushedAt.contabilidad.get(id) || 0;
-        if (up.updatedAt <= last) continue;
+      const id = o.id || (section==='ventas' ? ventaId(o) : null);
+      if (!id) continue;
 
-        await set(ref(db, pItem(uid, "contabilidad", id)), up);
-        pushedAt.contabilidad.set(id, up.updatedAt);
-      }
+      const up = { ...o };
+      if (typeof up.updatedAt !== 'number') up.updatedAt = now();
 
-      setStatus(`✅ AutoSync: contabilidad subida (${new Date().toLocaleTimeString()})`);
-      return;
+      const last = lp[id] || 0;
+      if (up.updatedAt <= last) continue;
+
+      await set(ref(db, pItem(uid, section, id)), up);
+      lp[id] = up.updatedAt;
     }
+    lastPushed[section] = lp;
+    saveLastPushed();
   }
 
   async function flushPending(){
-    if (!canSync()) return;
-    const keys = Array.from(pendingKeys);
-    pendingKeys.clear();
-    persistPending();
+    if (!enabled || !user()) return;
+    const keys = Array.from(pending);
+    pending.clear();
+    savePending();
     for (const k of keys){
-      await autoPushKey(k).catch(()=>{});
+      await autoPushByLsKey(k).catch(()=>{});
     }
   }
 
   /* =========================
-     AUTO PULL (Realtime listeners)
+     Auto-pull realtime
   ========================= */
-  function applyRemoteToLocal(sectionKey, keyName, id, remoteObj){
-    if (!remoteObj || !id) return;
+  let listenersOn = false;
+  const activeRefs = [];
 
-    const localArr = loadLocal(keyName, []);
-    const localMap = toMap(localArr);
-    const localObj = localMap[id];
+  function applyRemoteArrayItem(lsKey, id, remoteObj){
+    if (!lsKey || !id || !remoteObj) return;
 
-    // si el remoto no es más nuevo, no tocamos
+    const localArr = loadLS(lsKey, []);
+    if (!Array.isArray(localArr)) return;
+
+    // buscar local
+    const idx = localArr.findIndex(x => x && x.id === id);
+    const localObj = idx >= 0 ? localArr[idx] : null;
+
     if (localObj && updAt(remoteObj) <= updAt(localObj)) return;
 
     applyingRemote = true;
     try{
-      const merged = mergeOneIntoArrayById(localArr, id, remoteObj);
-      saveLocal(keyName, merged);
+      const next = localArr.slice();
+      if (idx >= 0) next[idx] = remoteObj;
+      else next.push(remoteObj);
+      saveLS(lsKey, next);
     } finally {
       applyingRemote = false;
     }
 
-    // Aviso para tu app (si quieres refrescar listas sin recargar)
     try {
-      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { section: sectionKey, id } }));
+      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { lsKey, id } }));
     } catch {}
-
-    setStatus(`⬇️ Cloud → Local: ${sectionKey} actualizado (${new Date().toLocaleTimeString()})`);
   }
 
-  function applyRemoteObjectToLocal(keyName, remoteObj){
-    if (!remoteObj || typeof remoteObj !== 'object') return;
-    const localObj = loadLocal(keyName, { updatedAt: 0 });
-    if (typeof remoteObj.updatedAt !== 'number') return;
+  function applyRemoteObject(lsKey, remoteObj){
+    if (!lsKey || !remoteObj || typeof remoteObj !== 'object' || Array.isArray(remoteObj)) return;
 
+    const localObj = loadLS(lsKey, { updatedAt: 0 });
+    if (typeof remoteObj.updatedAt !== 'number') return;
     if (remoteObj.updatedAt <= (localObj.updatedAt || 0)) return;
 
     applyingRemote = true;
-    try { saveLocal(keyName, remoteObj); }
-    finally { applyingRemote = false; }
+    try { saveLS(lsKey, remoteObj); } finally { applyingRemote = false; }
 
     try {
-      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { section: 'ajustes' } }));
+      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { lsKey, id: 'ajustes' } }));
     } catch {}
-
-    setStatus(`⬇️ Cloud → Local: ajustes actualizado (${new Date().toLocaleTimeString()})`);
   }
 
-  function startRealtimeListeners(){
-    if (!canSync() || listenersActive) return;
-    const uid = cloudUser().uid;
-
-    listenersActive = true;
+  function stopListeners(){
+    if (!listenersOn) return;
+    try { activeRefs.forEach(r => off(r)); } catch {}
     activeRefs.length = 0;
-
-    const makeSec = (section, localKey, label) => {
-      const rSec = ref(db, pSection(uid, section));
-      activeRefs.push({ r: rSec, type: 'child' });
-
-      onChildAdded(rSec, (snap) => {
-        const id = snap.key;
-        const obj = snap.val();
-        applyRemoteToLocal(label, localKey, id, obj);
-      });
-
-      onChildChanged(rSec, (snap) => {
-        const id = snap.key;
-        const obj = snap.val();
-        applyRemoteToLocal(label, localKey, id, obj);
-      });
-    };
-
-    makeSec("clientes",  K.clientes,  "clientes");
-    makeSec("productos", K.productos, "productos");
-    makeSec("taras",     K.taras,     "taras");
-    makeSec("facturas",  K.facturas,  "facturas");
-    makeSec("ventas",    K.ventas,    "ventas");
-    makeSec("contabilidad", K.contab, "contabilidad");
-
-    // ajustes (objeto) con onValue
-    const rAj = ref(db, pSection(uid, "ajustes"));
-    activeRefs.push({ r: rAj, type: 'value' });
-    onValue(rAj, (snap) => {
-      if (!snap.exists()) return;
-      applyRemoteObjectToLocal(K.ajustes, snap.val());
-    });
-
-    setStatus(`🟢 AutoSync ON (Realtime)`);
+    listenersOn = false;
   }
 
-  function stopRealtimeListeners(){
-    if (!listenersActive) return;
-    try{
-      for (const it of activeRefs){
-        off(it.r);
-      }
-    } catch {}
-    activeRefs.length = 0;
-    listenersActive = false;
-    setStatus(`🟠 AutoSync OFF`);
+  function startListeners(){
+    if (!enabled || !user() || listenersOn) return;
+    listenersOn = true;
+
+    const uid = user().uid;
+
+    // secciones array
+    for (const sec of ['clientes','productos','taras','facturas','ventas','contabilidad']){
+      const lsKey = KEYMAP[sec];
+      if (!lsKey) continue;
+
+      const r = ref(db, pSection(uid, sec));
+      activeRefs.push(r);
+
+      onChildAdded(r, snap => {
+        const id = snap.key;
+        const obj = snap.val();
+        if (!id || !obj) return;
+        applyRemoteArrayItem(lsKey, id, obj);
+      });
+      onChildChanged(r, snap => {
+        const id = snap.key;
+        const obj = snap.val();
+        if (!id || !obj) return;
+        applyRemoteArrayItem(lsKey, id, obj);
+      });
+      // Nota: NO escuchamos removals -> anti-borrado local
+    }
+
+    // ajustes object
+    if (KEYMAP.ajustes){
+      const rAj = ref(db, pSection(uid, 'ajustes'));
+      activeRefs.push(rAj);
+      onValue(rAj, snap => {
+        if (!snap.exists()) return;
+        applyRemoteObject(KEYMAP.ajustes, snap.val());
+      });
+    }
   }
 
   /* =========================
-     INTERCEPTAR GUARDADOS LOCALES
-     - Wrap window.save si existe
-     - Wrap localStorage.setItem como fallback
+     Hook saves (sin tocar tu app)
   ========================= */
-  function hookLocalSaves(){
-    // Wrap window.save (si tu app lo usa)
-    if (typeof window.save === 'function' && !window.save.__fmWrapped){
-      const orig = window.save;
-      const wrapped = function(k, v){
-        const res = orig(k, v);
-        schedulePushByKey(k);
-        return res;
-      };
-      wrapped.__fmWrapped = true;
-      window.save = wrapped;
-    }
-
-    // Fallback: interceptar localStorage.setItem
+  function hookSaves(){
+    // 1) Wrap localStorage.setItem (lo más universal)
     if (!localStorage.setItem.__fmWrapped){
-      const origSetItem = localStorage.setItem.bind(localStorage);
-      const wrappedSetItem = function(k, v){
-        origSetItem(k, v);
-        schedulePushByKey(k);
+      const orig = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = function(k, v){
+        orig(k, v);
+        schedulePush(k);
       };
-      wrappedSetItem.__fmWrapped = true;
-      localStorage.setItem = wrappedSetItem;
+      localStorage.setItem.__fmWrapped = true;
+    }
+
+    // 2) Si tu app tiene window.save(k,v), también lo envolvemos
+    if (typeof window.save === 'function' && !window.save.__fmWrapped){
+      const origSave = window.save;
+      window.save = function(k, v){
+        const r = origSave(k, v);
+        schedulePush(k);
+        return r;
+      };
+      window.save.__fmWrapped = true;
     }
   }
 
   /* =========================
-     API GLOBAL
+     UI (solo login/logout + estado)
   ========================= */
-  window.FM_CLOUD = {
-    enabled: () => cloudEnabled,
-    initError: () => cloudInitError,
-    user: () => cloudUser(),
-    login: async (email, pass) => {
-      if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
-      return signInWithEmailAndPassword(auth, email, pass);
-    },
-    logout: async () => {
-      if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
-      return signOut(auth);
-    }
-  };
-
-  /* =========================
-     UI B/W PRO (solo login/logout + estado)
-  ========================= */
-  const LS_EMAIL = 'fm_cloud_email';
-
-  let statusLine = '';
-  function setStatus(t){
-    statusLine = t || '';
-    const el = $('#fmCloudInfo');
-    if (el) el.textContent = getStatusText();
-  }
-
-  function getStatusText(){
-    const enabled = cloudEnabled ? 'ON' : 'OFF';
-    const err = (!cloudEnabled && cloudInitError) ? `\nError: ${cloudInitError}` : '';
-    const u = cloudUser();
-    const who = u ? `\nAuth: LOGUEADO\nEmail: ${u.email || '(sin email)'}\nUID: ${(u.uid||'').slice(0,6)}…` : `\nAuth: NO logueado`;
-    return `Cloud: ${enabled}${err}${who}\n\n${statusLine || ''}`.trim();
-  }
+  const LS_EMAIL = 'fm_cloud_email_v1';
 
   function injectCss(){
     if ($('#fmCloudCss')) return;
     const st = document.createElement('style');
     st.id = 'fmCloudCss';
     st.textContent = `
-      .fmCloudFab{
-        position:fixed; right:12px; bottom:12px; z-index:99999;
-        border:1px solid #111; background:#fff; color:#000;
-        border-radius:14px; padding:10px 12px; font-weight:900;
-        box-shadow:0 8px 24px rgba(0,0,0,.16);
-      }
+      .fmCloudFab{ position:fixed; right:12px; bottom:12px; z-index:99999;
+        border:1px solid #111; background:#fff; color:#000; border-radius:14px;
+        padding:10px 12px; font-weight:900; box-shadow:0 8px 24px rgba(0,0,0,.16); }
       .fmCloudModal{ position:fixed; inset:0; z-index:999999; display:none; background:rgba(0,0,0,.55); }
       .fmCloudModal.open{ display:block; }
-      .fmCloudCard{
-        position:absolute; left:12px; right:12px; top:12px; bottom:12px;
-        background:#fff; border:1px solid #111; border-radius:16px;
-        padding:12px; display:flex; flex-direction:column; gap:10px;
-      }
+      .fmCloudCard{ position:absolute; left:12px; right:12px; top:12px; bottom:12px;
+        background:#fff; border:1px solid #111; border-radius:16px; padding:12px;
+        display:flex; flex-direction:column; gap:10px; }
       .fmCloudTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
-      .fmCloudTop b{ font-size:14px; }
       .fmCloudRow{ display:flex; gap:10px; flex-wrap:wrap; }
-      .fmCloudRow input{
-        flex:1; min-width:220px; border:1px solid rgba(0,0,0,.25);
-        border-radius:12px; padding:10px 12px; font-size:14px;
-      }
+      .fmCloudRow input{ flex:1; min-width:220px; border:1px solid rgba(0,0,0,.25);
+        border-radius:12px; padding:10px 12px; font-size:14px; }
       .fmCloudBtns{ display:flex; gap:10px; flex-wrap:wrap; }
-      .fmCloudBtns button{
-        border:1px solid #111; background:#fff; color:#000;
-        border-radius:12px; padding:10px 12px; font-weight:900;
-      }
+      .fmCloudBtns button{ border:1px solid #111; background:#fff; color:#000;
+        border-radius:12px; padding:10px 12px; font-weight:900; }
       .fmCloudBtns button.primary{ background:#111; color:#fff; }
-      .fmCloudInfo{
-        border:1px solid rgba(0,0,0,.18); border-radius:14px;
-        padding:10px 12px; font-size:13px; line-height:1.35;
-        background:linear-gradient(180deg,#fff,#f7f7f7);
-        white-space:pre-wrap;
-      }
-      .fmCloudMsg{ font-size:12px; opacity:.85; line-height:1.3; white-space:pre-wrap; }
-      .fmCloudClose{
-        border:1px solid #111; background:#fff; border-radius:12px;
-        padding:8px 10px; font-weight:900;
-      }
-      .fmCloudSmall{ font-size:12px; opacity:.7; }
+      .fmCloudInfo{ border:1px solid rgba(0,0,0,.18); border-radius:14px; padding:10px 12px;
+        font-size:13px; line-height:1.35; background:linear-gradient(180deg,#fff,#f7f7f7);
+        white-space:pre-wrap; }
+      .fmCloudClose{ border:1px solid #111; background:#fff; border-radius:12px;
+        padding:8px 10px; font-weight:900; }
+      .fmCloudMsg{ font-size:12px; opacity:.85; white-space:pre-wrap; }
     `;
     document.head.appendChild(st);
+  }
+
+  function statusText(extra=''){
+    KEYMAP = detectKeyMap(); // por si cambian keys con el tiempo
+    const on = enabled ? 'ON' : 'OFF';
+    const err = (!enabled && initError) ? `\nError: ${initError}` : '';
+    const u = user();
+    const who = u ? `\nAuth: LOGUEADO\nEmail: ${u.email||'(sin email)'}\nUID: ${(u.uid||'').slice(0,6)}…` : `\nAuth: NO logueado`;
+    const km = `\n\nKEYMAP:\n` +
+      `clientes: ${KEYMAP.clientes||'-'}\n` +
+      `productos: ${KEYMAP.productos||'-'}\n` +
+      `taras: ${KEYMAP.taras||'-'}\n` +
+      `facturas: ${KEYMAP.facturas||'-'}\n` +
+      `ventas: ${KEYMAP.ventas||'-'}\n` +
+      `contab: ${KEYMAP.contabilidad||'-'}\n` +
+      `ajustes: ${KEYMAP.ajustes||'-'}\n`;
+    return `Cloud: ${on}${err}${who}${km}${extra?`\n${extra}`:''}`.trim();
   }
 
   function buildUI(){
@@ -565,7 +592,7 @@ import {
     modal.innerHTML = `
       <div class="fmCloudCard" role="dialog" aria-modal="true">
         <div class="fmCloudTop">
-          <b>☁️ Cloud — AutoSync</b>
+          <b style="font:800 14px system-ui">☁️ Cloud — AutoSync</b>
           <button class="fmCloudClose" id="fmCloudClose" type="button">Cerrar</button>
         </div>
 
@@ -579,13 +606,8 @@ import {
           <button id="fmBtnLogout" type="button">Logout</button>
         </div>
 
-        <div class="fmCloudInfo" id="fmCloudInfo">Estado: …</div>
+        <div class="fmCloudInfo" id="fmCloudInfo">Estado…</div>
         <div class="fmCloudMsg" id="fmCloudMsg"></div>
-
-        <div class="fmCloudSmall">
-          AutoSync: al guardar cualquier cosa se sube solo. En otros dispositivos baja en tiempo real.
-          (La contraseña NO se guarda.)
-        </div>
       </div>
     `;
     document.body.appendChild(modal);
@@ -605,7 +627,7 @@ import {
     emailEl.value = localStorage.getItem(LS_EMAIL) || '';
 
     const setMsg = (t) => { msgEl.textContent = t || ''; };
-    const refresh = () => { infoEl.textContent = getStatusText(); };
+    const refresh = (extra='') => { infoEl.textContent = statusText(extra); };
 
     $('#fmBtnLogin').addEventListener('click', async () => {
       setMsg('');
@@ -614,10 +636,9 @@ import {
       if (!email || !pass) return setMsg('⚠️ Pon email y contraseña.');
       try{
         localStorage.setItem(LS_EMAIL, email);
-        await window.FM_CLOUD.login(email, pass);
+        await signInWithEmailAndPassword(auth, email, pass);
         passEl.value = '';
-        setStatus('🟢 AutoSync ON (conectado)');
-        refresh();
+        refresh('✅ Login OK — AutoSync activo');
       }catch(e){
         setMsg(friendlyError(e));
         refresh();
@@ -627,9 +648,8 @@ import {
     $('#fmBtnLogout').addEventListener('click', async () => {
       setMsg('');
       try{
-        await window.FM_CLOUD.logout();
-        setStatus('🟠 AutoSync OFF (logout)');
-        refresh();
+        await signOut(auth);
+        refresh('✅ Logout OK');
       }catch(e){
         setMsg(friendlyError(e));
         refresh();
@@ -637,46 +657,43 @@ import {
     });
 
     refresh();
+    onAuthStateChanged(auth, () => refresh());
   }
 
   /* =========================
-     BOOT
+     Public API minimal
+  ========================= */
+  window.FM_CLOUD = {
+    enabled: () => enabled,
+    initError: () => initError,
+    keymap: () => ({...KEYMAP}),
+    user: () => user()
+  };
+
+  /* =========================
+     Boot
   ========================= */
   function boot(){
+    hookSaves();
     injectCss();
     buildUI();
-    hookLocalSaves();
 
-    // Auto start/stop listeners + flush pending cuando hay login
-    if (auth) {
-      onAuthStateChanged(auth, async (u) => {
-        if (!cloudEnabled) {
-          setStatus(`Cloud OFF: ${cloudInitError}`);
-          return;
-        }
+    if (!enabled) return;
 
-        if (u) {
-          setStatus('🟢 AutoSync ON (conectando realtime…)');
-          startRealtimeListeners();
-          await flushPending().catch(()=>{});
-          setStatus('🟢 AutoSync ON (realtime activo)');
-        } else {
-          stopRealtimeListeners();
-          setStatus('🟠 AutoSync OFF (sin login)');
-        }
-      });
-    } else {
-      setStatus(`Cloud OFF: ${cloudInitError || 'sin auth'}`);
-    }
-
-    // estado inicial
-    setStatus(cloudEnabled ? '🟠 AutoSync OFF (sin login)' : `Cloud OFF: ${cloudInitError}`);
+    onAuthStateChanged(auth, async (u) => {
+      if (u){
+        KEYMAP = detectKeyMap();
+        startListeners();
+        await flushPending().catch(()=>{});
+      } else {
+        stopListeners();
+      }
+    });
   }
 
-  if (document.readyState === 'loading') {
+  if (document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', boot, { once:true });
   } else {
     boot();
   }
-
 })();
