@@ -1400,4 +1400,66 @@ button, .btn, input, select, textarea{
     position: static !important;
   }
 }
+/* =========================================================
+   MOBILE FIX — BUSCADOR NO SOLAPA BOTONES / ATRÁS
+   (Topbar 2 filas: acciones arriba, buscador abajo)
+========================================================= */
+@media (max-width: 820px){
+
+  header.topbar{
+    display: flex;
+    flex-wrap: wrap;           /* ✅ permite segunda fila */
+    align-items: center;
+    gap: 10px;
+  }
+
+  .topbar__left{
+    flex: 1 1 auto;
+    min-width: 220px;
+  }
+
+  .topbar__right{
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    z-index: 3;
+  }
+
+  /* ✅ El buscador pasa abajo a ancho completo */
+  .topbar__center{
+    flex: 1 0 100%;
+    order: 99;                 /* ✅ lo empuja a la fila inferior */
+    width: 100%;
+  }
+
+  .quicksearch{
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  #globalSearch{
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 16px;           /* ✅ evita zoom en iPhone */
+    min-height: 42px;          /* ✅ más táctil */
+  }
+
+  #btnGlobalSearch{
+    flex: 0 0 auto;
+    min-height: 42px;
+    padding-inline: 12px;
+    white-space: nowrap;
+  }
+
+  /* Opcional: texto del subtítulo ocupa mucho en móvil */
+  .brand__sub{ display:none; }
+
+  /* Opcional: botones más compactos en móvil */
+  .topbar__right .btn{
+    padding: 8px 10px;
+  }
+}
 
