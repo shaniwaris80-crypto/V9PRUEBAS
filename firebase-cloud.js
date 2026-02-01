@@ -36,12 +36,17 @@ const firebaseConfig = {
 
   // ✅ OBLIGATORIO para Realtime Database:
   // pon aquí tu URL real
-  databaseURL: "https://console.firebase.google.com/project/factumiral/database/factumiral-default-rtdb/data/~2F"
+  databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
 };
 
-const app  = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db   = getDatabase(app);
+const app = initializeApp(firebaseConfig);
+
+// ✅ limpia databaseURL a la raíz (sin child path)
+const raw = String(firebaseConfig.databaseURL || '').trim();
+const root = raw.replace(/\/+$/,'').replace(/^(https?:\/\/[^\/]+).*$/,'$1');
+
+const db = getDatabase(app, root);
+
 
 /* =========================
    STORAGE KEYS (AJUSTA SI TU APP USA OTRAS)
