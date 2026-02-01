@@ -1416,6 +1416,56 @@ PARTE 1/4 — FACTU MIRAL (B/W PRO) — index.html (COMPLETO)
   document.addEventListener('DOMContentLoaded', addBulkBtn);
 })();
 </script>
+<script>
+(() => {
+  const mq = window.matchMedia('(max-width: 820px)');
+  const $ = (s, r=document) => r.querySelector(s);
+
+  function isMobile(){ return mq.matches; }
+
+  function ensureClearBtn(){
+    if (!isMobile()) return;
+    const wrap = $('.quicksearch');
+    const inp  = $('#globalSearch');
+    if (!wrap || !inp) return;
+
+    // si ya existe, no duplicar
+    if (wrap.querySelector('.qsClear')) return;
+
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'qsClear';
+    b.setAttribute('aria-label', 'Borrar búsqueda');
+    b.textContent = '✕';
+    wrap.appendChild(b);
+
+    const toggle = () => {
+      const has = (inp.value || '').trim().length > 0;
+      b.classList.toggle('is-on', has);
+    };
+
+    b.addEventListener('click', () => {
+      inp.value = '';
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+      inp.focus();
+      toggle();
+    });
+
+    inp.addEventListener('input', toggle);
+    inp.addEventListener('change', toggle);
+    toggle();
+  }
+
+  // inicial + cuando cambia tamaño (rotación)
+  document.addEventListener('DOMContentLoaded', ensureClearBtn);
+  mq.addEventListener?.('change', () => {
+    // si pasa a móvil, lo crea
+    ensureClearBtn();
+    // si pasa a escritorio, lo deja (no molesta) o puedes borrarlo si quieres
+  });
+})();
+</script>
 
 
 
