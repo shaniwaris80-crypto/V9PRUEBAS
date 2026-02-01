@@ -1465,4 +1465,39 @@ button, .btn, input, select, textarea{
 @media (max-width: 820px){
   .main{ padding-top: 8px; } /* ajusta si hace falta */
 }
+/* =========================================================
+   MOBILE: X para limpiar buscador (solo móvil)
+========================================================= */
+@media (max-width: 820px){
+
+  .quicksearch{
+    position: relative;
+  }
+
+  /* Botón X (se inserta por JS) */
+  .qsClear{
+    position: absolute;
+    right: 92px;              /* deja sitio al botón "Buscar" */
+    top: 50%;
+    transform: translateY(-50%);
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(0,0,0,.20);
+    border-radius: 999px;
+    background: #fff;
+    display: none;            /* se muestra cuando hay texto */
+    align-items: center;
+    justify-content: center;
+    font: 900 16px system-ui;
+    line-height: 1;
+    z-index: 5;
+  }
+
+  .qsClear.is-on{ display: flex; }
+
+  /* Deja padding a la derecha para que el texto no quede debajo de la X */
+  #globalSearch{
+    padding-right: 54px;      /* espacio para la X */
+  }
+}
 
