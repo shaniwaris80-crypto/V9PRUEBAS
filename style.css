@@ -1462,4 +1462,7 @@ button, .btn, input, select, textarea{
     padding: 8px 10px;
   }
 }
+@media (max-width: 820px){
+  .main{ padding-top: 8px; } /* ajusta si hace falta */
+}
 
