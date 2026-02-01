@@ -1395,4 +1395,9 @@ button, .btn, input, select, textarea{
     margin-left: 0; /* lo gestiona el flex */
   }
 }
+@media (max-width: 720px){
+  #search, #buscar, #searchInput, .search{
+    position: static !important;
+  }
+}
 
