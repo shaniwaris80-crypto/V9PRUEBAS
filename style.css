@@ -1167,3 +1167,139 @@ textarea{ resize: vertical; }
 /* =========================================================
    FIN style.css
 ========================================================= */
+/* =========================================================
+   FACTU MIRAL — CSS OPCIONAL (Dashboard Contabilidad PRO)
+   ✅ Pegar al FINAL de tu style.css (o dentro de <style>)
+   - Solo blanco/negro + grises
+   - No rompe tu layout actual
+========================================================= */
+
+#contabDashboard { margin-top: 10px; }
+
+#contabDashboard .card{
+  border: 1px solid #111;
+  border-radius: 14px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 1px 0 rgba(0,0,0,.06);
+}
+
+#contabDashboard .card__title{
+  font-weight: 800;
+  letter-spacing: .2px;
+  font-size: 13px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0,0,0,.10);
+}
+
+/* KPI grid */
+#contabDashboard .kpis{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#contabDashboard .kpi{
+  border: 1px solid rgba(0,0,0,.12);
+  border-radius: 12px;
+  padding: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+}
+
+#contabDashboard .kpi__l{
+  font-size: 11px;
+  color: rgba(0,0,0,.62);
+  margin-bottom: 6px;
+}
+
+#contabDashboard .kpi__v{
+  font-size: 18px;
+  font-weight: 900;
+  color: #000;
+  line-height: 1.1;
+}
+
+/* Bars (totales por mes) */
+#contabDashboard .bars{
+  display: grid;
+  gap: 8px;
+}
+
+#contabDashboard .barRow{
+  display: grid;
+  grid-template-columns: 64px 1fr 86px;
+  gap: 10px;
+  align-items: center;
+}
+
+#contabDashboard .barLabel{
+  font-size: 11px;
+  color: rgba(0,0,0,.70);
+  white-space: nowrap;
+}
+
+#contabDashboard .barTrack{
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.08);
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,.10);
+}
+
+#contabDashboard .barFill{
+  height: 100%;
+  background: rgba(0,0,0,.82);
+  border-radius: 999px;
+}
+
+#contabDashboard .barVal{
+  text-align: right;
+  font-size: 12px;
+  font-weight: 800;
+  color: #000;
+  white-space: nowrap;
+}
+
+/* Mini tables (Top clientes / Top tags) */
+#contabDashboard .miniTable{
+  display: grid;
+  gap: 6px;
+}
+
+#contabDashboard .miniRow{
+  display: grid;
+  grid-template-columns: 1fr 110px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(0,0,0,.10);
+  border-radius: 12px;
+  background: #fff;
+}
+
+#contabDashboard .miniRow:nth-child(even){
+  background: #f7f7f7;
+}
+
+#contabDashboard .miniName{
+  font-size: 12px;
+  color: rgba(0,0,0,.82);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contabDashboard .miniVal{
+  text-align: right;
+  font-size: 12px;
+  font-weight: 900;
+  color: #000;
+  white-space: nowrap;
+}
+
+/* Responsive */
+@media (max-width: 560px){
+  #contabDashboard .kpis{ grid-template-columns: 1fr; }
+  #contabDashboard .barRow{ grid-template-columns: 58px 1fr 76px; }
+}
