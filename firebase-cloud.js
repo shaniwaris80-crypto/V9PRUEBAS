@@ -7,10 +7,7 @@
 ========================================================= */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
-import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-  setPersistence, browserLocalPersistence
-} from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
 import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
 
 (() => {
@@ -39,7 +36,6 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
   };
 
   const LS_EMAIL   = 'fm_cloud_email_v2';
-  const TEAM_EMAIL = "shaniwaris80@gmail.com"; // ✅ login único
   const LS_AUTO    = 'fm_cloud_auto_v2';        // "1" / "0"
   const LS_UIREF   = 'fm_cloud_uirefresh_v2';   // "1" / "0"
   const LS_DEVICE  = 'fm_cloud_device_v2';
@@ -221,7 +217,7 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
   // ========= Firebase init =========
   try{
     app = initializeApp(firebaseConfig);
-    setPersistence(auth, browserLocalPersistence).catch(()=>{});
+    auth = getAuth(app);
     db = getDatabase(app);
   }catch(e){
     enabled = false;
