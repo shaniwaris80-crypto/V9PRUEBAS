@@ -4325,3 +4325,179 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }, true);
 
 })();
+/* =========================================================
+   PATCH DEFINITIVO — PRECIO ACEPTA DECIMALES (.,)
+   - Captura keydown + keypress + beforeinput
+   - Inserta el separador manualmente si el core lo bloquea
+   - Re-aplica el valor DESPUÉS de otros handlers (setTimeout 0)
+   - Normaliza a formato seguro: solo 1 separador "." (interno)
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  function isPriceField(el){
+    if (!el || el.tagName !== 'INPUT') return false;
+
+    const cls = (el.className || '').toLowerCase();
+    const ph  = (el.getAttribute('placeholder') || '').toLowerCase();
+    const nm  = (el.getAttribute('name') || '').toLowerCase();
+    const id  = (el.id || '').toLowerCase();
+    const df  = (el.getAttribute('data-field') || '').toLowerCase();
+    const dc  = (el.getAttribute('data-col') || '').toLowerCase();
+
+    const looksLikePrice =
+      cls.includes('precio') || cls.includes('price') ||
+      ph.includes('precio') || ph.includes('price') ||
+      nm.includes('precio') || nm.includes('price') ||
+      id.includes('precio') || id.includes('price') ||
+      df === 'precio' || df === 'price' ||
+      dc === 'precio' || dc === 'price';
+
+    // en tu app casi siempre está dentro del grid
+    const inGrid = !!el.closest('#gridBody, .gridRow, .grid, [data-grid], #tabProductos, #tabPrecios');
+
+    return looksLikePrice || (inGrid && (cls.includes('precio') || ph.includes('precio') || nm.includes('precio')));
+  }
+
+  function forceDecimalMode(el){
+    if (!el || el.__fmDecimalOn) return;
+    el.__fmDecimalOn = true;
+
+    // IMPORTANTÍSIMO: evitar type=number (bloquea coma y a veces punto)
+    try { el.type = 'text'; } catch {}
+    el.setAttribute('inputmode', 'decimal');  // teclado con decimal en móvil
+    el.setAttribute('pattern', '[0-9]*[\\.,]?[0-9]*');
+    el.setAttribute('autocomplete','off');
+    el.setAttribute('autocorrect','off');
+    el.setAttribute('autocapitalize','off');
+    el.setAttribute('spellcheck','false');
+
+    // Si el core reescribe type/inputmode, lo re-forzamos
+    const mo = new MutationObserver(() => {
+      if (el.type !== 'text') { try { el.type = 'text'; } catch {} }
+      if (el.getAttribute('inputmode') !== 'decimal') el.setAttribute('inputmode','decimal');
+    });
+    mo.observe(el, { attributes:true, attributeFilter:['type','inputmode'] });
+  }
+
+  function sanitizeToDot(raw){
+    let v = String(raw ?? '').replace(/\s+/g,'');
+    v = v.replace(/[^\d.,-]/g,''); // solo números y separadores
+    // Convertir coma a punto para que el core pueda parsear con Number/parseFloat
+    v = v.replaceAll(',', '.');
+
+    // SOLO un punto
+    const i = v.indexOf('.');
+    if (i !== -1) v = v.slice(0, i+1) + v.slice(i+1).replaceAll('.', '');
+
+    // Solo un '-' al inicio
+    if (v.includes('-')) v = (v[0] === '-' ? '-' : '') + v.replaceAll('-', '');
+
+    return v;
+  }
+
+  function insertAtCursor(el, txt){
+    const start = el.selectionStart ?? el.value.length;
+    const end   = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0,start) + txt + el.value.slice(end);
+    const pos = start + txt.length;
+    try { el.setSelectionRange(pos, pos); } catch {}
+  }
+
+  function applyAfterOthers(el){
+    // corre DESPUÉS del resto de listeners del core
+    const desired = sanitizeToDot(el.value);
+    setTimeout(() => {
+      if (!el.isConnected) return;
+      const now = sanitizeToDot(el.value);
+
+      // si el core lo borró, lo volvemos a poner
+      if (now !== desired) {
+        el.value = desired;
+      } else if (el.value !== desired) {
+        el.value = desired;
+      }
+
+      // Para recalcular sin bucle infinito
+      if (!el.__fmRecalcLock) {
+        el.__fmRecalcLock = true;
+        // disparo un input "limpio" (bubbling) para que el core recalule importes
+        el.dispatchEvent(new Event('input', { bubbles:true }));
+        setTimeout(() => { el.__fmRecalcLock = false; }, 0);
+      }
+    }, 0);
+  }
+
+  // 1) Cada vez que enfoques un input de precio, lo forzamos a decimal
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    if (isPriceField(el)) forceDecimalMode(el);
+  }, true);
+
+  // 2) Capturar '.' y ',' aunque el core los bloquee (keydown + keypress + beforeinput)
+  function handleDecimalKey(e){
+    const el = document.activeElement;
+    if (!isPriceField(el)) return;
+    forceDecimalMode(el);
+
+    const k = e.key;
+
+    // si el usuario intenta poner '.' o ',' => insertamos '.' (interno)
+    if (k === '.' || k === ',' || k === 'Decimal') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      // si ya hay '.', no insertar otra
+      if ((el.value || '').includes('.')) return;
+
+      insertAtCursor(el, '.');
+      applyAfterOthers(el);
+    }
+  }
+
+  document.addEventListener('keydown', handleDecimalKey, true);
+  document.addEventListener('keypress', handleDecimalKey, true);
+
+  // iOS: beforeinput
+  document.addEventListener('beforeinput', (e) => {
+    const el = e.target;
+    if (!isPriceField(el)) return;
+    forceDecimalMode(el);
+
+    if (e.data === '.' || e.data === ',') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if ((el.value || '').includes('.')) return;
+      insertAtCursor(el, '.');
+      applyAfterOthers(el);
+    }
+  }, true);
+
+  // 3) En cada input, sanitizamos y RE-aplicamos después de los filtros del core
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!isPriceField(el)) return;
+    forceDecimalMode(el);
+
+    // primero sanitiza ahora
+    const v = sanitizeToDot(el.value);
+    if (v !== el.value) el.value = v;
+
+    // luego re-aplica después (por si el core lo vuelve a borrar)
+    applyAfterOthers(el);
+  }, true);
+
+  // 4) Asegurar también en filas nuevas
+  const grid = $('#gridBody');
+  if (grid && !grid.__fmObsDec){
+    grid.__fmObsDec = true;
+    new MutationObserver(() => {
+      $$('input', grid).forEach(inp => { if (isPriceField(inp)) forceDecimalMode(inp); });
+    }).observe(grid, { childList:true, subtree:true });
+  }
+
+})();
