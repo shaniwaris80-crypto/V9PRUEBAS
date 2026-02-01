@@ -1354,6 +1354,37 @@ PARTE 1/4 — FACTU MIRAL (B/W PRO) — index.html (COMPLETO)
   
 <script src="app.js?v=30" defer></script>
 <script type="module" src="firebase-cloud.js?v=30"></script>
+<script>
+(() => {
+  // Aplica inputmode="decimal" a inputs que parezcan numéricos
+  function patchNumericInputs(){
+    const inputs = document.querySelectorAll('input[type="number"], input[data-num], input.price, input.qty');
+    inputs.forEach(i => {
+      i.setAttribute('inputmode','decimal');
+      i.setAttribute('autocomplete','off');
+      i.setAttribute('step','any');
+      // Si es type number, en iOS a veces da problemas con coma => mejor text con decimal:
+      if(i.type === 'number'){
+        i.type = 'text';
+      }
+    });
+  }
+
+  // Convierte coma a punto solo al salir del input (no mientras escribe)
+  function normalizeOnBlur(e){
+    const el = e.target;
+    if(!(el instanceof HTMLInputElement)) return;
+    if(el.getAttribute('inputmode') !== 'decimal') return;
+    const v = (el.value || '').trim();
+    if(!v) return;
+    el.value = v.replace(',', '.');
+  }
+
+  document.addEventListener('DOMContentLoaded', patchNumericInputs);
+  document.addEventListener('focusin', patchNumericInputs);
+  document.addEventListener('blur', normalizeOnBlur, true);
+})();
+</script>
 
 
 
