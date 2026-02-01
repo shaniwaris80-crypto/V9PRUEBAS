@@ -1,11 +1,10 @@
 /* =========================================================
-   FACTU MIRAL — firebase-cloud.js (COMPLETO)
-   Offline-first + Cloud opcional (Firebase Auth + Realtime DB)
-   - Si Firebase falla: NO rompe nada (Cloud OFF)
-   - Login email/password
-   - Sync DOWN (descargar + merge por updatedAt)
-   - Sync UP (subir no destructivo, por ID, sin borrar)
-   - UI PRO con botones (☁️ Cloud)
+   FACTU MIRAL — firebase-cloud.js (AUTO SYNC)
+   - Offline primero (LocalStorage)
+   - Cloud opcional (Firebase Auth + Realtime Database)
+   - AUTO-PUSH: cuando se guarda cualquier cosa local
+   - AUTO-PULL: cambios en tiempo real desde otros dispositivos
+   - Sin sync manual (solo login/logout + estado)
 ========================================================= */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
@@ -19,7 +18,11 @@ import {
   getDatabase,
   ref,
   get,
-  set
+  set,
+  onChildAdded,
+  onChildChanged,
+  onValue,
+  off
 } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
 
 (() => {
@@ -37,10 +40,7 @@ import {
     appId: "1:576821038417:web:aba329f36563134bb01770",
     measurementId: "G-HJVL8ET49L",
 
-    // ✅ REQUERIDO PARA REALTIME DATABASE:
-    // IMPORTANTE: SOLO RAÍZ. SIN /final y SIN rutas.
-    // Ejemplo correcto:
-    // "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
+    // ✅ SOLO RAÍZ, SIN "/" final, SIN rutas
     databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
   };
 
@@ -74,19 +74,17 @@ import {
   function toArray(map){
     return Object.values(map || {});
   }
-  function mergeMaps(localMap, remoteMap){
-    const out = { ...(localMap || {}) };
-    for (const [id, r] of Object.entries(remoteMap || {})){
-      const l = out[id];
-      if (!l || updAt(r) >= updAt(l)) out[id] = r;
-    }
+  function mergeOneIntoArrayById(arr, id, obj){
+    const out = Array.isArray(arr) ? arr.slice() : [];
+    const idx = out.findIndex(x => x && x.id === id);
+    if (idx >= 0) out[idx] = obj;
+    else out.push(obj);
     return out;
   }
 
   function cleanDbRoot(url){
     const raw = String(url || '').trim();
     if (!raw) return '';
-    // quita / final + cualquier child path
     const noTrail = raw.replace(/\/+$/,'');
     const root = noTrail.replace(/^(https?:\/\/[^\/]+).*$/,'$1');
     return root;
@@ -103,8 +101,8 @@ import {
   }
 
   /* =========================
-     KEYS LOCALSTORAGE (AJUSTABLES)
-     - Si tu app ya define window.K_..., se usan.
+     LOCALSTORAGE KEYS
+     (usa los tuyos si existen)
   ========================= */
   const K = {
     clientes:  window.K_CLIENTES   || "factumiral_clientes",
@@ -116,27 +114,15 @@ import {
     contab:    window.K_CONTAB     || "factumiral_contabilidad"
   };
 
-  function getLocalState(){
-    return {
-      clientes:  loadLocal(K.clientes,  []),
-      productos: loadLocal(K.productos, []),
-      taras:     loadLocal(K.taras,     []),
-      facturas:  loadLocal(K.facturas,  []),
-      ventas:    loadLocal(K.ventas,    []),        // recomendado: array con id="YYYY-MM-DD|STORE"
-      contab:    loadLocal(K.contab,    []),        // array con id
-      ajustes:   loadLocal(K.ajustes,   { updatedAt: 0 })
-    };
-  }
-
-  function setLocalState(next){
-    if (next.clientes)  saveLocal(K.clientes,  next.clientes);
-    if (next.productos) saveLocal(K.productos, next.productos);
-    if (next.taras)     saveLocal(K.taras,     next.taras);
-    if (next.facturas)  saveLocal(K.facturas,  next.facturas);
-    if (next.ventas)    saveLocal(K.ventas,    next.ventas);
-    if (next.contab)    saveLocal(K.contab,    next.contab);
-    if (next.ajustes)   saveLocal(K.ajustes,   next.ajustes);
-  }
+  const KEY_TO_SECTION = new Map([
+    [K.clientes,  { section:"clientes",  type:"array" }],
+    [K.productos, { section:"productos", type:"array" }],
+    [K.taras,     { section:"taras",     type:"array" }],
+    [K.facturas,  { section:"facturas",  type:"array" }],
+    [K.ventas,    { section:"ventas",    type:"arrayVentas" }],
+    [K.contab,    { section:"contabilidad", type:"arrayById" }],
+    [K.ajustes,   { section:"ajustes",   type:"object" }]
+  ]);
 
   /* =========================
      INIT FIREBASE (SAFE)
@@ -156,7 +142,6 @@ import {
       cloudEnabled = false;
       cloudInitError = 'Falta databaseURL (Realtime Database URL).';
     } else {
-      // ✅ si el usuario pegó url con / o child path, aquí se limpia
       db = getDatabase(app, root);
       cloudEnabled = true;
     }
@@ -166,198 +151,356 @@ import {
   }
 
   /* =========================
-     CLOUD PATHS
+     PATHS CLOUD
   ========================= */
   const base = (uid) => `factumiral/${uid}`;
   const pSection = (uid, section) => `${base(uid)}/${section}`;
   const pItem = (uid, section, id) => `${base(uid)}/${section}/${id}`;
 
-  async function readSection(uid, section){
-    if (!cloudEnabled) return {};
-    const snap = await get(ref(db, pSection(uid, section)));
-    return snap.exists() ? (snap.val() || {}) : {};
+  /* =========================================================
+     AUTO SYNC CORE
+  ========================================================= */
+  // Evitar bucles:
+  let applyingRemote = false;   // escribo local desde cloud
+  let internalWrite = false;    // escribo local desde este módulo
+
+  // Debounce por key (cuando guardas varias veces seguidas)
+  const pushTimers = new Map();          // key -> timeout id
+  const pendingKeys = new Set();         // keys pendientes si no hay login
+  const LS_PENDING = 'fm_cloud_pending_keys';
+
+  // Recordatorio de lo último subido por ID (para no reenviar todo)
+  const pushedAt = {
+    clientes: new Map(),
+    productos: new Map(),
+    taras: new Map(),
+    facturas: new Map(),
+    ventas: new Map(),
+    contabilidad: new Map(),
+    ajustes: 0
+  };
+
+  let listenersActive = false;
+  const activeRefs = []; // para limpiar listeners
+
+  function persistPending(){
+    try { localStorage.setItem(LS_PENDING, JSON.stringify(Array.from(pendingKeys))); } catch {}
+  }
+  function loadPending(){
+    const arr = loadLocal(LS_PENDING, []);
+    if (Array.isArray(arr)) arr.forEach(k => pendingKeys.add(k));
+  }
+  loadPending();
+
+  function cloudUser(){
+    return auth?.currentUser || null;
+  }
+
+  function canSync(){
+    return cloudEnabled && !!cloudUser();
+  }
+
+  function schedulePushByKey(key){
+    if (!KEY_TO_SECTION.has(key)) return;
+    if (applyingRemote || internalWrite) return;
+
+    // Debounce
+    if (pushTimers.has(key)) clearTimeout(pushTimers.get(key));
+    pushTimers.set(key, setTimeout(() => {
+      pushTimers.delete(key);
+      autoPushKey(key).catch(()=>{});
+    }, 350));
+  }
+
+  async function autoPushKey(key){
+    if (!KEY_TO_SECTION.has(key)) return;
+    if (!cloudEnabled) return;
+
+    if (!cloudUser()){
+      pendingKeys.add(key);
+      persistPending();
+      return;
+    }
+
+    const meta = KEY_TO_SECTION.get(key);
+    const section = meta.section;
+    const uid = cloudUser().uid;
+
+    if (meta.type === 'object'){
+      const obj = loadLocal(key, null);
+      if (!obj || typeof obj !== 'object') return;
+
+      const up = { ...obj };
+      if (typeof up.updatedAt !== 'number') up.updatedAt = nowMs();
+
+      // evita re-push infinito
+      if (up.updatedAt <= pushedAt.ajustes) return;
+
+      pushedAt.ajustes = up.updatedAt;
+      await set(ref(db, pSection(uid, "ajustes")), up);
+      setStatus(`✅ AutoSync: Ajustes subidos (${new Date().toLocaleTimeString()})`);
+      return;
+    }
+
+    if (meta.type === 'array'){
+      const arr = loadLocal(key, []);
+      if (!Array.isArray(arr) || arr.length === 0) return; // vacío => no sube nada (anti-wipe)
+
+      for (const item of arr){
+        if (!item || !item.id) continue;
+        const up = { ...item };
+        if (typeof up.updatedAt !== 'number') {
+          // añade updatedAt y lo escribe en local (sin disparar push)
+          up.updatedAt = nowMs();
+          internalWrite = true;
+          try{
+            const fixedArr = arr.map(x => (x?.id === up.id ? up : x));
+            saveLocal(key, fixedArr);
+          } finally {
+            internalWrite = false;
+          }
+        }
+
+        const last = pushedAt[section]?.get(up.id) || 0;
+        if (up.updatedAt <= last) continue;
+
+        await set(ref(db, pItem(uid, section, up.id)), up);
+        pushedAt[section].set(up.id, up.updatedAt);
+      }
+
+      setStatus(`✅ AutoSync: ${section} subido (${new Date().toLocaleTimeString()})`);
+      return;
+    }
+
+    if (meta.type === 'arrayVentas'){
+      const arr = loadLocal(key, []);
+      if (!Array.isArray(arr) || arr.length === 0) return;
+
+      for (const item of arr){
+        if (!item) continue;
+
+        // id recomendado: "YYYY-MM-DD|SANPABLO"
+        let id = item.id;
+        const date = item.date || item.fecha || item.fechaISO || item.dia;
+        const store = item.store || item.tienda || item.sede || item.shop;
+        if (!id && date && store) id = `${date}|${store}`;
+
+        if (!id) continue;
+
+        const up = { ...item, id };
+        if (typeof up.updatedAt !== 'number') up.updatedAt = nowMs();
+
+        const last = pushedAt.ventas.get(id) || 0;
+        if (up.updatedAt <= last) continue;
+
+        await set(ref(db, pItem(uid, "ventas", id)), up);
+        pushedAt.ventas.set(id, up.updatedAt);
+      }
+
+      setStatus(`✅ AutoSync: ventas subidas (${new Date().toLocaleTimeString()})`);
+      return;
+    }
+
+    if (meta.type === 'arrayById'){
+      const arr = loadLocal(key, []);
+      if (!Array.isArray(arr) || arr.length === 0) return;
+
+      for (const item of arr){
+        if (!item) continue;
+        const id = item.id;
+        if (!id) continue;
+        const up = { ...item };
+        if (typeof up.updatedAt !== 'number') up.updatedAt = nowMs();
+
+        const last = pushedAt.contabilidad.get(id) || 0;
+        if (up.updatedAt <= last) continue;
+
+        await set(ref(db, pItem(uid, "contabilidad", id)), up);
+        pushedAt.contabilidad.set(id, up.updatedAt);
+      }
+
+      setStatus(`✅ AutoSync: contabilidad subida (${new Date().toLocaleTimeString()})`);
+      return;
+    }
+  }
+
+  async function flushPending(){
+    if (!canSync()) return;
+    const keys = Array.from(pendingKeys);
+    pendingKeys.clear();
+    persistPending();
+    for (const k of keys){
+      await autoPushKey(k).catch(()=>{});
+    }
   }
 
   /* =========================
-     SYNC DOWN (merge updatedAt)
+     AUTO PULL (Realtime listeners)
   ========================= */
-  async function syncDownMergeAll(){
-    if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
-    const u = auth.currentUser;
-    if (!u) throw new Error('No logueado');
+  function applyRemoteToLocal(sectionKey, keyName, id, remoteObj){
+    if (!remoteObj || !id) return;
 
-    const [cR, pR, tR, fR, vR, kR, aSnap] = await Promise.all([
-      readSection(u.uid, "clientes"),
-      readSection(u.uid, "productos"),
-      readSection(u.uid, "taras"),
-      readSection(u.uid, "facturas"),
-      readSection(u.uid, "ventas"),
-      readSection(u.uid, "contabilidad"),
-      get(ref(db, `${base(u.uid)}/ajustes`))
-    ]);
+    const localArr = loadLocal(keyName, []);
+    const localMap = toMap(localArr);
+    const localObj = localMap[id];
 
-    const aR = aSnap.exists() ? (aSnap.val() || null) : null;
+    // si el remoto no es más nuevo, no tocamos
+    if (localObj && updAt(remoteObj) <= updAt(localObj)) return;
 
-    const L = getLocalState();
+    applyingRemote = true;
+    try{
+      const merged = mergeOneIntoArrayById(localArr, id, remoteObj);
+      saveLocal(keyName, merged);
+    } finally {
+      applyingRemote = false;
+    }
 
-    const cM = mergeMaps(toMap(L.clientes),  cR);
-    const pM = mergeMaps(toMap(L.productos), pR);
-    const tM = mergeMaps(toMap(L.taras),     tR);
-    const fM = mergeMaps(toMap(L.facturas),  fR);
+    // Aviso para tu app (si quieres refrescar listas sin recargar)
+    try {
+      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { section: sectionKey, id } }));
+    } catch {}
 
-    // ventas/contab: se guardan como mapa por id
-    const vM = mergeMaps(toMap(L.ventas, "id"), vR);
-    const kM = mergeMaps(toMap(L.contab, "id"), kR);
+    setStatus(`⬇️ Cloud → Local: ${sectionKey} actualizado (${new Date().toLocaleTimeString()})`);
+  }
 
-    let aM = L.ajustes || { updatedAt: 0 };
-    if (aR && typeof aR.updatedAt === "number" && aR.updatedAt >= (aM.updatedAt || 0)) aM = aR;
+  function applyRemoteObjectToLocal(keyName, remoteObj){
+    if (!remoteObj || typeof remoteObj !== 'object') return;
+    const localObj = loadLocal(keyName, { updatedAt: 0 });
+    if (typeof remoteObj.updatedAt !== 'number') return;
 
-    setLocalState({
-      clientes:  toArray(cM),
-      productos: toArray(pM),
-      taras:     toArray(tM),
-      facturas:  toArray(fM),
-      ventas:    toArray(vM),
-      contab:    toArray(kM),
-      ajustes:   aM
+    if (remoteObj.updatedAt <= (localObj.updatedAt || 0)) return;
+
+    applyingRemote = true;
+    try { saveLocal(keyName, remoteObj); }
+    finally { applyingRemote = false; }
+
+    try {
+      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { section: 'ajustes' } }));
+    } catch {}
+
+    setStatus(`⬇️ Cloud → Local: ajustes actualizado (${new Date().toLocaleTimeString()})`);
+  }
+
+  function startRealtimeListeners(){
+    if (!canSync() || listenersActive) return;
+    const uid = cloudUser().uid;
+
+    listenersActive = true;
+    activeRefs.length = 0;
+
+    const makeSec = (section, localKey, label) => {
+      const rSec = ref(db, pSection(uid, section));
+      activeRefs.push({ r: rSec, type: 'child' });
+
+      onChildAdded(rSec, (snap) => {
+        const id = snap.key;
+        const obj = snap.val();
+        applyRemoteToLocal(label, localKey, id, obj);
+      });
+
+      onChildChanged(rSec, (snap) => {
+        const id = snap.key;
+        const obj = snap.val();
+        applyRemoteToLocal(label, localKey, id, obj);
+      });
+    };
+
+    makeSec("clientes",  K.clientes,  "clientes");
+    makeSec("productos", K.productos, "productos");
+    makeSec("taras",     K.taras,     "taras");
+    makeSec("facturas",  K.facturas,  "facturas");
+    makeSec("ventas",    K.ventas,    "ventas");
+    makeSec("contabilidad", K.contab, "contabilidad");
+
+    // ajustes (objeto) con onValue
+    const rAj = ref(db, pSection(uid, "ajustes"));
+    activeRefs.push({ r: rAj, type: 'value' });
+    onValue(rAj, (snap) => {
+      if (!snap.exists()) return;
+      applyRemoteObjectToLocal(K.ajustes, snap.val());
     });
 
-    return {
-      ok: true,
-      merged: {
-        clientes:  Object.keys(cM).length,
-        productos: Object.keys(pM).length,
-        taras:     Object.keys(tM).length,
-        facturas:  Object.keys(fM).length,
-        ventas:    Object.keys(vM).length,
-        contab:    Object.keys(kM).length
+    setStatus(`🟢 AutoSync ON (Realtime)`);
+  }
+
+  function stopRealtimeListeners(){
+    if (!listenersActive) return;
+    try{
+      for (const it of activeRefs){
+        off(it.r);
       }
-    };
+    } catch {}
+    activeRefs.length = 0;
+    listenersActive = false;
+    setStatus(`🟠 AutoSync OFF`);
   }
 
   /* =========================
-     SYNC UP (no destructivo)
+     INTERCEPTAR GUARDADOS LOCALES
+     - Wrap window.save si existe
+     - Wrap localStorage.setItem como fallback
   ========================= */
-  async function setOne(uid, section, id, obj){
-    if (!obj) return { ok:false, id, reason:"empty" };
-    const payload = { ...obj };
-    if (typeof payload.updatedAt !== "number") payload.updatedAt = nowMs();
-    await set(ref(db, pItem(uid, section, id)), payload);
-    return { ok:true, id };
-  }
-
-  async function syncUpAllNonDestructive(){
-    if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
-    const u = auth.currentUser;
-    if (!u) throw new Error('No logueado');
-
-    const L = getLocalState();
-
-    const cM = toMap(L.clientes);
-    const pM = toMap(L.productos);
-    const tM = toMap(L.taras);
-    const fM = toMap(L.facturas);
-    const vM = toMap(L.ventas, "id");
-    const kM = toMap(L.contab, "id");
-    const aj = L.ajustes || null;
-
-    // Si local está vacío, esto NO borra nada (solo sube 0).
-    const tasks = [];
-
-    for (const [id,obj] of Object.entries(cM)) if (id) tasks.push(()=>setOne(u.uid,"clientes",id,obj));
-    for (const [id,obj] of Object.entries(pM)) if (id) tasks.push(()=>setOne(u.uid,"productos",id,obj));
-    for (const [id,obj] of Object.entries(tM)) if (id) tasks.push(()=>setOne(u.uid,"taras",id,obj));
-    for (const [id,obj] of Object.entries(fM)) if (id) tasks.push(()=>setOne(u.uid,"facturas",id,obj));
-    for (const [id,obj] of Object.entries(vM)) if (id) tasks.push(()=>setOne(u.uid,"ventas",id,obj));
-    for (const [id,obj] of Object.entries(kM)) if (id) tasks.push(()=>setOne(u.uid,"contabilidad",id,obj));
-
-    if (aj && typeof aj === 'object'){
-      const payload = { ...aj };
-      if (typeof payload.updatedAt !== "number") payload.updatedAt = nowMs();
-      tasks.push(()=>set(ref(db, `${base(u.uid)}/ajustes`), payload).then(()=>({ok:true,id:"ajustes"})));
+  function hookLocalSaves(){
+    // Wrap window.save (si tu app lo usa)
+    if (typeof window.save === 'function' && !window.save.__fmWrapped){
+      const orig = window.save;
+      const wrapped = function(k, v){
+        const res = orig(k, v);
+        schedulePushByKey(k);
+        return res;
+      };
+      wrapped.__fmWrapped = true;
+      window.save = wrapped;
     }
 
-    let ok = 0, fail = 0;
-    for (const fn of tasks){
-      try { const r = await fn(); if (r?.ok) ok++; else fail++; }
-      catch { fail++; }
+    // Fallback: interceptar localStorage.setItem
+    if (!localStorage.setItem.__fmWrapped){
+      const origSetItem = localStorage.setItem.bind(localStorage);
+      const wrappedSetItem = function(k, v){
+        origSetItem(k, v);
+        schedulePushByKey(k);
+      };
+      wrappedSetItem.__fmWrapped = true;
+      localStorage.setItem = wrappedSetItem;
     }
-
-    return { ok:true, writesOk: ok, writesFail: fail };
   }
 
   /* =========================
-     UPSERTS (uso recomendado)
-  ========================= */
-  async function upsert(section, obj, idKey="id"){
-    if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
-    const u = auth.currentUser;
-    if (!u) throw new Error('No logueado');
-    const id = obj?.[idKey];
-    if (!id) throw new Error(`Falta ${idKey} en ${section}`);
-    const payload = { ...obj };
-    if (typeof payload.updatedAt !== "number") payload.updatedAt = nowMs();
-    await set(ref(db, pItem(u.uid, section, id)), payload);
-    return { ok:true, id };
-  }
-
-  function makeVentaId(date, store){ return `${date}|${store}`; }
-
-  /* =========================
-     EXPONE API GLOBAL
+     API GLOBAL
   ========================= */
   window.FM_CLOUD = {
     enabled: () => cloudEnabled,
     initError: () => cloudInitError,
-
-    app,
-    auth,
-    db,
-
-    user: () => auth?.currentUser || null,
-    onAuth: (fn) => (auth ? onAuthStateChanged(auth, fn) : null),
-
-    login: (email, pass) => {
-      if (!cloudEnabled) return Promise.reject(new Error(cloudInitError || 'Cloud OFF'));
+    user: () => cloudUser(),
+    login: async (email, pass) => {
+      if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
       return signInWithEmailAndPassword(auth, email, pass);
     },
-    logout: () => {
-      if (!cloudEnabled) return Promise.reject(new Error(cloudInitError || 'Cloud OFF'));
+    logout: async () => {
+      if (!cloudEnabled) throw new Error(cloudInitError || 'Cloud OFF');
       return signOut(auth);
-    },
-
-    syncDownMergeAll,
-    syncUpAllNonDestructive,
-
-    upsertCliente:  (o)=>upsert("clientes", o),
-    upsertProducto: (o)=>upsert("productos", o),
-    upsertTara:     (o)=>upsert("taras", o),
-    upsertFactura:  (o)=>upsert("facturas", o),
-    upsertContab:   (o)=>upsert("contabilidad", o, "id"),
-
-    makeVentaId,
-    upsertVenta: (ventaObj)=>{
-      const v = { ...ventaObj };
-      if (!v.id) v.id = makeVentaId(v.date, v.store);
-      return upsert("ventas", v, "id");
     }
   };
 
-  // Log útil (no rompe si cloud OFF)
-  try {
-    if (auth) {
-      onAuthStateChanged(auth, (u) => {
-        console.log("[FM_CLOUD] enabled=", cloudEnabled, "auth=", u ? ("OK uid=" + u.uid) : "OUT");
-      });
-    } else {
-      console.log("[FM_CLOUD] enabled=", cloudEnabled, "auth=NOAUTH", cloudInitError);
-    }
-  } catch {}
-
-  /* =========================================================
-     UI PRO — BOTÓN ☁️ + PANEL (SIN CONSOLA)
-  ========================================================= */
+  /* =========================
+     UI B/W PRO (solo login/logout + estado)
+  ========================= */
   const LS_EMAIL = 'fm_cloud_email';
+
+  let statusLine = '';
+  function setStatus(t){
+    statusLine = t || '';
+    const el = $('#fmCloudInfo');
+    if (el) el.textContent = getStatusText();
+  }
+
+  function getStatusText(){
+    const enabled = cloudEnabled ? 'ON' : 'OFF';
+    const err = (!cloudEnabled && cloudInitError) ? `\nError: ${cloudInitError}` : '';
+    const u = cloudUser();
+    const who = u ? `\nAuth: LOGUEADO\nEmail: ${u.email || '(sin email)'}\nUID: ${(u.uid||'').slice(0,6)}…` : `\nAuth: NO logueado`;
+    return `Cloud: ${enabled}${err}${who}\n\n${statusLine || ''}`.trim();
+  }
 
   function injectCss(){
     if ($('#fmCloudCss')) return;
@@ -370,10 +513,7 @@ import {
         border-radius:14px; padding:10px 12px; font-weight:900;
         box-shadow:0 8px 24px rgba(0,0,0,.16);
       }
-      .fmCloudModal{
-        position:fixed; inset:0; z-index:999999; display:none;
-        background:rgba(0,0,0,.55);
-      }
+      .fmCloudModal{ position:fixed; inset:0; z-index:999999; display:none; background:rgba(0,0,0,.55); }
       .fmCloudModal.open{ display:block; }
       .fmCloudCard{
         position:absolute; left:12px; right:12px; top:12px; bottom:12px;
@@ -384,9 +524,8 @@ import {
       .fmCloudTop b{ font-size:14px; }
       .fmCloudRow{ display:flex; gap:10px; flex-wrap:wrap; }
       .fmCloudRow input{
-        flex:1; min-width:220px;
-        border:1px solid rgba(0,0,0,.25); border-radius:12px;
-        padding:10px 12px; font-size:14px;
+        flex:1; min-width:220px; border:1px solid rgba(0,0,0,.25);
+        border-radius:12px; padding:10px 12px; font-size:14px;
       }
       .fmCloudBtns{ display:flex; gap:10px; flex-wrap:wrap; }
       .fmCloudBtns button{
@@ -410,7 +549,7 @@ import {
     document.head.appendChild(st);
   }
 
-  function buildCloudUI(){
+  function buildUI(){
     if ($('#fmCloudFab')) return;
 
     const fab = document.createElement('button');
@@ -426,7 +565,7 @@ import {
     modal.innerHTML = `
       <div class="fmCloudCard" role="dialog" aria-modal="true">
         <div class="fmCloudTop">
-          <b>☁️ Cloud — Login + Sync</b>
+          <b>☁️ Cloud — AutoSync</b>
           <button class="fmCloudClose" id="fmCloudClose" type="button">Cerrar</button>
         </div>
 
@@ -438,17 +577,14 @@ import {
         <div class="fmCloudBtns">
           <button id="fmBtnLogin" class="primary" type="button">Login</button>
           <button id="fmBtnLogout" type="button">Logout</button>
-
-          <button id="fmBtnFirstUse" class="primary" type="button">Primer uso en este dispositivo (DOWN + Recargar)</button>
-          <button id="fmBtnDown" type="button">Sync DOWN (Descargar + Mezclar)</button>
-          <button id="fmBtnUp" type="button">Sync UP (Subir cambios)</button>
         </div>
 
-        <div class="fmCloudInfo" id="fmCloudInfo">Estado: esperando…</div>
+        <div class="fmCloudInfo" id="fmCloudInfo">Estado: …</div>
         <div class="fmCloudMsg" id="fmCloudMsg"></div>
 
         <div class="fmCloudSmall">
-          Nota: la contraseña NO se guarda. El email sí (opcional).
+          AutoSync: al guardar cualquier cosa se sube solo. En otros dispositivos baja en tiempo real.
+          (La contraseña NO se guarda.)
         </div>
       </div>
     `;
@@ -469,32 +605,7 @@ import {
     emailEl.value = localStorage.getItem(LS_EMAIL) || '';
 
     const setMsg = (t) => { msgEl.textContent = t || ''; };
-    const setInfo = (t) => { infoEl.textContent = t || ''; };
-
-    function statusText(extra=''){
-      const enabled = window.FM_CLOUD.enabled();
-      const initErr = window.FM_CLOUD.initError();
-      const u = window.FM_CLOUD.user();
-
-      let s = `Cloud: ${enabled ? 'ON' : 'OFF'}\n`;
-      if (!enabled && initErr) s += `Error: ${initErr}\n`;
-
-      if (!u) s += `Auth: NO logueado\n`;
-      else {
-        const e = u.email || '(sin email)';
-        const uid = (u.uid || '').slice(0,6) + '…';
-        s += `Auth: LOGUEADO\nEmail: ${e}\nUID: ${uid}\n`;
-      }
-      if (extra) s += `\n${extra}`;
-      return s;
-    }
-
-    async function refresh(extra=''){
-      setInfo(statusText(extra));
-    }
-
-    // Listener auth (si existe)
-    try { window.FM_CLOUD.onAuth(()=>refresh()); } catch {}
+    const refresh = () => { infoEl.textContent = getStatusText(); };
 
     $('#fmBtnLogin').addEventListener('click', async () => {
       setMsg('');
@@ -505,10 +616,11 @@ import {
         localStorage.setItem(LS_EMAIL, email);
         await window.FM_CLOUD.login(email, pass);
         passEl.value = '';
-        await refresh('✅ Login OK');
+        setStatus('🟢 AutoSync ON (conectado)');
+        refresh();
       }catch(e){
         setMsg(friendlyError(e));
-        await refresh();
+        refresh();
       }
     });
 
@@ -516,62 +628,49 @@ import {
       setMsg('');
       try{
         await window.FM_CLOUD.logout();
-        await refresh('✅ Logout OK');
+        setStatus('🟠 AutoSync OFF (logout)');
+        refresh();
       }catch(e){
         setMsg(friendlyError(e));
-        await refresh();
+        refresh();
       }
     });
 
-    $('#fmBtnDown').addEventListener('click', async () => {
-      setMsg('');
-      try{
-        const r = await window.FM_CLOUD.syncDownMergeAll();
-        await refresh(`✅ Sync DOWN OK\n${JSON.stringify(r.merged, null, 2)}`);
-      }catch(e){
-        setMsg(friendlyError(e));
-        await refresh();
-      }
-    });
-
-    $('#fmBtnUp').addEventListener('click', async () => {
-      setMsg('');
-      try{
-        const r = await window.FM_CLOUD.syncUpAllNonDestructive();
-        await refresh(`✅ Sync UP OK\nOK: ${r.writesOk}  FAIL: ${r.writesFail}`);
-      }catch(e){
-        setMsg(friendlyError(e));
-        await refresh();
-      }
-    });
-
-    $('#fmBtnFirstUse').addEventListener('click', async () => {
-      setMsg('');
-      const email = emailEl.value.trim();
-      const pass  = passEl.value;
-
-      try{
-        if (!window.FM_CLOUD.user()){
-          if (!email || !pass) return setMsg('⚠️ Para “primer uso”, pon email y contraseña.');
-          localStorage.setItem(LS_EMAIL, email);
-          await window.FM_CLOUD.login(email, pass);
-          passEl.value = '';
-        }
-        await window.FM_CLOUD.syncDownMergeAll();
-        setMsg('✅ Descargado. Recargando…');
-        setTimeout(()=>location.reload(), 300);
-      }catch(e){
-        setMsg(friendlyError(e));
-        await refresh();
-      }
-    });
-
-    refresh('Panel listo.');
+    refresh();
   }
 
+  /* =========================
+     BOOT
+  ========================= */
   function boot(){
     injectCss();
-    buildCloudUI();
+    buildUI();
+    hookLocalSaves();
+
+    // Auto start/stop listeners + flush pending cuando hay login
+    if (auth) {
+      onAuthStateChanged(auth, async (u) => {
+        if (!cloudEnabled) {
+          setStatus(`Cloud OFF: ${cloudInitError}`);
+          return;
+        }
+
+        if (u) {
+          setStatus('🟢 AutoSync ON (conectando realtime…)');
+          startRealtimeListeners();
+          await flushPending().catch(()=>{});
+          setStatus('🟢 AutoSync ON (realtime activo)');
+        } else {
+          stopRealtimeListeners();
+          setStatus('🟠 AutoSync OFF (sin login)');
+        }
+      });
+    } else {
+      setStatus(`Cloud OFF: ${cloudInitError || 'sin auth'}`);
+    }
+
+    // estado inicial
+    setStatus(cloudEnabled ? '🟠 AutoSync OFF (sin login)' : `Cloud OFF: ${cloudInitError}`);
   }
 
   if (document.readyState === 'loading') {
@@ -579,4 +678,5 @@ import {
   } else {
     boot();
   }
+
 })();
