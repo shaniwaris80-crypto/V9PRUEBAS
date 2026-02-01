@@ -4501,3 +4501,394 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }
 
 })();
+/* =========================================================
+   FACTU MIRAL — ADDON BULK PASTE (Pegar lista -> rellenar GRID)
+   ✅ Seguro: solo inyecta UI + rellena inputs existentes
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  const toNum = (x) => {
+    if (x == null) return null;
+    const s = String(x).trim().replace(/\s+/g,'').replace(',', '.');
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const cleanLine = (l) => String(l||'')
+    .replace(/\r/g,'')
+    .replace(/^[\s•\-\*–—]+/,'')        // bullets
+    .replace(/\s{2,}/g,' ')
+    .trim();
+
+  const detectMode = (s) => {
+    const t = s.toLowerCase();
+    if (/\b(caja|cajas|box|boxes)\b/.test(t)) return 'caja';
+    if (/\b(ud|uds|unidad|unidades|pieza|piezas)\b/.test(t)) return 'ud';
+    if (/\bkg\b/.test(t)) return 'kg';
+    return null;
+  };
+
+  const extractPrice = (s) => {
+    // "0,65€" o "€0,65" o "0,65 eur"
+    const a = s.match(/(\d+(?:[.,]\d+)?)\s*(€|eur)\b/i);
+    if (a) return toNum(a[1]);
+    const b = s.match(/\b(€)\s*(\d+(?:[.,]\d+)?)/i);
+    if (b) return toNum(b[2]);
+    // si no hay símbolo, intentar último decimal típico (0,65) como precio
+    const nums = (s.match(/\d+(?:[.,]\d+)?/g) || []);
+    if (nums.length >= 2) {
+      const last = nums[nums.length-1];
+      if (/[.,]/.test(last)) return toNum(last);
+    }
+    return null;
+  };
+
+  const removePriceFromLine = (s, price) => {
+    if (price == null) return s;
+    const p1 = String(price).replace('.', ',');
+    const p2 = String(price).replace(',', '.');
+    return s
+      .replace(new RegExp(`\\b${p1}\\s*(€|eur)\\b`, 'i'), '')
+      .replace(new RegExp(`\\b${p2}\\s*(€|eur)\\b`, 'i'), '')
+      .replace(new RegExp(`\\b€\\s*${p1}\\b`, 'i'), '')
+      .replace(new RegExp(`\\b€\\s*${p2}\\b`, 'i'), '');
+  };
+
+  function parseStructuredLine(line){
+    // TSV/CSV/PIPE: producto | modo | cantidad | bruto | precio | origen
+    const hasTab = line.includes('\t');
+    const hasPipe = line.includes('|');
+    const hasSemi = line.includes(';');
+    if (!hasTab && !hasPipe && !hasSemi) return null;
+
+    const sep = hasTab ? '\t' : (hasPipe ? '|' : ';');
+    const parts = line.split(sep).map(x => x.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+
+    const producto = parts[0];
+    const modo = (parts[1] || '').toLowerCase();
+    const cantidad = toNum(parts[2]);
+    const bruto = toNum(parts[3]);
+    const precio = toNum(parts[4]);
+    const origen = parts[5] || '';
+
+    return {
+      producto,
+      modo: (modo === 'kg' || modo === 'caja' || modo === 'ud') ? modo : null,
+      cantidad, bruto, precio, origen
+    };
+  }
+
+  function parseFreeLine(line){
+    // Ejemplos:
+    // "Naranja 10 cajas 150 kg 0,85"
+    // "Tomate rama 2 cajas 0,65"
+    // "Cilantro 10 ud 0,70"
+    // "Pepino 25 kg 0,60"
+    const original = line;
+    let modo = detectMode(line) || 'ud';
+
+    const precio = extractPrice(line);
+    line = removePriceFromLine(line, precio);
+
+    // números restantes
+    const numsRaw = (line.match(/\d+(?:[.,]\d+)?/g) || []);
+    const nums = numsRaw.map(toNum).filter(n => n != null);
+
+    // producto = quitar nums + unidades comunes
+    let producto = line
+      .replace(/\d+(?:[.,]\d+)?/g,' ')
+      .replace(/\b(kg|caja|cajas|ud|uds|unidad|unidades|pieza|piezas)\b/gi,' ')
+      .replace(/\s{2,}/g,' ')
+      .trim();
+
+    // si viene al revés "10 tomate"
+    if (!producto && nums.length && /\D/.test(original)) {
+      producto = original.replace(/^\s*\d+(?:[.,]\d+)?\s*/,'').trim();
+    }
+
+    if (!producto) return null;
+
+    let cantidad = null;
+    let bruto = null;
+
+    if (modo === 'caja' || modo === 'ud') {
+      cantidad = nums.length ? nums[0] : null;
+    } else if (modo === 'kg') {
+      // si hay 2 nums: asumimos pequeño=cantidad envases y grande=bruto
+      if (nums.length >= 2) {
+        const a = nums[0], b = nums[1];
+        if (a <= 30 && b > a) { cantidad = a; bruto = b; }
+        else if (b <= 30 && a > b) { cantidad = b; bruto = a; }
+        else { cantidad = a; bruto = b; }
+      } else if (nums.length === 1) {
+        // "25 kg" -> bruto=25, cantidad=1 (1 envase)
+        bruto = nums[0];
+        cantidad = 1;
+      }
+    }
+
+    return { producto, modo, cantidad, bruto, precio, origen:'' };
+  }
+
+  function parseBulk(text){
+    const lines = String(text||'')
+      .split('\n')
+      .map(cleanLine)
+      .filter(Boolean);
+
+    const out = [];
+    for (const l of lines){
+      const s = parseStructuredLine(l) || parseFreeLine(l);
+      if (!s || !s.producto) continue;
+      out.push(s);
+    }
+    return out;
+  }
+
+  function mergeDuplicates(items){
+    // Sumar duplicados por producto+modo (útil cuando pegas repetido)
+    const key = (x) => `${x.producto}__${x.modo||''}`.toLowerCase();
+    const map = new Map();
+    items.forEach(it => {
+      const k = key(it);
+      const cur = map.get(k);
+      if (!cur) {
+        map.set(k, { ...it });
+      } else {
+        if (it.modo === 'kg') {
+          cur.cantidad = (cur.cantidad||0) + (it.cantidad||0);
+          cur.bruto = (cur.bruto||0) + (it.bruto||0);
+        } else {
+          cur.cantidad = (cur.cantidad||0) + (it.cantidad||0);
+        }
+        // precio/origen: si el nuevo trae precio, se queda el nuevo
+        if (it.precio != null) cur.precio = it.precio;
+        if (it.origen) cur.origen = it.origen;
+      }
+    });
+    return Array.from(map.values());
+  }
+
+  // ====== GRID integration (robusto, no depende de IDs exactos) ======
+  function findAddLineButton(){
+    return $('#btnAddLinea') || $('#btnAddLine') || $('[data-add-line]') || $('[data-action="addLine"]');
+  }
+  function clickAddLine(times){
+    const btn = findAddLineButton();
+    if (!btn) return false;
+    for (let i=0;i<times;i++) btn.click();
+    return true;
+  }
+
+  function getRows(){
+    return $$('#gridBody .gridRow');
+  }
+
+  function getRowFields(row){
+    const prod = row.querySelector('input.input--prod')
+      || row.querySelector('input[data-field="producto"]')
+      || row.querySelector('input[placeholder*="Producto"]')
+      || row.querySelector('input');
+
+    const modo = row.querySelector('select')
+      || row.querySelector('[data-field="modo"]');
+
+    const nums = $$('.input--num', row);
+    const cantidad = nums[0] || row.querySelector('input[data-field="cantidad"]');
+    const bruto = nums[1] || row.querySelector('input[data-field="bruto"]');
+
+    const precio = row.querySelector('input.precio')
+      || row.querySelector('input[data-field="precio"]')
+      || row.querySelector('input[placeholder*="Precio"]');
+
+    const origen = row.querySelector('input[placeholder="Origen"]')
+      || row.querySelector('input[data-field="origen"]');
+
+    return { prod, modo, cantidad, bruto, precio, origen };
+  }
+
+  function setVal(el, v){
+    if (!el) return;
+    el.value = (v ?? '');
+    el.dispatchEvent(new Event('input', { bubbles:true }));
+    el.dispatchEvent(new Event('change', { bubbles:true }));
+  }
+
+  function fillGrid(items, opts){
+    if (!items.length) return alert('No se detectaron líneas válidas.');
+
+    let rows = getRows();
+    // localizar filas vacías
+    const emptyIdxs = rows
+      .map((r, i) => {
+        const { prod } = getRowFields(r);
+        return (prod && !String(prod.value||'').trim()) ? i : -1;
+      })
+      .filter(i => i >= 0);
+
+    // si no hay vacías, empezamos desde el final
+    let startIndex = emptyIdxs.length ? emptyIdxs[0] : rows.length;
+
+    // asegurar suficientes filas
+    const needed = startIndex + items.length;
+    if (needed > rows.length) {
+      const ok = clickAddLine(needed - rows.length);
+      rows = getRows();
+      if (!ok && needed > rows.length) {
+        alert('No pude crear más líneas (no encuentro botón + Añadir línea).');
+        return;
+      }
+    }
+
+    // rellenar
+    items.forEach((it, k) => {
+      const row = rows[startIndex + k];
+      if (!row) return;
+      const f = getRowFields(row);
+
+      // NO normalizamos: ponemos exactamente lo que pegaste
+      setVal(f.prod, it.producto);
+
+      // modo
+      const modo = it.modo || 'ud';
+      if (f.modo) {
+        try { f.modo.value = modo; } catch {}
+        f.modo.dispatchEvent(new Event('change', { bubbles:true }));
+      }
+
+      // cantidad/bruto
+      if (modo === 'kg') {
+        if (f.cantidad) setVal(f.cantidad, it.cantidad ?? '');
+        if (f.bruto) setVal(f.bruto, it.bruto ?? '');
+      } else {
+        if (f.cantidad) setVal(f.cantidad, it.cantidad ?? '');
+        if (f.bruto) setVal(f.bruto, ''); // no aplica
+      }
+
+      // precio (lo ponemos con punto interno)
+      if (f.precio && it.precio != null) {
+        setVal(f.precio, String(it.precio).replace(',', '.'));
+      }
+
+      // origen
+      if (f.origen && it.origen) setVal(f.origen, it.origen);
+    });
+
+    // focus al primer producto pegado
+    const r0 = rows[startIndex];
+    const f0 = r0 ? getRowFields(r0) : null;
+    if (f0?.prod) f0.prod.focus();
+  }
+
+  // ====== Modal UI injection ======
+  function ensureUI(){
+    if ($('#fmBulkPaste')) return;
+
+    const css = document.createElement('style');
+    css.textContent = `
+      .fmBulkBtn{ border:1px solid #111; background:#fff; color:#000; border-radius:12px; padding:10px 12px; font-weight:900; }
+      .fmModal{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:99999; display:none; }
+      .fmModal.isOpen{ display:block; }
+      .fmModalCard{ position:absolute; left:12px; right:12px; top:12px; bottom:12px; background:#fff; border:1px solid #111; border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+      .fmModalTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+      .fmModalTop b{ font-size:14px; }
+      .fmModalActions{ display:flex; gap:10px; flex-wrap:wrap; }
+      .fmModalActions button{ border:1px solid #111; background:#fff; border-radius:12px; padding:10px 12px; font-weight:900; }
+      .fmModalActions button.primary{ background:#111; color:#fff; }
+      .fmModalText{ width:100%; flex:1; border:1px solid rgba(0,0,0,.25); border-radius:14px; padding:12px; font-size:14px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .fmModalOpts{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; font-size:13px; }
+      .fmModalHint{ font-size:12px; opacity:.75; line-height:1.3; }
+    `;
+    document.head.appendChild(css);
+
+    const modal = document.createElement('div');
+    modal.id = 'fmBulkPaste';
+    modal.className = 'fmModal';
+    modal.innerHTML = `
+      <div class="fmModalCard" role="dialog" aria-modal="true">
+        <div class="fmModalTop">
+          <b>📋 Pegado masivo → GRID</b>
+          <button id="fmBulkClose" class="fmBulkBtn" type="button">Cerrar</button>
+        </div>
+
+        <div class="fmModalHint">
+          Pega líneas tipo WhatsApp/Excel. Ejemplos:<br>
+          <code>Tomate rama 2 cajas 0,65</code><br>
+          <code>Naranja 10 cajas 150 kg 0,85</code><br>
+          <code>Cilantro 10 ud 0,70</code><br>
+          TSV: <code>producto\tmodo\tcantidad\tbruto\tprecio\torigen</code>
+        </div>
+
+        <textarea id="fmBulkText" class="fmModalText" placeholder="Pega aquí tu lista…"></textarea>
+
+        <div class="fmModalOpts">
+          <label><input type="checkbox" id="fmBulkMerge" checked> Sumar duplicados (mismo producto+modo)</label>
+        </div>
+
+        <div class="fmModalActions">
+          <button id="fmBulkInsert" class="primary" type="button">Insertar en GRID</button>
+          <button id="fmBulkClear" type="button">Limpiar texto</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const open = () => {
+      modal.classList.add('isOpen');
+      setTimeout(()=> $('#fmBulkText')?.focus(), 50);
+    };
+    const close = () => modal.classList.remove('isOpen');
+
+    $('#fmBulkClose').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    $('#fmBulkClear').addEventListener('click', () => { $('#fmBulkText').value = ''; $('#fmBulkText').focus(); });
+
+    $('#fmBulkInsert').addEventListener('click', () => {
+      const txt = $('#fmBulkText').value || '';
+      let items = parseBulk(txt);
+      if ($('#fmBulkMerge').checked) items = mergeDuplicates(items);
+      fillGrid(items, {});
+      close();
+    });
+
+    // Insert button in UI (si encontramos barra de acciones)
+    const target = $('#facturaActions') || $('#accionesFactura') || $('.actions') || $('.toolbar') || document.body;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'btnBulkPaste';
+    btn.className = 'fmBulkBtn';
+    btn.textContent = '📋 Pegar lista';
+    btn.addEventListener('click', open);
+
+    // meterlo al principio si es toolbar
+    if (target !== document.body) target.prepend(btn);
+    else document.body.appendChild(btn);
+
+    // Atajo PC: Ctrl+Shift+V
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+        e.preventDefault();
+        open();
+      }
+      if (e.key === 'Escape' && modal.classList.contains('isOpen')) close();
+    });
+  }
+
+  function boot(){
+    ensureUI();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once:true });
+  } else {
+    boot();
+  }
+})();
