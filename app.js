@@ -4908,3 +4908,178 @@ window.addEventListener('fmcloud:changed', (e) => {
   clearTimeout(_fmReloadT);
   _fmReloadT = setTimeout(() => location.reload(), 250);
 });
+/* =========================================================
+   PATCH PRO: Ver PDF desde lista de facturas (sin romper core)
+   - Delegación: funciona aunque re-renderices la lista
+   - Crea visor PDF si no existe
+========================================================= */
+(function(){
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+
+  function ensurePdfViewer(){
+    if ($('#fmPdfModal')) return;
+
+    const style = document.createElement('style');
+    style.textContent = `
+      .fmPdfModal{position:fixed;inset:0;z-index:999999;display:none;background:rgba(0,0,0,.55)}
+      .fmPdfModal.open{display:block}
+      .fmPdfCard{position:absolute;left:12px;right:12px;top:12px;bottom:12px;background:#fff;border:1px solid #111;border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
+      .fmPdfTop{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.12)}
+      .fmPdfTop b{font:900 13px system-ui}
+      .fmPdfBtns{display:flex;gap:8px;flex-wrap:wrap}
+      .fmPdfBtns button{border:1px solid rgba(0,0,0,.25);background:#fff;border-radius:12px;padding:8px 10px;font:900 12px system-ui}
+      .fmPdfFrame{width:100%;height:100%;border:0;flex:1}
+    `;
+    document.head.appendChild(style);
+
+    const modal = document.createElement('div');
+    modal.id = 'fmPdfModal';
+    modal.className = 'fmPdfModal';
+    modal.innerHTML = `
+      <div class="fmPdfCard" role="dialog" aria-modal="true" aria-label="Ver PDF">
+        <div class="fmPdfTop">
+          <b id="fmPdfTitle">PDF</b>
+          <div class="fmPdfBtns">
+            <button id="fmPdfOpenTab" type="button">Abrir pestaña</button>
+            <button id="fmPdfPrint" type="button">Imprimir</button>
+            <button id="fmPdfClose" type="button">Cerrar</button>
+          </div>
+        </div>
+        <iframe id="fmPdfFrame" class="fmPdfFrame"></iframe>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.classList.remove('open');
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) close(); });
+    $('#fmPdfClose').addEventListener('click', close);
+
+    $('#fmPdfOpenTab').addEventListener('click', () => {
+      const src = $('#fmPdfFrame').getAttribute('src') || '';
+      if (src) window.open(src, '_blank', 'noopener,noreferrer');
+    });
+
+    $('#fmPdfPrint').addEventListener('click', () => {
+      const fr = $('#fmPdfFrame');
+      try{ fr.contentWindow?.focus(); fr.contentWindow?.print(); }catch(e){}
+    });
+  }
+
+  // Busca en localStorage la key de facturas de tu app (sin saber el nombre exacto)
+  function findInvoicesKey(){
+    // prioriza lo típico
+    const candidates = [
+      'factumiral_facturas', 'fm_facturas', 'arslan_v104_facturas', 'facturas'
+    ];
+    for (const k of candidates){
+      if (localStorage.getItem(k)) return k;
+    }
+    // fallback: buscar algo que parezca una lista grande con "FA-" dentro
+    for (const k of Object.keys(localStorage)){
+      const v = localStorage.getItem(k);
+      if (v && v.length > 200 && v.includes('FA-') && v.includes('factur')) return k;
+    }
+    return null;
+  }
+
+  function loadInvoices(){
+    const key = findInvoicesKey();
+    if (!key) return { key:null, list:[] };
+    try{
+      const list = JSON.parse(localStorage.getItem(key) || '[]') || [];
+      return { key, list: Array.isArray(list) ? list : [] };
+    }catch{
+      return { key, list:[] };
+    }
+  }
+
+  function getFacturaById(facturas, id){
+    if (!id) return null;
+    return facturas.find(f => String(f.id) === String(id) || String(f.num) === String(id) || String(f.numero) === String(id));
+  }
+
+  function openPdf(src, title){
+    ensurePdfViewer();
+    const modal = $('#fmPdfModal');
+    const frame = $('#fmPdfFrame');
+    const tit = $('#fmPdfTitle');
+
+    tit.textContent = title || 'PDF';
+    frame.src = src;
+    modal.classList.add('open');
+  }
+
+  // Extrae id desde botón o fila
+  function extractInvoiceId(btn){
+    // 1) data-id en el botón
+    const d = btn.dataset || {};
+    const byBtn = d.id || d.facturaId || d.fid || d.key || d.num;
+    if (byBtn) return byBtn;
+
+    // 2) data-id en la fila padre
+    const row = btn.closest('[data-id],[data-fid],[data-factura-id],[data-key],[data-num]');
+    if (row){
+      const rd = row.dataset || {};
+      return rd.id || rd.fid || rd.facturaId || rd.key || rd.num;
+    }
+    return null;
+  }
+
+  // Delegación para “Ver PDF”
+  function install(){
+    document.addEventListener('click', (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement)) return;
+
+      // Detecta botones comunes de “Ver PDF” (ajusta si tienes otra clase)
+      const btn = t.closest(
+        '#btnVerPdf, .btnVerPdf, .js-viewpdf, [data-action="viewpdf"], [data-action="verpdf"], [data-view="pdf"]'
+      );
+      if (!btn) return;
+
+      e.preventDefault();
+
+      const id = extractInvoiceId(btn);
+      const { list } = loadInvoices();
+      const fac = getFacturaById(list, id);
+
+      if (!fac){
+        // Si no podemos encontrar, al menos avisamos en consola para depurar
+        console.warn('No encuentro factura para id:', id, 'facturas:', list.slice(0,3));
+        alert('No se encontró la factura (id vacío o mal enlazado).');
+        return;
+      }
+
+      // ✅ Prioridad: pdfUrl de nube o local
+      const src =
+        fac.pdfUrl ||
+        fac.pdfURL ||
+        fac.pdfBlobUrl ||
+        fac.pdfBlobURL ||
+        (fac.pdf && typeof fac.pdf === 'string' ? fac.pdf : '');
+
+      if (src){
+        openPdf(src, `PDF · ${fac.num || fac.numero || fac.id || ''}`.trim());
+        return;
+      }
+
+      // Si no hay pdf guardado, intenta “generar pdf” si existe botón global
+      const gen = document.querySelector('#btnPDF, #btnGenPDF, #btnGenerarPDF, [data-action="pdf"], [data-action="genpdf"]');
+      if (gen){
+        alert('Esta factura no tiene PDF guardado. Genera el PDF primero y vuelve a “Ver PDF”.');
+        // opcional: gen.click();
+      }else{
+        alert('Esta factura no tiene PDF guardado. Genera PDF y vuelve a intentar.');
+      }
+    });
+  }
+
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', install, { once:true });
+  } else {
+    install();
+  }
+
+})();
