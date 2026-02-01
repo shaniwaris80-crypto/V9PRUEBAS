@@ -1385,6 +1385,37 @@ PARTE 1/4 — FACTU MIRAL (B/W PRO) — index.html (COMPLETO)
   document.addEventListener('blur', normalizeOnBlur, true);
 })();
 </script>
+<script>
+(() => {
+  // Botón “Pegar lista” arriba
+  function addBulkBtn(){
+    if(document.getElementById('bulkBtn')) return;
+    const b = document.createElement('button');
+    b.id='bulkBtn';
+    b.textContent='📋 Pegar lista';
+    b.style.cssText='position:fixed;right:12px;bottom:64px;z-index:99999;border:1px solid #111;background:#fff;border-radius:14px;padding:10px 12px;font:900 13px system-ui;box-shadow:0 10px 24px rgba(0,0,0,.18)';
+    document.body.appendChild(b);
+
+    b.onclick = () => {
+      const raw = prompt("Pega aquí (ej: TOMATE 2\\nPATATA 5):");
+      if(!raw) return;
+      const lines = raw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+
+      // parse muy simple: "producto cantidad"
+      const parsed = lines.map(l=>{
+        const m = l.match(/^(.*?)[\s\t]+([0-9]+([.,][0-9]+)?)\s*$/);
+        if(!m) return { producto: l, cantidad: '' };
+        return { producto: m[1].trim(), cantidad: m[2].replace(',', '.') };
+      });
+
+      console.log("BULK PARSED:", parsed);
+      alert("✅ Lista parseada. Mira consola (F12) BULK PARSED.\nSiguiente paso: conectarlo al grid.");
+    };
+  }
+
+  document.addEventListener('DOMContentLoaded', addBulkBtn);
+})();
+</script>
 
 
 
