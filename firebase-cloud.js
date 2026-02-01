@@ -1,11 +1,3 @@
-/* =========================================================
-   FACTU MIRAL — firebase-cloud.js PRO (B/W + EASY SYNC)
-   - Sin reload automático
-   - Auto-sync con debounce (opcional)
-   - Sync ahora = Recibir (merge) + Enviar
-   - Indicador estado + cola pendiente
-========================================================= */
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
 import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
@@ -13,7 +5,7 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
 (() => {
   'use strict';
 
-  // ========= TU CONFIG =========
+  // ====== Firebase config ======
   const firebaseConfig = {
     apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
     authDomain: "factumiral.firebaseapp.com",
@@ -25,196 +17,29 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
     databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
   };
 
-  // ========= Helpers =========
   const $ = (s, r=document) => r.querySelector(s);
   const now = () => Date.now();
-  const pad2 = (n) => String(n).padStart(2,'0');
-  const fmt = (ts) => {
-    if (!ts) return '-';
-    const d = new Date(ts);
-    return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-  };
 
-  const LS_EMAIL   = 'fm_cloud_email_v2';
-  const LS_AUTO    = 'fm_cloud_auto_v2';        // "1" / "0"
-  const LS_UIREF   = 'fm_cloud_uirefresh_v2';   // "1" / "0"
-  const LS_DEVICE  = 'fm_cloud_device_v2';
-  const LS_META    = 'fm_cloud_meta_v2';        // { keyEnc: updatedAt }
+  const LS_EMAIL  = 'fm_cloud_email';
+  const LS_AUTO   = 'fm_cloud_auto';     // "1" | "0"
+  const LS_DEVICE = 'fm_cloud_device';
+  const LS_META   = 'fm_cloud_meta';     // { enc: updatedAt }
 
   const EXCLUDE_PREFIX = ['firebase:', 'grm_', 'goog:', 'debug_', 'cache', 'session', 'fm_cloud_'];
-  const EXCLUDE_EXACT  = new Set([LS_EMAIL, LS_AUTO, LS_UIREF, LS_DEVICE, LS_META]);
+  const EXCLUDE_EXACT  = new Set([LS_EMAIL, LS_AUTO, LS_DEVICE, LS_META]);
 
   const isExcludedKey = (k) => EXCLUDE_EXACT.has(k) || EXCLUDE_PREFIX.some(p => k.startsWith(p));
 
-  const safeJson = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
-  const looksData = (k, raw) => {
-    // Heurística para no subir “estado UI” pequeñito
-    const nameOk = /(clientes|productos|taras|facturas|settings|provider|precio|pricehist|ventas)/i.test(k)
-                || /factu|miral|arslan|v\d+/i.test(k);
-    const s = String(raw || '').trim();
-    const jsonLike = s.startsWith('{') || s.startsWith('[');
-    const j = jsonLike ? safeJson(s) : null;
-    const bigEnough = s.length > 20;
-    const notTinyObject = !(j && typeof j === 'object' && !Array.isArray(j) && Object.keys(j).length <= 1 && s.length < 80);
-    return (nameOk && jsonLike && bigEnough && notTinyObject) || (jsonLike && s.length > 400); // segunda vía: JSON grande
-  };
-
-  // Base64URL para usar keys en RTDB sin romper paths
   const b64urlEncode = (str) => {
     const b64 = btoa(unescape(encodeURIComponent(str)));
     return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   };
 
-  // ========= Estado =========
-  let enabled = true;
-  let initErr = '';
-  let app=null, auth=null, db=null;
+  const safeJson = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
 
-  let uid = null;
-  let deviceId = localStorage.getItem(LS_DEVICE);
-  if (!deviceId) {
-    deviceId = 'dev_' + Math.random().toString(16).slice(2) + '_' + Date.now().toString(16);
-    localStorage.setItem(LS_DEVICE, deviceId);
-  }
-
-  let autoSync = (localStorage.getItem(LS_AUTO) ?? '1') === '1';         // por defecto ON (más fácil)
-  let uiRefresh = (localStorage.getItem(LS_UIREF) ?? '0') === '1';       // por defecto OFF (evita saltos)
-  let pendingCount = 0;
-  let lastPush = 0;
-  let lastPull = 0;
-  let lastRemoteApplied = 0;
-
-  let applyingRemote = false;
-  let listenersOn = false;
-  let kvRef = null;
-
-  const meta = (() => {
-    try { return JSON.parse(localStorage.getItem(LS_META) || '{}') || {}; }
-    catch { return {}; }
-  })();
-  const saveMeta = () => localStorage.setItem(LS_META, JSON.stringify(meta));
-
-  function rootPath(_uid){ return `factumiral/${_uid}`; }
-  function kvPath(_uid){ return `${rootPath(_uid)}/kv`; }
-  function metaPath(_uid){ return `${rootPath(_uid)}/meta`; }
-
-  // ========= UI (B/W PRO) =========
-  function injectUI(){
-    if ($('#fmCloudFab')) return;
-
-    const st = document.createElement('style');
-    st.textContent = `
-      .fmFab{position:fixed;right:12px;bottom:12px;z-index:999999;border:1px solid #111;background:#fff;border-radius:14px;padding:10px 12px;font:900 13px system-ui;box-shadow:0 10px 24px rgba(0,0,0,.18);display:flex;gap:10px;align-items:center}
-      .fmDot{width:10px;height:10px;border-radius:999px;border:1px solid #111;background:#fff}
-      .fmDot.on{background:#111}
-      .fmDot.warn{background:#fff; box-shadow:0 0 0 2px #111 inset}
-      .fmM{position:fixed;inset:0;z-index:9999999;display:none;background:rgba(0,0,0,.55)}
-      .fmM.open{display:block}
-      .fmC{position:absolute;left:12px;right:12px;top:12px;bottom:12px;background:#fff;border:1px solid #111;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px}
-      .fmRow{display:flex;gap:10px;flex-wrap:wrap}
-      .fmRow input{flex:1;min-width:220px;border:1px solid rgba(0,0,0,.25);border-radius:12px;padding:10px 12px;font:14px system-ui}
-      .fmBtns{display:flex;gap:10px;flex-wrap:wrap}
-      .fmBtns button{border:1px solid #111;background:#fff;border-radius:12px;padding:10px 12px;font:900 13px system-ui}
-      .fmBtns .p{background:#111;color:#fff}
-      .fmInfo{border:1px solid rgba(0,0,0,.18);border-radius:14px;padding:10px 12px;background:#f7f7f7;font:12px ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;flex:1;overflow:auto}
-      .fmMsg{font:12px system-ui;opacity:.85;white-space:pre-wrap}
-      .fmTog{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-      .fmTog label{display:flex;gap:8px;align-items:center;border:1px solid rgba(0,0,0,.2);border-radius:999px;padding:8px 10px;font:800 12px system-ui}
-      .fmTog input{transform:scale(1.1)}
-    `;
-    document.head.appendChild(st);
-
-    const fab = document.createElement('button');
-    fab.id = 'fmCloudFab';
-    fab.className = 'fmFab';
-    fab.type = 'button';
-    fab.innerHTML = `<span id="fmDot" class="fmDot"></span><span id="fmFabTxt">☁️ Cloud</span>`;
-    document.body.appendChild(fab);
-
-    const modal = document.createElement('div');
-    modal.id = 'fmCloudModal';
-    modal.className = 'fmM';
-    modal.innerHTML = `
-      <div class="fmC">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <b style="font:900 14px system-ui">☁️ Cloud · PRO Sync</b>
-          <button id="fmClose" style="border:1px solid #111;background:#fff;border-radius:12px;padding:8px 10px;font:900 13px system-ui">Cerrar</button>
-        </div>
-
-        <div class="fmRow" id="fmLoginRow">
-          <input id="fmEmail" type="email" autocomplete="email" placeholder="Email" />
-          <input id="fmPass" type="password" autocomplete="current-password" placeholder="Contraseña" />
-        </div>
-
-        <div class="fmTog">
-          <label><input id="fmAuto" type="checkbox"> Auto-sync</label>
-          <label><input id="fmUI" type="checkbox"> Refrescar UI</label>
-        </div>
-
-        <div class="fmBtns">
-          <button id="fmLogin" class="p" type="button">Login</button>
-          <button id="fmLogout" type="button">Logout</button>
-          <button id="fmSync" class="p" type="button">⚡ Sincronizar ahora</button>
-          <button id="fmPull" type="button">⬇️ Recibir</button>
-          <button id="fmPush" type="button">⬆️ Enviar</button>
-        </div>
-
-        <div class="fmInfo" id="fmInfo">Estado…</div>
-        <div class="fmMsg" id="fmMsg"></div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-
-    $('#fmEmail').value = localStorage.getItem(LS_EMAIL) || '';
-    $('#fmAuto').checked = autoSync;
-    $('#fmUI').checked = uiRefresh;
-
-    fab.onclick = () => { modal.classList.add('open'); render(); };
-    $('#fmClose').onclick = () => modal.classList.remove('open');
-    modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.classList.remove('open'); });
-  }
-
-  function setDot(mode){
-    const dot = $('#fmDot');
-    if (!dot) return;
-    dot.classList.remove('on','warn');
-    if (mode === 'on') dot.classList.add('on');
-    if (mode === 'warn') dot.classList.add('warn');
-  }
-
-  function msg(t){ const m = $('#fmMsg'); if (m) m.textContent = t || ''; }
-
-  function render(extra=''){
-    const info = $('#fmInfo');
-    const txt  = $('#fmFabTxt');
-    const u = auth?.currentUser;
-    const logged = !!u;
-
-    // dot
-    if (!logged) setDot(''); else if (pendingCount > 0) setDot('warn'); else setDot('on');
-
-    if (txt) {
-      const state = logged ? (pendingCount > 0 ? `Pendiente (${pendingCount})` : 'OK') : 'OFF';
-      txt.textContent = `☁️ Cloud · ${state}`;
-    }
-
-    if (!info) return;
-    info.textContent =
-      `enabled: ${enabled}\n` +
-      (enabled ? '' : `initErr: ${initErr}\n`) +
-      `auth: ${logged ? 'LOGUEADO' : 'NO'}\n` +
-      (logged ? `email: ${u.email || '-'}\nuid: ${(u.uid||'').slice(0,8)}…\n` : '') +
-      `device: ${deviceId}\n` +
-      `autoSync: ${autoSync}\n` +
-      `uiRefresh: ${uiRefresh}\n` +
-      `pendientes: ${pendingCount}\n` +
-      `lastPush: ${fmt(lastPush)}\n` +
-      `lastPull: ${fmt(lastPull)}\n` +
-      `lastRemoteApplied: ${fmt(lastRemoteApplied)}\n` +
-      (extra ? `\n${extra}` : '');
-  }
-
-  // ========= Firebase init =========
+  // ====== Init Firebase ======
+  let app, auth, db;
+  let enabled = true, initErr = '';
   try{
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
@@ -224,77 +49,169 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
     initErr = String(e?.message || e);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { injectUI(); render(); wireUI(); }, { once:true });
-  } else {
-    injectUI(); render(); wireUI();
+  let uid = null;
+  let kvRef = null;
+  let listenersOn = false;
+
+  let deviceId = localStorage.getItem(LS_DEVICE);
+  if (!deviceId) {
+    deviceId = 'dev_' + Math.random().toString(16).slice(2) + '_' + Date.now().toString(16);
+    localStorage.setItem(LS_DEVICE, deviceId);
   }
 
-  if (!enabled) return;
+  let autoSync = (localStorage.getItem(LS_AUTO) ?? '1') === '1';
+  let applyingRemote = false;
 
-  // ========= Sync core =========
-  function getDataKeys(){
-    const keys = [];
+  const meta = (() => {
+    try { return JSON.parse(localStorage.getItem(LS_META) || '{}') || {}; }
+    catch { return {}; }
+  })();
+  const saveMeta = () => localStorage.setItem(LS_META, JSON.stringify(meta));
+
+  const rootPath = (_uid) => `factumiral/${_uid}`;
+  const kvPath   = (_uid) => `${rootPath(_uid)}/kv`;
+  const metaPath = (_uid) => `${rootPath(_uid)}/meta`;
+
+  // ====== UI ======
+  function injectUI(){
+    if ($('#fmCloudFab')) return;
+
+    const st = document.createElement('style');
+    st.textContent = `
+      .fmFab{position:fixed;right:12px;bottom:12px;z-index:999999;border:1px solid #111;background:#fff;border-radius:14px;padding:10px 12px;font:900 13px system-ui;box-shadow:0 10px 24px rgba(0,0,0,.18)}
+      .fmM{position:fixed;inset:0;z-index:9999999;display:none;background:rgba(0,0,0,.55)}
+      .fmM.open{display:block}
+      .fmC{position:absolute;left:12px;right:12px;top:12px;bottom:12px;background:#fff;border:1px solid #111;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px}
+      .fmRow{display:flex;gap:10px;flex-wrap:wrap}
+      .fmRow input{flex:1;min-width:220px;border:1px solid rgba(0,0,0,.25);border-radius:12px;padding:10px 12px;font:14px system-ui}
+      .fmBtns{display:flex;gap:10px;flex-wrap:wrap}
+      .fmBtns button{border:1px solid #111;background:#fff;border-radius:12px;padding:10px 12px;font:900 13px system-ui}
+      .fmBtns .p{background:#111;color:#fff}
+      .fmInfo{border:1px solid rgba(0,0,0,.18);border-radius:14px;padding:10px 12px;background:#f7f7f7;font:12px ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;flex:1;overflow:auto}
+      .fmTog{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+      .fmTog label{display:flex;gap:8px;align-items:center;border:1px solid rgba(0,0,0,.2);border-radius:999px;padding:8px 10px;font:900 12px system-ui}
+    `;
+    document.head.appendChild(st);
+
+    const fab = document.createElement('button');
+    fab.id = 'fmCloudFab';
+    fab.className = 'fmFab';
+    fab.type = 'button';
+    fab.textContent = '☁️ Cloud';
+    document.body.appendChild(fab);
+
+    const modal = document.createElement('div');
+    modal.id = 'fmCloudModal';
+    modal.className = 'fmM';
+    modal.innerHTML = `
+      <div class="fmC">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <b style="font:900 14px system-ui">☁️ Cloud · PRO</b>
+          <button id="fmClose" style="border:1px solid #111;background:#fff;border-radius:12px;padding:8px 10px;font:900 13px system-ui">Cerrar</button>
+        </div>
+
+        <div class="fmRow">
+          <input id="fmEmail" type="email" autocomplete="email" placeholder="Email" />
+          <input id="fmPass" type="password" autocomplete="current-password" placeholder="Contraseña" />
+        </div>
+
+        <div class="fmTog">
+          <label><input id="fmAuto" type="checkbox"> Auto-sync</label>
+        </div>
+
+        <div class="fmBtns">
+          <button id="fmLogin" class="p" type="button">Login</button>
+          <button id="fmLogout" type="button">Logout</button>
+          <button id="fmSync" class="p" type="button">⚡ Sincronizar</button>
+          <button id="fmPull" type="button">⬇️ Recibir</button>
+          <button id="fmPush" type="button">⬆️ Enviar</button>
+          <button id="fmDiag" type="button">🧪 Diagnóstico</button>
+        </div>
+
+        <div class="fmInfo" id="fmInfo">Estado…</div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    fab.onclick = () => { modal.classList.add('open'); render(); };
+    $('#fmClose').onclick = () => modal.classList.remove('open');
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.classList.remove('open'); });
+
+    $('#fmEmail').value = localStorage.getItem(LS_EMAIL) || '';
+    $('#fmAuto').checked = autoSync;
+  }
+
+  function render(extra=''){
+    const info = $('#fmInfo');
+    if (!info) return;
+    const u = auth?.currentUser;
+    info.textContent =
+      `enabled: ${enabled}\n` +
+      (enabled ? '' : `initErr: ${initErr}\n`) +
+      `auth: ${u ? 'LOGUEADO' : 'NO'}\n` +
+      (u ? `email: ${u.email || '-'}\nuid: ${u.uid}\n` : '') +
+      `deviceId: ${deviceId}\n` +
+      `autoSync: ${autoSync}\n` +
+      `localStorage keys: ${Object.keys(localStorage).length}\n` +
+      (extra ? `\n${extra}` : '');
+  }
+
+  // ====== Core: push/pull ======
+  function pickKeys(){
+    // sube SOLO JSONs “serios”
+    const out = [];
     for (const k of Object.keys(localStorage)){
       if (isExcludedKey(k)) continue;
       const raw = localStorage.getItem(k);
       if (!raw) continue;
-      if (looksData(k, raw)) keys.push(k);
+      const s = String(raw).trim();
+      if (!(s.startsWith('{') || s.startsWith('['))) continue;
+      const j = safeJson(s);
+      if (!j) continue;
+      if (s.length < 30) continue;
+      out.push(k);
     }
-    // fallback: si no encuentra nada, sube todo menos excluidos
-    if (keys.length === 0) {
+    // fallback: si tu app guarda como texto raro, sube todo menos excluidos
+    if (out.length === 0) {
       for (const k of Object.keys(localStorage)){
-        if (!isExcludedKey(k)) keys.push(k);
+        if (!isExcludedKey(k)) out.push(k);
       }
     }
-    return Array.from(new Set(keys));
+    return Array.from(new Set(out));
   }
 
   async function pushKeys(keys){
-    if (!uid) throw new Error('No auth');
-    const base = kvPath(uid);
+    if (!uid) throw new Error('no-auth');
     const ts = now();
-    const updatesMap = {};
-
+    const up = {};
     for (const k of keys){
       if (isExcludedKey(k)) continue;
       const raw = localStorage.getItem(k);
       if (raw == null) continue;
-
       const enc = b64urlEncode(k);
-      updatesMap[`${base}/${enc}`] = { k, raw, updatedAt: ts, deviceId };
+      up[enc] = { k, raw, updatedAt: ts, deviceId };
       meta[enc] = ts;
     }
-
-    // meta ping
-    updatesMap[`${metaPath(uid)}/lastPush`] = { ts, deviceId };
-
-    await update(ref(db), updatesMap);
+    // ✅ escribimos en /kv (no raíz)
+    await update(ref(db, kvPath(uid)), up);
+    await update(ref(db, metaPath(uid)), { lastPush: { ts, deviceId } });
     saveMeta();
-    lastPush = ts;
-    pendingCount = 0;
     render(`✅ Push OK · keys=${keys.length}`);
   }
 
-  async function pullOnce(){
-    if (!uid) throw new Error('No auth');
-    const base = kvPath(uid);
-    const snap = await get(ref(db, base));
-    if (!snap.exists()) { lastPull = now(); render('ℹ️ Pull: vacío'); return 0; }
-
+  async function pullAll(){
+    if (!uid) throw new Error('no-auth');
+    const snap = await get(ref(db, kvPath(uid)));
+    if (!snap.exists()) { render('ℹ️ Pull: vacío'); return 0; }
     const obj = snap.val() || {};
     let applied = 0;
     applyingRemote = true;
-
     try{
       for (const enc of Object.keys(obj)){
         const row = obj[enc];
-        if (!row || typeof row.raw !== 'string' || !row.k) continue;
-
+        if (!row || !row.k || typeof row.raw !== 'string') continue;
         const remoteAt = Number(row.updatedAt || 0);
         const localAt  = Number(meta[enc] || 0);
-
-        // aplica solo si es más nuevo
         if (remoteAt > localAt){
           localStorage.setItem(row.k, row.raw);
           meta[enc] = remoteAt;
@@ -305,95 +222,30 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
     } finally {
       applyingRemote = false;
     }
-
-    lastPull = now();
-    lastRemoteApplied = applied ? lastPull : lastRemoteApplied;
-
-    // Opcional: refrescar UI de tu app SOLO si lo activas
-    if (uiRefresh && applied){
-      try { window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail:{ reason:'pulled', applied } })); } catch {}
-    }
-
+    await update(ref(db, metaPath(uid)), { lastPull: { ts: now(), deviceId } });
     render(`✅ Pull OK · applied=${applied}`);
     return applied;
   }
 
-  // Sincronizar PRO: recibe, luego envía (source-of-truth final = local)
   async function syncNow(){
-    msg('');
-    if (!uid) return msg('⚠️ Haz login primero.');
-    try{
-      render('⏳ Sync… (pull+push)');
-      await pullOnce();
-      const keys = getDataKeys();
-      await pushKeys(keys);
-      msg('✅ Sync OK (sin reload)');
-    }catch(e){
-      msg('❌ ' + (e?.code || e?.message || e));
-      render('❌ Error sync');
-    }
+    if (!uid) return render('⚠️ Login primero');
+    render('⏳ Sync…');
+    await pullAll();
+    const keys = pickKeys();
+    await pushKeys(keys);
+    render('✅ Sync OK (sin recarga)');
   }
 
-  // ========= Auto-sync (debounce) =========
-  const pending = new Set();
-  let flushTimer = null;
-
-  function scheduleAutoPush(k){
-    if (!uid) return;
-    if (!autoSync) return;
-    if (applyingRemote) return;
-    if (isExcludedKey(k)) return;
-
-    const raw = localStorage.getItem(k);
-    if (!looksData(k, raw)) return;
-
-    pending.add(k);
-    pendingCount = pending.size;
-    render();
-
-    if (flushTimer) clearTimeout(flushTimer);
-    flushTimer = setTimeout(async () => {
-      flushTimer = null;
-      if (!uid || !autoSync) return;
-      const list = Array.from(pending);
-      pending.clear();
-      pendingCount = 0;
-      try{
-        await pushKeys(list);
-        msg(`✅ Auto-sync · ${list.length} keys`);
-      }catch{
-        // si falla, volvemos a poner pendiente
-        list.forEach(x => pending.add(x));
-        pendingCount = pending.size;
-        render('⚠️ Auto-sync falló (queda pendiente)');
-      }
-    }, 500);
-  }
-
-  function hookLocalStorage(){
-    if (localStorage.setItem.__fmWrapped) return;
-
-    const orig = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function(k, v){
-      orig(k, v);
-      scheduleAutoPush(k);
-    };
-    localStorage.setItem.__fmWrapped = true;
-  }
-
-  // ========= Realtime pull (sin romper UI) =========
+  // ====== Realtime listeners (opcional) ======
   function startRealtime(){
     if (listenersOn || !uid) return;
     listenersOn = true;
-    hookLocalStorage();
-
     kvRef = ref(db, kvPath(uid));
+
     const handler = (snap) => {
       const enc = snap.key;
       const row = snap.val();
       if (!enc || !row || !row.k || typeof row.raw !== 'string') return;
-
-      // no reaplicar tus propios writes (opcional)
       if (row.deviceId && row.deviceId === deviceId) return;
 
       const remoteAt = Number(row.updatedAt || 0);
@@ -408,13 +260,7 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
       } finally {
         applyingRemote = false;
       }
-
-      lastRemoteApplied = now();
-      render(`📥 Cambio remoto: ${row.k}`);
-
-      if (uiRefresh){
-        try { window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail:{ reason:'realtime', key: row.k } })); } catch {}
-      }
+      render(`📥 Remoto aplicado: ${row.k}`);
     };
 
     onChildAdded(kvRef, handler);
@@ -428,83 +274,103 @@ import { getDatabase, ref, get, update, onChildAdded, onChildChanged, off } from
     kvRef = null;
   }
 
-  // ========= UI wiring =========
-  function wireUI(){
-    // toggles
+  // ====== Auto-sync (debounce) ======
+  const pending = new Set();
+  let t = null;
+
+  function schedule(k){
+    if (!uid) return;
+    if (!autoSync) return;
+    if (applyingRemote) return;
+    if (isExcludedKey(k)) return;
+
+    pending.add(k);
+    if (t) clearTimeout(t);
+    t = setTimeout(async () => {
+      t = null;
+      const list = Array.from(pending);
+      pending.clear();
+      try{ await pushKeys(list); }
+      catch(e){ render('⚠️ Auto-sync error: ' + (e?.code || e?.message || e)); }
+    }, 600);
+  }
+
+  function hookSetItem(){
+    if (localStorage.setItem.__fmWrapped) return;
+    const orig = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = function(k, v){
+      orig(k, v);
+      try { schedule(k); } catch {}
+    };
+    localStorage.setItem.__fmWrapped = true;
+  }
+
+  // ====== Diagnóstico ======
+  function diag(){
+    const keys = Object.keys(localStorage);
+    const find = (needle) => keys.filter(k => k.toLowerCase().includes(needle));
+    const msg =
+      `Keys (match):\n` +
+      `clientes: ${find('client').concat(find('cliente')).slice(0,10).join(', ') || '-'}\n` +
+      `facturas: ${find('fact').slice(0,10).join(', ') || '-'}\n` +
+      `productos: ${find('prod').slice(0,10).join(', ') || '-'}\n` +
+      `ventas: ${find('venta').slice(0,10).join(', ') || '-'}\n` +
+      `\nTotal keys: ${keys.length}`;
+    render(msg);
+  }
+
+  // ====== Wire UI + Auth ======
+  function wire(){
+    $('#fmLogin')?.addEventListener('click', async () => {
+      if (!enabled) return render('❌ Firebase init: ' + initErr);
+      const em = ($('#fmEmail')?.value || '').trim();
+      const pw = $('#fmPass')?.value || '';
+      if (!em || !pw) return render('⚠️ Pon email/pass');
+      localStorage.setItem(LS_EMAIL, em);
+      try{
+        await signInWithEmailAndPassword(auth, em, pw);
+        $('#fmPass').value = '';
+        render('✅ Login OK');
+      }catch(e){
+        render('❌ Login: ' + (e?.code || e?.message || e));
+      }
+    });
+
+    $('#fmLogout')?.addEventListener('click', async () => {
+      try{ await signOut(auth); render('✅ Logout'); }catch(e){ render('❌ ' + e); }
+    });
+
     $('#fmAuto')?.addEventListener('change', (e) => {
       autoSync = !!e.target.checked;
       localStorage.setItem(LS_AUTO, autoSync ? '1' : '0');
       render();
     });
 
-    $('#fmUI')?.addEventListener('change', (e) => {
-      uiRefresh = !!e.target.checked;
-      localStorage.setItem(LS_UIREF, uiRefresh ? '1' : '0');
-      render();
+    $('#fmPush')?.addEventListener('click', async () => {
+      try{ await pushKeys(pickKeys()); }catch(e){ render('❌ Push: ' + (e?.code || e?.message || e)); }
     });
-
-    // login/logout/sync
-    $('#fmLogin')?.addEventListener('click', async () => {
-      msg('');
-      const em = ($('#fmEmail')?.value || '').trim();
-      const pw = $('#fmPass')?.value || '';
-      if (!em || !pw) return msg('⚠️ Pon email y contraseña.');
-
-      try{
-        localStorage.setItem(LS_EMAIL, em);
-        await signInWithEmailAndPassword(auth, em, pw);
-        if ($('#fmPass')) $('#fmPass').value = '';
-        msg('✅ Login OK');
-      }catch(e){
-        msg('❌ ' + (e?.code || e?.message || e));
-      }
-      render();
-    });
-
-    $('#fmLogout')?.addEventListener('click', async () => {
-      msg('');
-      try { await signOut(auth); msg('✅ Logout'); }
-      catch(e){ msg('❌ ' + (e?.code || e?.message || e)); }
-      render();
-    });
-
-    $('#fmSync')?.addEventListener('click', syncNow);
 
     $('#fmPull')?.addEventListener('click', async () => {
-      msg('');
-      if (!uid) return msg('⚠️ Haz login primero.');
-      try{ await pullOnce(); msg('✅ Recibir OK'); }
-      catch(e){ msg('❌ ' + (e?.code || e?.message || e)); }
+      try{ await pullAll(); }catch(e){ render('❌ Pull: ' + (e?.code || e?.message || e)); }
     });
 
-    $('#fmPush')?.addEventListener('click', async () => {
-      msg('');
-      if (!uid) return msg('⚠️ Haz login primero.');
-      try{
-        const keys = getDataKeys();
-        await pushKeys(keys);
-        msg(`✅ Enviar OK · ${keys.length} keys`);
-      }catch(e){
-        msg('❌ ' + (e?.code || e?.message || e));
-      }
+    $('#fmSync')?.addEventListener('click', async () => {
+      try{ await syncNow(); }catch(e){ render('❌ Sync: ' + (e?.code || e?.message || e)); }
     });
 
-    // auto-fill email
-    const e = $('#fmEmail');
-    if (e) e.value = localStorage.getItem(LS_EMAIL) || '';
+    $('#fmDiag')?.addEventListener('click', diag);
   }
 
-  // ========= Auth lifecycle =========
-  onAuthStateChanged(auth, (u) => {
-    uid = u?.uid || null;
-    if (uid) {
-      startRealtime();
-      render('✅ Realtime ON');
-    } else {
-      stopRealtime();
-      pendingCount = 0;
-      render('ℹ️ OFF');
-    }
-  });
+  // boot
+  const boot = () => { injectUI(); wire(); render(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once:true });
+  else boot();
 
+  if (enabled) {
+    onAuthStateChanged(auth, (u) => {
+      uid = u?.uid || null;
+      if (uid) { hookSetItem(); startRealtime(); render('✅ Realtime ON'); }
+      else { stopRealtime(); render('ℹ️ Cloud OFF'); }
+    });
+  }
 })();
