@@ -36,7 +36,7 @@ const firebaseConfig = {
 
   // ✅ OBLIGATORIO para Realtime Database:
   // pon aquí tu URL real
-  databaseURL: "https://TU-REALTIME-DB-URL-AQUI"
+  databaseURL: "https://console.firebase.google.com/project/factumiral/database/factumiral-default-rtdb/data/~2F#:~:text=link-,https%3A//factumiral%2Ddefault%2Drtdb.europe%2Dwest1.firebasedatabase.app,-mode_edit"
 };
 
 const app  = initializeApp(firebaseConfig);
