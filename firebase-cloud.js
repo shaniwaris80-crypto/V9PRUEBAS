@@ -1,22 +1,19 @@
 /* =========================================================
-   FACTU MIRAL — firebase-cloud.js (AUTO SYNC + CLOUD UI)
-   - NO toca app.js
-   - Botón ☁️ Cloud siempre visible
-   - Login/Logout (Email/Password)
-   - Auto-seed al login (sube lo que ya tienes)
-   - Auto-push en cada localStorage.setItem
-   - Auto-pull realtime a LocalStorage
-   - Dispara evento: fmcloud:changed (para tu banner)
+   FACTU MIRAL — firebase-cloud.js (CLOUD UI + MANUAL SYNC)
+   - NO toca tu app.js
+   - NO recarga automáticamente
+   - Botón ☁️ Cloud + modal (email/pass)
+   - Subir ahora / Bajar ahora
 ========================================================= */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
-import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue, off } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
+import { getDatabase, ref, get, update } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
 
 (() => {
   'use strict';
 
-  // ✅ TU CONFIG (RTDB ROOT)
+  // ========= TU CONFIG =========
   const firebaseConfig = {
     apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
     authDomain: "factumiral.firebaseapp.com",
@@ -30,35 +27,20 @@ import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue, off } fro
 
   const $ = (s, r=document) => r.querySelector(s);
   const now = () => Date.now();
-
   const LS_EMAIL = 'fm_cloud_email_v1';
-  const META_LOCAL = 'fm_cloud_localmeta_v1';
 
-  // Excluir cosas para no subir credenciales/ruido
-  const EXCLUDE_PREFIX = [
-    'fm_cloud_', 'firebase:', 'grm_', 'goog:', 'debug_', 'cache', 'session'
-  ];
-  const EXCLUDE_EXACT = new Set([LS_EMAIL, META_LOCAL]);
+  // Excluir keys “basura/privadas”
+  const EXCLUDE_PREFIX = ['firebase:', 'grm_', 'goog:', 'debug_', 'cache', 'session', 'fm_cloud_'];
+  const EXCLUDE_EXACT = new Set([LS_EMAIL]);
   const isExcludedKey = (k) => EXCLUDE_EXACT.has(k) || EXCLUDE_PREFIX.some(p => k.startsWith(p));
 
-  const safeJson = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
-  const shouldUpload = (raw) => {
-    if (raw == null) return false;
-    const s = String(raw).trim();
-    if (!s || s === 'null' || s === '[]' || s === '{}') return false;
-    const j = safeJson(s);
-    if (Array.isArray(j) && j.length === 0) return false;
-    if (j && typeof j === 'object' && !Array.isArray(j) && Object.keys(j).length === 0) return false;
-    return true;
-  };
-
-  // Base64URL encode para usar keys como path sin romper RTDB
-  const b64urlEncode = (str) => {
+  // Base64URL para keys en paths RTDB (evita / . # $ [ ])
+  function b64urlEncode(str){
     const b64 = btoa(unescape(encodeURIComponent(str)));
     return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  };
+  }
 
-  // ---- UI SIEMPRE (aunque Firebase falle) ----
+  // ========= UI =========
   function injectUI(){
     if ($('#fmCloudFab')) return;
 
@@ -75,6 +57,7 @@ import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue, off } fro
       .fmBtns .p{background:#111;color:#fff}
       .fmInfo{border:1px solid rgba(0,0,0,.18);border-radius:14px;padding:10px 12px;background:#f7f7f7;font:12px ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;flex:1;overflow:auto}
       .fmMsg{font:12px system-ui;opacity:.85;white-space:pre-wrap}
+      .fmSmall{font:12px system-ui;opacity:.75}
     `;
     document.head.appendChild(st);
 
@@ -90,215 +73,202 @@ import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue, off } fro
     modal.innerHTML = `
       <div class="fmC">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <b style="font:900 14px system-ui">☁️ Cloud</b>
+          <b style="font:900 14px system-ui">☁️ Cloud — Prueba Manual</b>
           <button id="fmClose" style="border:1px solid #111;background:#fff;border-radius:12px;padding:8px 10px;font:900 13px system-ui">Cerrar</button>
         </div>
+
         <div class="fmRow">
           <input id="fmEmail" type="email" autocomplete="email" placeholder="Email" />
           <input id="fmPass" type="password" autocomplete="current-password" placeholder="Contraseña" />
         </div>
+
         <div class="fmBtns">
           <button id="fmLogin" class="p" type="button">Login</button>
           <button id="fmLogout" type="button">Logout</button>
+          <button id="fmPush" class="p" type="button">⬆️ Subir ahora</button>
+          <button id="fmPull" type="button">⬇️ Bajar ahora</button>
+          <button id="fmManualReload" type="button">🔄 Recargar (manual)</button>
         </div>
+
+        <div class="fmSmall">
+          Nota: aquí NO hay recarga automática. “Recargar (manual)” solo si tú lo pulsas.
+        </div>
+
         <div class="fmInfo" id="fmInfo">Estado…</div>
         <div class="fmMsg" id="fmMsg"></div>
       </div>
     `;
     document.body.appendChild(modal);
 
-    const info = $('#fmInfo');
-    const msg  = $('#fmMsg');
-    const email = $('#fmEmail');
-    const pass  = $('#fmPass');
-
-    email.value = localStorage.getItem(LS_EMAIL) || '';
-
-    const show = (t) => { msg.textContent = t || ''; };
-    const status = (extra='') => {
-      const u = auth?.currentUser;
-      info.textContent =
-        `firebaseEnabled: ${firebaseEnabled}\n` +
-        (firebaseEnabled ? '' : `initError: ${initError}\n`) +
-        `auth: ${u ? 'LOGUEADO' : 'NO'}\n` +
-        (u ? `email: ${u.email || '-'}\nuid: ${(u.uid||'').slice(0,8)}…\n` : '') +
-        `localStorage keys: ${Object.keys(localStorage).length}\n` +
-        (extra ? `\n${extra}` : '');
-    };
-
-    fab.onclick = () => { modal.classList.add('open'); status(); };
+    fab.onclick = () => modal.classList.add('open');
     $('#fmClose').onclick = () => modal.classList.remove('open');
     modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.classList.remove('open'); });
 
-    $('#fmLogin').onclick = async () => {
-      show('');
-      if (!firebaseEnabled) return show('❌ Firebase init error: ' + initError);
-      const em = email.value.trim();
-      const pw = pass.value;
-      if (!em || !pw) return show('⚠️ Pon email y contraseña.');
-      try{
-        localStorage.setItem(LS_EMAIL, em);
-        await signInWithEmailAndPassword(auth, em, pw);
-        pass.value = '';
-        status('✅ Login OK. Haciendo SEED (subida inicial)…');
-      }catch(e){
-        show('❌ ' + (e?.code || e?.message || e));
-        status();
-      }
-    };
-
-    $('#fmLogout').onclick = async () => {
-      show('');
-      try{ await signOut(auth); status('✅ Logout OK'); }
-      catch(e){ show('❌ ' + (e?.code || e?.message || e)); status(); }
-    };
-
-    // refresco estado
-    const t = setInterval(() => { if ($('#fmCloudModal')?.classList.contains('open')) status(); }, 1000);
-    window.addEventListener('beforeunload', () => clearInterval(t));
+    // cache email
+    $('#fmEmail').value = localStorage.getItem(LS_EMAIL) || '';
   }
 
-  // ---- Firebase init ----
-  let firebaseEnabled = true;
-  let initError = '';
+  // ========= Firebase init =========
+  let enabled = true;
+  let initErr = '';
   let app=null, auth=null, db=null;
 
   try{
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    db = getDatabase(app, String(firebaseConfig.databaseURL||'').replace(/\/+$/,''));
+    db = getDatabase(app);
   }catch(e){
-    firebaseEnabled = false;
-    initError = String(e?.message || e);
+    enabled = false;
+    initErr = String(e?.message || e);
   }
 
-  // Inject UI aunque Firebase falle
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', injectUI, { once:true });
   } else {
     injectUI();
   }
 
-  if (!firebaseEnabled) return;
-
-  // ---- Meta local (para comparar updatedAt por key) ----
-  const localMeta = (() => {
-    try { return JSON.parse(localStorage.getItem(META_LOCAL) || '{}') || {}; }
-    catch { return {}; }
-  })();
-  const saveMeta = () => localStorage.setItem(META_LOCAL, JSON.stringify(localMeta));
-
-  // ---- Paths ----
-  const base = (uid) => `factumiral/${uid}`;
-  const pLS  = (uid) => `${base(uid)}/ls`;
-  const pOne = (uid, enc) => `${base(uid)}/ls/${enc}`;
-  const pPing = (uid) => `${base(uid)}/meta/__ping`;
-
-  // ---- Flags anti-loop ----
-  let applyingRemote = false;
-  let internalWrite  = false;
-
-  async function pushKey(uid, k){
-    if (!uid || isExcludedKey(k)) return;
-    const raw = localStorage.getItem(k);
-    if (!shouldUpload(raw)) return;
-
-    const enc = b64urlEncode(k);
-    const payload = { k, raw, updatedAt: now() };
-
-    await set(ref(db, pOne(uid, enc)), payload);
-
-    localMeta[enc] = payload.updatedAt;
-    saveMeta();
+  function setInfo(extra=''){
+    const info = $('#fmInfo');
+    if (!info) return;
+    const u = auth?.currentUser;
+    info.textContent =
+      `enabled: ${enabled}\n` +
+      (enabled ? '' : `initErr: ${initErr}\n`) +
+      `auth: ${u ? 'LOGUEADO' : 'NO'}\n` +
+      (u ? `email: ${u.email || '-'}\nuid: ${(u.uid||'').slice(0,8)}…\n` : '') +
+      `localStorage keys: ${Object.keys(localStorage).length}\n` +
+      (extra ? `\n${extra}` : '');
   }
+  function msg(t){ const m = $('#fmMsg'); if (m) m.textContent = t || ''; }
 
-  async function seedAll(uid){
-    const keys = Object.keys(localStorage).filter(k => !isExcludedKey(k));
-    for (const k of keys){
-      try{ await pushKey(uid, k); }catch{}
-    }
-    try{ await set(ref(db, pPing(uid)), { ts: now(), ua: navigator.userAgent }); }catch{}
-  }
+  // ========= Sync helpers =========
+  function rootPath(uid){ return `factumiral/${uid}`; }
 
-  // Debounce pushes
-  const timers = new Map();
-  function schedulePush(uid, k){
-    if (!uid || applyingRemote || internalWrite) return;
-    if (isExcludedKey(k)) return;
+  async function pushAll(uid){
+    const base = rootPath(uid);
+    const updatesMap = {};
 
-    if (timers.has(k)) clearTimeout(timers.get(k));
-    timers.set(k, setTimeout(async () => {
-      timers.delete(k);
-      try { await pushKey(uid, k); }
-      catch {}
-    }, 250));
-  }
+    let count = 0;
+    const ts = now();
 
-  // Hook setItem (sin tocar tu app)
-  function hookSetItem(uid){
-    if (localStorage.setItem.__fmWrapped) return;
-    const orig = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function(k, v){
-      orig(k, v);
-      schedulePush(uid, k);
-    };
-    localStorage.setItem.__fmWrapped = true;
-  }
+    // meta ping
+    updatesMap[`${base}/meta/lastPush`] = { ts, ua: navigator.userAgent };
 
-  // ---- Realtime listeners (pull) ----
-  let listenersOn = false;
-  const activeRefs = [];
+    for (const k of Object.keys(localStorage)){
+      if (isExcludedKey(k)) continue;
+      const raw = localStorage.getItem(k);
+      if (raw == null || String(raw).trim() === '') continue;
 
-  function applyRemote(snap){
-    const enc = snap.key;
-    const v = snap.val();
-    if (!enc || !v || !v.raw) return;
-
-    const remoteAt = Number(v.updatedAt || 0);
-    const localAt  = Number(localMeta[enc] || 0);
-    if (remoteAt <= localAt) return;
-
-    const k = v.k || '(unknown)';
-    applyingRemote = true;
-    try{
-      internalWrite = true;
-      localStorage.setItem(k, v.raw);
-      internalWrite = false;
-
-      localMeta[enc] = remoteAt;
-      saveMeta();
-    } finally {
-      internalWrite = false;
-      applyingRemote = false;
+      const enc = b64urlEncode(k);
+      updatesMap[`${base}/ls/${enc}`] = { k, raw, updatedAt: ts };
+      count++;
     }
 
+    await update(ref(db), updatesMap);
+    return count;
+  }
+
+  async function pullAll(uid){
+    const base = rootPath(uid);
+    const snap = await get(ref(db, `${base}/ls`));
+    if (!snap.exists()) return 0;
+
+    const obj = snap.val() || {};
+    let applied = 0;
+
+    for (const enc of Object.keys(obj)){
+      const row = obj[enc];
+      if (!row || typeof row.raw !== 'string' || !row.k) continue;
+      localStorage.setItem(row.k, row.raw);
+      applied++;
+    }
+
+    // Notificar a la app (sin recargar)
     try {
-      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { key: k } }));
+      window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { reason: 'pulled' } }));
     } catch {}
+
+    return applied;
   }
 
-  function stopListeners(){
-    if (!listenersOn) return;
-    try { activeRefs.forEach(r => off(r)); } catch {}
-    activeRefs.length = 0;
-    listenersOn = false;
+  // ========= Wire UI =========
+  function wireUI(){
+    const emailEl = $('#fmEmail');
+    const passEl  = $('#fmPass');
+
+    $('#fmLogin').onclick = async () => {
+      msg('');
+      if (!enabled) return msg('❌ Firebase init error: ' + initErr);
+      const em = (emailEl.value || '').trim();
+      const pw = passEl.value || '';
+      if (!em || !pw) return msg('⚠️ Pon email y contraseña.');
+      try{
+        localStorage.setItem(LS_EMAIL, em);
+        await signInWithEmailAndPassword(auth, em, pw);
+        passEl.value = '';
+        msg('✅ Login OK');
+      }catch(e){
+        msg('❌ ' + (e?.code || e?.message || e));
+      }
+      setInfo();
+    };
+
+    $('#fmLogout').onclick = async () => {
+      msg('');
+      try{ await signOut(auth); msg('✅ Logout OK'); }
+      catch(e){ msg('❌ ' + (e?.code || e?.message || e)); }
+      setInfo();
+    };
+
+    $('#fmPush').onclick = async () => {
+      msg('');
+      const u = auth.currentUser;
+      if (!u) return msg('⚠️ Haz login primero.');
+      try{
+        setInfo('Subiendo…');
+        const n = await pushAll(u.uid);
+        msg(`✅ Subido OK. Keys: ${n}`);
+        setInfo(`✅ Subido OK. Keys: ${n}\nRuta: factumiral/${u.uid}/ls`);
+        // aviso a banner (sin recargar)
+        try { window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { reason:'push-ok' } })); } catch {}
+      }catch(e){
+        msg('❌ Error subir: ' + (e?.code || e?.message || e));
+        setInfo('❌ Error subir');
+      }
+    };
+
+    $('#fmPull').onclick = async () => {
+      msg('');
+      const u = auth.currentUser;
+      if (!u) return msg('⚠️ Haz login primero.');
+      try{
+        setInfo('Bajando…');
+        const n = await pullAll(u.uid);
+        msg(`✅ Bajado OK. Aplicados: ${n}`);
+        setInfo(`✅ Bajado OK. Aplicados: ${n}\n(La UI puede necesitar refresco manual si no escucha localStorage)`);
+      }catch(e){
+        msg('❌ Error bajar: ' + (e?.code || e?.message || e));
+        setInfo('❌ Error bajar');
+      }
+    };
+
+    $('#fmManualReload').onclick = () => {
+      // SOLO manual
+      location.reload();
+    };
   }
 
-  function startListeners(uid){
-    if (listenersOn) return;
-    listenersOn = true;
-    const r = ref(db, pLS(uid));
-    activeRefs.push(r);
-    onChildAdded(r, applyRemote);
-    onChildChanged(r, applyRemote);
+  // ========= Auth observer =========
+  if (enabled) {
+    onAuthStateChanged(auth, () => setInfo());
   }
 
-  // ---- Auth lifecycle ----
-  onAuthStateChanged(auth, async (u) => {
-    if (!u){ stopListeners(); return; }
-    hookSetItem(u.uid);
-    startListeners(u.uid);
-    await seedAll(u.uid); // ✅ para que “salgan carpetas” en Firebase aunque no toques nada
-  });
-
+  // Boot UI wiring when ready
+  const boot = () => { wireUI(); setInfo(); };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once:true });
+  } else {
+    boot();
+  }
 })();
