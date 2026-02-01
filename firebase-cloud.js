@@ -318,3 +318,266 @@ window.FM_CLOUD = {
 onAuthStateChanged(auth, (u) => {
   console.log("[FM_CLOUD] auth =", u ? ("OK uid=" + u.uid) : "OUT");
 });
+/* =========================================================
+   FACTU MIRAL — CLOUD UI (BOTONES)  ✅ sin consola
+   - Flotante B/W PRO: abre panel con Email/Pass
+   - Login / Logout
+   - Sync DOWN (descargar y mezclar) + recargar
+   - Sync UP (subir cambios no destructivo)
+   - "Primer uso en este dispositivo" (recomendado)
+========================================================= */
+(() => {
+  'use strict';
+
+  const LS_EMAIL = 'fm_cloud_email';
+
+  const $ = (s, r=document) => r.querySelector(s);
+
+  function cssInject(){
+    if ($('#fmCloudCss')) return;
+    const st = document.createElement('style');
+    st.id = 'fmCloudCss';
+    st.textContent = `
+      .fmCloudFab{
+        position:fixed; right:12px; bottom:12px; z-index:99999;
+        border:1px solid #111; background:#fff; color:#000;
+        border-radius:14px; padding:10px 12px; font-weight:900;
+        box-shadow:0 8px 24px rgba(0,0,0,.16);
+      }
+      .fmCloudModal{
+        position:fixed; inset:0; z-index:999999; display:none;
+        background:rgba(0,0,0,.55);
+      }
+      .fmCloudModal.open{ display:block; }
+      .fmCloudCard{
+        position:absolute; left:12px; right:12px; top:12px; bottom:12px;
+        background:#fff; border:1px solid #111; border-radius:16px;
+        padding:12px; display:flex; flex-direction:column; gap:10px;
+      }
+      .fmCloudTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+      .fmCloudTop b{ font-size:14px; }
+      .fmCloudRow{ display:flex; gap:10px; flex-wrap:wrap; }
+      .fmCloudRow input{
+        flex:1; min-width:220px;
+        border:1px solid rgba(0,0,0,.25); border-radius:12px;
+        padding:10px 12px; font-size:14px;
+      }
+      .fmCloudBtns{ display:flex; gap:10px; flex-wrap:wrap; }
+      .fmCloudBtns button{
+        border:1px solid #111; background:#fff; color:#000;
+        border-radius:12px; padding:10px 12px; font-weight:900;
+      }
+      .fmCloudBtns button.primary{ background:#111; color:#fff; }
+      .fmCloudBtns button.danger{ background:#fff; color:#111; border-style:dashed; }
+      .fmCloudInfo{
+        border:1px solid rgba(0,0,0,.18); border-radius:14px;
+        padding:10px 12px; font-size:13px; line-height:1.35;
+        background:linear-gradient(180deg,#fff,#f7f7f7);
+        white-space:pre-wrap;
+      }
+      .fmCloudMsg{
+        font-size:12px; opacity:.85; line-height:1.3;
+      }
+      .fmCloudClose{
+        border:1px solid #111; background:#fff; border-radius:12px;
+        padding:8px 10px; font-weight:900;
+      }
+      .fmCloudSmall{ font-size:12px; opacity:.7; }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function friendlyError(err){
+    const msg = (err && (err.code || err.message)) ? String(err.code || err.message) : 'Error';
+    if (msg.includes('auth/invalid-credential') || msg.includes('auth/wrong-password')) return '❌ Contraseña incorrecta o usuario inválido.';
+    if (msg.includes('auth/user-not-found')) return '❌ Ese email no existe en Authentication → Users.';
+    if (msg.includes('auth/unauthorized-domain')) return '❌ Dominio no autorizado. Ve a Firebase Auth → Settings → Authorized domains y añade tu dominio (github.io).';
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('permission_denied')) return '❌ Permiso denegado (Rules). Revisa que estás logueado y que las Rules están publicadas.';
+    if (msg.includes('databaseURL')) return '❌ Falta databaseURL en firebaseConfig (Realtime Database URL).';
+    return `❌ ${msg}`;
+  }
+
+  function waitForCloud(){
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const tick = () => {
+        if (window.FM_CLOUD && typeof window.FM_CLOUD.login === 'function') return resolve(true);
+        if (Date.now() - t0 > 8000) return resolve(false);
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
+  }
+
+  function buildUI(){
+    if ($('#fmCloudFab')) return;
+
+    const fab = document.createElement('button');
+    fab.id = 'fmCloudFab';
+    fab.className = 'fmCloudFab';
+    fab.type = 'button';
+    fab.textContent = '☁️ Cloud';
+    document.body.appendChild(fab);
+
+    const modal = document.createElement('div');
+    modal.id = 'fmCloudModal';
+    modal.className = 'fmCloudModal';
+    modal.innerHTML = `
+      <div class="fmCloudCard" role="dialog" aria-modal="true">
+        <div class="fmCloudTop">
+          <b>☁️ Cloud — Login + Sync</b>
+          <button class="fmCloudClose" id="fmCloudClose" type="button">Cerrar</button>
+        </div>
+
+        <div class="fmCloudRow">
+          <input id="fmCloudEmail" type="email" autocomplete="email" placeholder="Email (Authentication)" />
+          <input id="fmCloudPass" type="password" autocomplete="current-password" placeholder="Contraseña" />
+        </div>
+
+        <div class="fmCloudBtns">
+          <button id="fmBtnLogin" class="primary" type="button">Login</button>
+          <button id="fmBtnLogout" type="button">Logout</button>
+
+          <button id="fmBtnFirstUse" class="primary" type="button">Primer uso en este dispositivo (DOWN + Recargar)</button>
+
+          <button id="fmBtnDown" type="button">Sync DOWN (Descargar + Mezclar)</button>
+          <button id="fmBtnUp" type="button">Sync UP (Subir cambios)</button>
+        </div>
+
+        <div class="fmCloudInfo" id="fmCloudInfo">Estado: esperando…</div>
+        <div class="fmCloudMsg" id="fmCloudMsg"></div>
+
+        <div class="fmCloudSmall">
+          Nota: la contraseña NO se guarda. El email sí (opcional) para comodidad.
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const open = () => modal.classList.add('open');
+    const close = () => modal.classList.remove('open');
+
+    fab.addEventListener('click', open);
+    $('#fmCloudClose').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    // Cargar email recordado
+    const emailEl = $('#fmCloudEmail');
+    emailEl.value = localStorage.getItem(LS_EMAIL) || '';
+
+    const passEl = $('#fmCloudPass');
+    const infoEl = $('#fmCloudInfo');
+    const msgEl  = $('#fmCloudMsg');
+
+    const setMsg = (t) => { msgEl.textContent = t || ''; };
+    const setInfo = (t) => { infoEl.textContent = t || ''; };
+
+    function statusText(){
+      const u = window.FM_CLOUD?.user?.();
+      if (!u) return 'Estado: NO logueado\n';
+      const e = u.email || '(sin email)';
+      const uid = (u.uid || '').slice(0,6) + '…';
+      return `Estado: LOGUEADO\nEmail: ${e}\nUID: ${uid}\n`;
+    }
+
+    async function refreshStatus(extra=''){
+      setInfo(statusText() + (extra ? '\n' + extra : ''));
+    }
+
+    // Auto refresco al cambiar auth
+    window.FM_CLOUD?.onAuth?.(() => refreshStatus());
+
+    // Acciones
+    $('#fmBtnLogin').addEventListener('click', async () => {
+      setMsg('');
+      const email = emailEl.value.trim();
+      const pass  = passEl.value;
+      if (!email || !pass) return setMsg('⚠️ Pon email y contraseña.');
+      try{
+        localStorage.setItem(LS_EMAIL, email);
+        await window.FM_CLOUD.login(email, pass);
+        passEl.value = '';
+        await refreshStatus('✅ Login OK');
+      }catch(e){
+        setMsg(friendlyError(e));
+        await refreshStatus();
+      }
+    });
+
+    $('#fmBtnLogout').addEventListener('click', async () => {
+      setMsg('');
+      try{
+        await window.FM_CLOUD.logout();
+        await refreshStatus('✅ Logout OK');
+      }catch(e){
+        setMsg(friendlyError(e));
+        await refreshStatus();
+      }
+    });
+
+    $('#fmBtnDown').addEventListener('click', async () => {
+      setMsg('');
+      try{
+        const r = await window.FM_CLOUD.syncDownMergeAll();
+        await refreshStatus(`✅ Sync DOWN OK\nRegistros:\n${JSON.stringify(r.merged, null, 2)}`);
+      }catch(e){
+        setMsg(friendlyError(e));
+        await refreshStatus();
+      }
+    });
+
+    $('#fmBtnUp').addEventListener('click', async () => {
+      setMsg('');
+      try{
+        const r = await window.FM_CLOUD.syncUpAllNonDestructive();
+        await refreshStatus(`✅ Sync UP OK\nOK: ${r.writesOk}  FAIL: ${r.writesFail}`);
+      }catch(e){
+        setMsg(friendlyError(e));
+        await refreshStatus();
+      }
+    });
+
+    $('#fmBtnFirstUse').addEventListener('click', async () => {
+      setMsg('');
+      const email = emailEl.value.trim();
+      const pass  = passEl.value;
+      try{
+        // Si no está logueado, hacer login
+        if (!window.FM_CLOUD.user()){
+          if (!email || !pass) return setMsg('⚠️ Para “primer uso”, pon email y contraseña.');
+          localStorage.setItem(LS_EMAIL, email);
+          await window.FM_CLOUD.login(email, pass);
+          passEl.value = '';
+        }
+        // Descargar primero, luego recargar
+        await window.FM_CLOUD.syncDownMergeAll();
+        setMsg('✅ Descargado. Recargando…');
+        setTimeout(()=>location.reload(), 300);
+      }catch(e){
+        setMsg(friendlyError(e));
+        await refreshStatus();
+      }
+    });
+
+    // Estado inicial
+    refreshStatus('Panel listo.');
+  }
+
+  async function boot(){
+    cssInject();
+    const ok = await waitForCloud();
+    if (!ok){
+      // Si no existe FM_CLOUD, no rompemos la app
+      console.warn('[Cloud UI] FM_CLOUD no disponible (revisa carga de firebase-cloud.js)');
+      return;
+    }
+    buildUI();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once:true });
+  } else {
+    boot();
+  }
+})();
+
