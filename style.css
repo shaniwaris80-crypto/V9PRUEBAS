@@ -1367,3 +1367,32 @@ button, .btn, input, select, textarea{
     font-size: 16px;          /* evita zoom iOS */
   }
 }
+@media (max-width: 720px){
+
+  .topbar, .toolbar, .headerBar, .navBar{
+    position:relative;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+
+  /* ancho reservado para los botones de atrás */
+  .topbar{
+    --backW: 110px; /* ajusta 90–140 según tus botones */
+  }
+
+  /* zona izquierda encima y fija */
+  .topbar .left, .toolbar .left, .headerBar .left, .navBar .left,
+  .topbar .navLeft, .toolbar .navLeft, .headerBar .navLeft, .navBar .navLeft{
+    flex:0 0 var(--backW);
+    z-index:5;
+  }
+
+  /* buscador no invade la zona de atrás */
+  .topbar input[type="search"], .topbar .search, #search, #buscar, #searchInput{
+    flex:1 1 auto;
+    min-width: 0;
+    margin-left: 0; /* lo gestiona el flex */
+  }
+}
+
