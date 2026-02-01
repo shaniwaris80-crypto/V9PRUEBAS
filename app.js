@@ -3959,3 +3959,228 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }
 
 })();
+/* =========================================================
+   EMERGENCIA — FIX PRECIO (.,) + RECALC FILA + TOTALES
+   + Vista 2 líneas para nombre cliente (sin romper input)
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+  const parseNumAny = (v) => {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim().replace(/\s+/g,'').replace(',', '.');
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const fmtMoney = (n) => {
+    const v = Number.isFinite(n) ? n : 0;
+    return v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+  };
+
+  function sanitizePriceInput(el){
+    if (!el) return;
+
+    // Forzar teclado decimal + permitir coma/punto
+    try { el.type = 'text'; } catch {}
+    el.setAttribute('inputmode', 'decimal');
+    el.setAttribute('autocomplete', 'off');
+    el.setAttribute('autocorrect', 'off');
+    el.setAttribute('autocapitalize', 'off');
+    el.setAttribute('spellcheck', 'false');
+
+    // Sanitizar sin bloquear escritura
+    let v = String(el.value ?? '');
+    v = v.replace(/[^\d.,-]/g,'');   // solo dígitos . , -
+    // permitir SOLO un separador decimal (.,)
+    const parts = v.split(/[.,]/);
+    if (parts.length > 2) v = parts[0] + '.' + parts.slice(1).join('');
+    // normalizar coma a punto internamente (para cálculo)
+    v = v.replace(',', '.');
+    // '-' solo al inicio
+    if (v.includes('-')) v = (v[0] === '-' ? '-' : '') + v.replaceAll('-', '');
+    el.value = v;
+  }
+
+  function recalcRow(row){
+    if (!row) return;
+
+    const prod = $('.input--prod', row)?.value?.trim() || '';
+    const modo = $('.select', row)?.value || 'kg';
+
+    const nums = $$('.input--num', row);
+    const cantidad = parseNumAny(nums[0]?.value);
+    const bruto = parseNumAny(nums[1]?.value);
+
+    const taraEl = $('.taraKg', row);
+    const netoEl = $('.netoKg', row);
+    const precioEl = $('.precio', row);
+
+    // precio: sanitizar y parsear
+    if (precioEl) sanitizePriceInput(precioEl);
+    const precio = parseNumAny(precioEl?.value);
+
+    // tara (si existe input taraKg, lo usamos; si no, 0)
+    let tara = parseNumAny(taraEl?.value) ?? 0;
+
+    // neto: si existe, usarlo, si no calcular en KG
+    let neto = parseNumAny(netoEl?.value);
+
+    // Auto neto solo en modo KG si neto vacío
+    if (modo === 'kg') {
+      const b = bruto ?? 0;
+      if (neto === null) neto = round2(b - tara);
+      // si hay neto, lo respetamos
+    }
+
+    let importe = 0;
+
+    if (modo === 'kg') {
+      const base = (neto ?? 0);
+      importe = (precio ?? 0) * base;
+    } else if (modo === 'caja' || modo === 'ud') {
+      importe = (precio ?? 0) * (cantidad ?? 0);
+    }
+
+    importe = round2(importe);
+
+    // Pintar importe en celda
+    const impEl = row.querySelector('[data-importe]') || row.querySelector('.importe') || null;
+    if (impEl) impEl.textContent = fmtMoney(importe);
+
+    // (Opcional) pintar neto si está en modo KG y existe input
+    if (modo === 'kg' && netoEl && (parseNumAny(netoEl.value) === null)) {
+      netoEl.value = (Number.isFinite(neto) ? String(neto) : '');
+    }
+  }
+
+  function recalcTotals(){
+    const rows = $$('#gridBody .gridRow');
+    let subtotal = 0;
+
+    rows.forEach(r => {
+      const impEl = r.querySelector('[data-importe]') || r.querySelector('.importe');
+      const txt = (impEl?.textContent || '').replace(/[^\d,.-]/g,'').replace('.', '').replace(',', '.');
+      const n = Number(txt);
+      if (Number.isFinite(n)) subtotal += n;
+    });
+
+    subtotal = round2(subtotal);
+
+    const chkT = $('#chkTransporte');
+    const onT = !!chkT?.checked;
+    const pctT = parseNumAny($('#transportePct')?.value) ?? 10;
+    const transporte = onT ? round2(subtotal * (pctT/100)) : 0;
+
+    const chkIncl = $('#chkIvaIncluido');
+    const ivaIncl = !!chkIncl?.checked;
+    const pctIva = parseNumAny($('#ivaPct')?.value) ?? 4;
+    const iva = ivaIncl ? 0 : round2((subtotal + transporte) * (pctIva/100));
+
+    const total = round2(subtotal + transporte + iva);
+
+    const tSub = $('#tSubtotal'); if (tSub) tSub.textContent = fmtMoney(subtotal);
+    const tTra = $('#tTransporte'); if (tTra) tTra.textContent = fmtMoney(transporte);
+    const tIva = $('#tIva'); if (tIva) tIva.textContent = ivaIncl ? 'IVA incluido' : fmtMoney(iva);
+    const tTot = $('#tTotal'); if (tTot) tTot.textContent = fmtMoney(total);
+
+    // Pendiente: si el core lo gestiona con pagos, no lo tocamos.
+    // Si NO existe lógica, al menos lo igualamos al total si está vacío:
+    const tPen = $('#tPendiente');
+    if (tPen && !tPen.textContent.trim()) tPen.textContent = fmtMoney(total);
+  }
+
+  function recalcAllFromRow(row){
+    recalcRow(row);
+    recalcTotals();
+  }
+
+  /* ============  A) Vista 2 líneas nombre cliente  ============ */
+  function setupClientNameWrapView(){
+    const inp = $('#cliNombre');
+    if (!inp) return;
+
+    const host = inp.parentElement || inp;
+    if (host.querySelector('.fm-cliNameWrapView')) return;
+
+    const view = document.createElement('div');
+    view.className = 'fm-cliNameWrapView';
+    host.appendChild(view);
+
+    const sync = () => {
+      const v = (inp.value || '').trim();
+      view.textContent = v;
+      view.classList.toggle('is-on', v.length >= 26); // ajusta si quieres (26)
+    };
+
+    inp.addEventListener('input', sync, { passive:true });
+    sync();
+  }
+
+  /* ============  B) FIX Precio + Recalc (delegación)  ============ */
+  function setupGridRecalc(){
+    const grid = $('#gridBody');
+    if (!grid || grid.__recalcPatched) return;
+    grid.__recalcPatched = true;
+
+    // Forzar que todos los precios sean decimales aceptando . y ,
+    const fixAllPrices = () => $$('#gridBody .precio').forEach(sanitizePriceInput);
+
+    // Delegación de eventos (no depende de handlers del core)
+    grid.addEventListener('input', (e) => {
+      const t = e.target;
+      const row = t?.closest?.('.gridRow');
+      if (!row) return;
+
+      // precio -> sanitizar
+      if (t.classList?.contains('precio')) sanitizePriceInput(t);
+
+      // Recalcular si cambian campos críticos
+      if (
+        t.classList?.contains('precio') ||
+        t.classList?.contains('taraKg') ||
+        t.classList?.contains('netoKg') ||
+        t.classList?.contains('input--num') ||
+        t.classList?.contains('select') ||
+        t.classList?.contains('input--prod')
+      ) {
+        recalcAllFromRow(row);
+      }
+    }, true);
+
+    grid.addEventListener('change', (e) => {
+      const row = e.target?.closest?.('.gridRow');
+      if (row) recalcAllFromRow(row);
+    }, true);
+
+    // 1ª pasada
+    fixAllPrices();
+    recalcTotals();
+
+    // Observer para filas nuevas
+    const mo = new MutationObserver(() => {
+      fixAllPrices();
+      recalcTotals();
+    });
+    mo.observe(grid, { childList:true, subtree:true });
+  }
+
+  function run(){
+    setupClientNameWrapView();
+    setupGridRecalc();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run, { once:true });
+  } else {
+    run();
+  }
+
+})();
