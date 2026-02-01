@@ -1334,3 +1334,36 @@ html, body{
 button, .btn, input, select, textarea{
   touch-action: manipulation;
 }
+/* ====== FIX MOBILE: buscador no solapa "Atrás" ====== */
+@media (max-width: 720px){
+
+  /* 1) Contenedor superior (barra/toolbar/header) */
+  .topbar, .toolbar, .headerBar, .navBar{
+    display:flex;
+    flex-wrap:wrap;           /* ✅ permite que el buscador baje */
+    align-items:center;
+    gap:10px;
+  }
+
+  /* 2) Zona de botones (atrás, etc.) */
+  .topbar .left, .toolbar .left, .headerBar .left, .navBar .left,
+  .topbar .navLeft, .toolbar .navLeft, .headerBar .navLeft, .navBar .navLeft{
+    display:flex;
+    gap:8px;
+    flex:0 0 auto;            /* no se encoge */
+    z-index:5;
+  }
+
+  /* 3) El buscador ocupa fila completa debajo */
+  .topbar input[type="search"], .toolbar input[type="search"],
+  .headerBar input[type="search"], .navBar input[type="search"],
+  .topbar .search, .toolbar .search, .headerBar .search, .navBar .search,
+  #search, #buscar, #searchInput{
+    flex: 1 0 100%;
+    width: 100%;
+    order: 99;                /* ✅ lo empuja a la fila de abajo */
+    margin-top: 2px;
+    min-height: 42px;
+    font-size: 16px;          /* evita zoom iOS */
+  }
+}
