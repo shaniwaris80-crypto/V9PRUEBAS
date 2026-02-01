@@ -1356,4 +1356,30 @@ input[type="text"], input[type="email"], input[type="tel"], textarea{
 @media (max-width: 560px){
   #cliNombre{ padding-top: 12px; padding-bottom: 12px; }
 }
+/* ================================
+   FIX — Nombre cliente a 2 líneas (sin romper input)
+================================== */
+.fm-cliNameWrapView{
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0,0,0,.14);
+  border-radius: 14px;
+  background: #f6f6f6;
+  color: #000;
+  font-weight: 900;
+  line-height: 1.25;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: none; /* se activa solo si es largo */
+}
+
+.fm-cliNameWrapView.is-on{ display:block; }
+
+/* CLAVE para que el texto no “reviente” grids/flex */
+.fm-invGrid, .fm-invGrid *{ min-width:0; }
+.fm-invGrid .card, .fm-invGrid .panel, .fm-invGrid .box{
+  max-width: 100%;
+  overflow: hidden;
+}
 
