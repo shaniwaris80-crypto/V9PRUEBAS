@@ -4892,3 +4892,15 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
     boot();
   }
 })();
+// ✅ Refresco inteligente: no recarga si estás escribiendo en un input/textarea
+let _fmReloadT = null;
+
+window.addEventListener('fmcloud:changed', (e) => {
+  const tag = document.activeElement?.tagName?.toLowerCase() || '';
+  const typing = (tag === 'input' || tag === 'textarea' || tag === 'select');
+
+  if (typing) return; // no interrumpir escritura
+
+  clearTimeout(_fmReloadT);
+  _fmReloadT = setTimeout(() => location.reload(), 250);
+});
