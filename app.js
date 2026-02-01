@@ -3221,7 +3221,7 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
     // Pagination calc
     // Header space: we draw blocks + maybe QR (fixed)
     const headerYTop = M.t;
-    const headerH = 58; // fijo
+    const headerH = 74; // fijo
     const tableStartY = headerYTop + headerH + 6;
 
     // Last page totals area
@@ -3282,7 +3282,7 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
 
       // Provider / Client boxes
       const leftBoxX = M.l;
-      const leftBoxY = headerYTop + 12;
+      const leftBoxY = headerYTop + 28;
       const boxH = 30;
       const halfW = (W - M.l - M.r - 6) / 2;
 
@@ -4182,5 +4182,146 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   } else {
     run();
   }
+
+})();
+/* =========================================================
+   PATCH ULTRA — DECIMALES EN PRECIO (acepta "." y "," SIEMPRE)
+   - Funciona aunque el core bloquee "." / ","
+   - Convierte "." -> "," (estilo ES)
+   - Solo una coma decimal
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  function isPrecioInput(el){
+    if (!el || el.tagName !== 'INPUT') return false;
+    const cls = el.className || '';
+    const ph  = (el.getAttribute('placeholder') || '').toLowerCase();
+    const nm  = (el.getAttribute('name') || '').toLowerCase();
+    const id  = (el.id || '').toLowerCase();
+    const df  = (el.getAttribute('data-field') || '').toLowerCase();
+    const dc  = (el.getAttribute('data-col') || '').toLowerCase();
+
+    // Selector robusto: clase/placeholder/name/id/dataset
+    if (cls.includes('precio') || ph.includes('precio') || nm.includes('precio') || id.includes('precio') || df === 'precio' || dc === 'precio') {
+      // además debe estar dentro del grid
+      return !!el.closest('#gridBody, .grid, .gridRow, [data-grid]');
+    }
+    return false;
+  }
+
+  function sanitizeDecimalES(raw){
+    let v = String(raw ?? '').replace(/\s+/g,'');
+    v = v.replace(/[^\d.,-]/g, '');
+    v = v.replaceAll('.', ','); // siempre coma
+
+    // solo una coma
+    const i = v.indexOf(',');
+    if (i !== -1) v = v.slice(0, i+1) + v.slice(i+1).replaceAll(',', '');
+
+    // solo un '-' al inicio
+    if (v.includes('-')) v = (v[0] === '-' ? '-' : '') + v.replaceAll('-', '');
+    return v;
+  }
+
+  function insertAtCursor(el, txt){
+    const start = el.selectionStart ?? el.value.length;
+    const end   = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0,start) + txt + el.value.slice(end);
+    const pos = start + txt.length;
+    try { el.setSelectionRange(pos, pos); } catch {}
+  }
+
+  function hardFix(el){
+    if (!el || el.__fmDecimalFixed) return;
+    el.__fmDecimalFixed = true;
+
+    // FORZAR a TEXT (number en iOS suele bloquear coma)
+    try { el.type = 'text'; } catch {}
+    el.setAttribute('inputmode','decimal');
+    el.setAttribute('pattern','[0-9]*[.,]?[0-9]*');
+    el.setAttribute('autocomplete','off');
+    el.setAttribute('autocorrect','off');
+    el.setAttribute('autocapitalize','off');
+    el.setAttribute('spellcheck','false');
+
+    // KEYDOWN: si core bloquea "."/"," → lo insertamos nosotros (capture)
+    el.addEventListener('keydown', (e) => {
+      const k = e.key;
+
+      // permitir números normal
+      if (/^\d$/.test(k)) return;
+
+      // capturar decimales
+      if (k === '.' || k === ',' || k === 'Decimal') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if ((el.value || '').includes(',')) return; // ya hay coma
+        insertAtCursor(el, ',');
+        el.dispatchEvent(new Event('input', { bubbles:true }));
+        return;
+      }
+
+      // dejar control básicos
+      const ok = ['Backspace','Delete','ArrowLeft','ArrowRight','Home','End','Tab'];
+      if (ok.includes(k)) return;
+
+      // no tocar Enter (tu flujo PRO lo usa)
+    }, true);
+
+    // BEFOREINPUT (iOS): también puede bloquear aquí
+    el.addEventListener('beforeinput', (e) => {
+      const d = e.data;
+      if (d === '.' || d === ',') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if ((el.value || '').includes(',')) return;
+        insertAtCursor(el, ',');
+        el.dispatchEvent(new Event('input', { bubbles:true }));
+      }
+    }, true);
+
+    // INPUT: limpiar y mantener coma única
+    el.addEventListener('input', () => {
+      const v = sanitizeDecimalES(el.value);
+      if (v !== el.value) el.value = v;
+    }, true);
+
+    // PASTE: sanitizar
+    el.addEventListener('paste', (e) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const txt = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+      const v = sanitizeDecimalES(txt);
+      insertAtCursor(el, v);
+      el.value = sanitizeDecimalES(el.value);
+      el.dispatchEvent(new Event('input', { bubbles:true }));
+    }, true);
+  }
+
+  function scan(){
+    // tu selector original
+    $$('#gridBody .precio').forEach(hardFix);
+    // selector extra por si tu input NO tiene clase .precio
+    $$('input').filter(isPrecioInput).forEach(hardFix);
+  }
+
+  // aplicar ya y a nuevas filas
+  scan();
+  const grid = $('#gridBody');
+  if (grid && !grid.__fmObs){
+    grid.__fmObs = true;
+    new MutationObserver(scan).observe(grid, { childList:true, subtree:true });
+  }
+
+  // también al enfocar (por si el core recrea inputs)
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    if (isPrecioInput(el)) hardFix(el);
+  }, true);
 
 })();
