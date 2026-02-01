@@ -4276,4 +4276,98 @@ PEGAR **AL FINAL** de tu app.js (DESPUÉS de la PARTE 3/4)
   }
 
 })();
+/* =========================================================
+   FIX — PRECIO: normalizar (miles + coma/punto) para CALC + PDF
+   ✅ Pegar al FINAL de app.js
+========================================================= */
+(() => {
+  'use strict';
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  // Convierte cualquier formato a "1234.56" (SIN miles)
+  function normalizePriceString(raw){
+    let s = String(raw ?? '').trim();
+    if (!s) return '';
+
+    // quitar moneda y espacios raros
+    s = s.replace(/\s+/g,'').replace(/[€]/g,'');
+
+    // Si tiene . y , -> asumimos ES: "." miles y "," decimal
+    if (s.includes('.') && s.includes(',')) {
+      s = s.replaceAll('.', '');   // quitar miles
+      s = s.replace(',', '.');     // decimal a punto
+    } else if (s.includes(',')) {
+      // Solo coma -> decimal
+      s = s.replace(',', '.');
+    } else {
+      // Solo punto o nada -> ok
+    }
+
+    // quitar cualquier cosa que no sea dígito, punto o -
+    s = s.replace(/[^\d.-]/g,'');
+
+    // '-' solo al inicio
+    if (s.includes('-')) s = (s[0] === '-' ? '-' : '') + s.replaceAll('-', '');
+
+    // dejar solo 1 punto decimal
+    const p = s.split('.');
+    if (p.length > 2) s = p[0] + '.' + p.slice(1).join('');
+
+    // limitar a 2 decimales sin redondear agresivo (solo recorte)
+    if (s.includes('.')) {
+      const [a,b] = s.split('.');
+      s = a + '.' + (b || '').slice(0, 2);
+    }
+    return s;
+  }
+
+  function normalizeAllPricesInGrid(){
+    const priceInputs = $$('#gridBody .precio, #gridBody input[data-field="precio"], #gridBody input[name="precio"]');
+    priceInputs.forEach(inp => {
+      try { inp.type = 'text'; } catch {}
+      inp.setAttribute('inputmode','decimal');
+
+      const fixed = normalizePriceString(inp.value);
+      // solo escribir si cambia (no molestar)
+      if (fixed !== String(inp.value ?? '')) inp.value = fixed;
+
+      // disparar input para que el core recalcule
+      inp.dispatchEvent(new Event('input', { bubbles:true }));
+      inp.dispatchEvent(new Event('change', { bubbles:true }));
+    });
+  }
+
+  // 1) Al salir del campo precio: normaliza (gana a formateos previos)
+  document.addEventListener('blur', (e) => {
+    const t = e.target;
+    if (!t) return;
+    const isPrice = t.classList?.contains('precio') || t.dataset?.field === 'precio' || t.name === 'precio';
+    if (!isPrice) return;
+
+    const fixed = normalizePriceString(t.value);
+    t.value = fixed;
+    t.dispatchEvent(new Event('input', { bubbles:true }));
+    t.dispatchEvent(new Event('change', { bubbles:true }));
+  }, true);
+
+  // 2) Antes de PDF y antes de Guardar: normaliza TODO
+  // Usamos pointerdown para ejecutarlo ANTES de cualquier click handler.
+  const hookBefore = (btnId) => {
+    const btn = $(btnId);
+    if (!btn || btn.__normHooked) return;
+    btn.__normHooked = true;
+    btn.addEventListener('pointerdown', () => {
+      normalizeAllPricesInGrid();
+    }, true);
+  };
+
+  hookBefore('#btnPdf');
+  hookBefore('#btnGuardarFactura');
+
+  // 3) Primera pasada
+  normalizeAllPricesInGrid();
+
+})();
 
