@@ -1303,3 +1303,34 @@ textarea{ resize: vertical; }
   #contabDashboard .kpis{ grid-template-columns: 1fr; }
   #contabDashboard .barRow{ grid-template-columns: 58px 1fr 76px; }
 }
+/* =========================
+   MOBILE PRO PATCH (safe-area + sticky)
+========================= */
+
+/* iOS safe area */
+:root{
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+}
+
+/* Mejor scroll en iOS */
+html, body{
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+/* Botonera inferior fija (si ya tienes un contenedor de acciones, úsalo)
+   Si no, no afecta */
+.actionsBar, .footerActions, .invoiceActions{
+  position: sticky;
+  bottom: 0;
+  z-index: 50;
+  background: #fff;
+  padding-bottom: calc(10px + var(--safe-b));
+  border-top: 1px solid rgba(0,0,0,.12);
+}
+
+/* Más “tacto”: */
+button, .btn, input, select, textarea{
+  touch-action: manipulation;
+}
