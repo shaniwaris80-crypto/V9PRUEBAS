@@ -1,20 +1,17 @@
-/* patches/pdf-cloud-upload.js (V4)
-   Captura PDFs aunque tu core:
-   - abra data:application/pdf
-   - haga descarga con <a download>
-   - use URL.createObjectURL
-   - use jsPDF.save() / jsPDF.output()
-   Luego sube a Firebase Storage y guarda pdfUrl en la factura.
+/* patches/pdf-cloud-upload.js (V5)
+   Captura PDF verificando firma %PDF y sube a Firebase Storage.
+   - Hook Blob, URL.createObjectURL, window.open(data:pdf), a[download]
+   - Cuando haces click en "PDF+Nube", busca durante 8s un blob que empiece por %PDF
 */
+
 (async () => {
   'use strict';
-  if (window.__FM_PDF_CLOUD_V4__) return;
-  window.__FM_PDF_CLOUD_V4__ = true;
+  if (window.__FM_PDF_CLOUD_V5__) return;
+  window.__FM_PDF_CLOUD_V5__ = true;
 
   const $ = (s, r=document) => r.querySelector(s);
-  const log = (...a) => console.log('[PDF+NUBE V4]', ...a);
+  const log = (...a) => console.log('[PDF+NUBE V5]', ...a);
 
-  // ==== Detectar el botón PDF+Nube ====
   const isPdfNubeBtn = (el) => {
     const btn = el?.closest?.('button,a');
     if (!btn) return false;
@@ -23,16 +20,13 @@
     const act = (btn.dataset?.action || '').toLowerCase();
     const txt = (btn.textContent || '').trim().toLowerCase();
 
-    // evita confundir con Cloud
     if (id === 'btncloud' || txt === 'cloud') return false;
-
     if (act.includes('pdf') && (act.includes('nube') || act.includes('cloud'))) return true;
     if (id.includes('pdf') && (id.includes('nube') || id.includes('cloud'))) return true;
-
     return /pdf\s*\+\s*nube|pdf\+nube|pdf\s*nube/.test(txt);
   };
 
-  // ==== Firebase config (tuya) ====
+  // --- Firebase config ---
   const firebaseConfig = {
     apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
     authDomain: "factumiral.firebaseapp.com",
@@ -44,7 +38,6 @@
     databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
   };
 
-  // Firebase modular CDN
   const [appMod, authMod, storageMod] = await Promise.all([
     import("https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js"),
     import("https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js"),
@@ -59,7 +52,7 @@
   const auth = getAuth(app);
   const storage = getStorage(app);
 
-  // ==== Helpers ====
+  // --- helpers ---
   const safeParse = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
 
   function getNumFactura(){
@@ -79,25 +72,35 @@
     return (s || `FA-${Date.now()}`).replace(/[^\w\-]+/g,'_').replace(/_+/g,'_').slice(0, 90);
   }
 
-  function dataUrlToBlob(dataUrl){
-    // data:application/pdf;base64,....
-    const m = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
-    if (!m) return null;
-    const mime = m[1];
-    const b64 = m[2];
-    const bin = atob(b64);
-    const len = bin.length;
-    const bytes = new Uint8Array(len);
-    for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
-    return new Blob([bytes], { type: mime || 'application/pdf' });
+  async function isRealPdfBlob(blob){
+    try{
+      const ab = await blob.slice(0, 5).arrayBuffer();
+      const u8 = new Uint8Array(ab);
+      const s = String.fromCharCode(...u8);
+      return s === '%PDF-';
+    }catch{
+      return false;
+    }
   }
 
-  function savePdfUrlSomewhere(num, url, path){
-    // 1) intenta localizar la lista de facturas en cualquier key (sin saber el nombre)
+  function dataUrlToBlob(dataUrl){
+    const m = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+    if (!m) return null;
+    const mime = m[1] || 'application/pdf';
+    const b64 = m[2];
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
+  function savePdfUrlIntoInvoice(num, url, path){
     const targetNum = String(num).trim();
+
+    // buscar cualquier array JSON que contenga esa factura
     for (const k of Object.keys(localStorage)){
       const raw = localStorage.getItem(k);
-      if (!raw || raw.length < 50 || raw[0] !== '[') continue;
+      if (!raw || raw[0] !== '[') continue;
       const arr = safeParse(raw);
       if (!Array.isArray(arr)) continue;
 
@@ -112,7 +115,7 @@
       }
     }
 
-    // 2) fallback: índice externo (para que "Ver PDF" pueda usarlo si lo adaptas)
+    // fallback: índice
     const idx = safeParse(localStorage.getItem('fm_pdfindex') || '{}') || {};
     idx[targetNum] = { url, path, ts: Date.now() };
     localStorage.setItem('fm_pdfindex', JSON.stringify(idx));
@@ -125,178 +128,140 @@
 
     const safeNum = sanitize(num);
     const filePath = `factumiral/${u.uid}/pdf/${safeNum}.pdf`;
-
     const r = sRef(storage, filePath);
+
     await uploadBytes(r, blob, { contentType: 'application/pdf' });
     const url = await getDownloadURL(r);
     return { url, path: filePath };
   }
 
-  // ==== Captura (múltiples vías) ====
+  // --- capture queue ---
   let armed = false;
   let armedAt = 0;
   let armedNum = '';
-  let capturedBlob = null;
-  let capturedDataUrl = null;
+  let deadline = 0;
+  const queue = []; // blobs candidates
+  const seen = new WeakSet();
 
-  const captureBlob = (blob, why) => {
-    if (!armed || capturedBlob) return;
+  function pushCandidate(blob, why){
+    if (!armed) return;
     if (!(blob instanceof Blob)) return;
-    const dt = Date.now() - armedAt;
-    if (dt < 0 || dt > 8000) return;
+    if (seen.has(blob)) return;
+    seen.add(blob);
+    queue.push({ blob, why, ts: Date.now() });
+    log('candidate+', why, { size: blob.size, type: blob.type });
+  }
 
-    const type = (blob.type || '').toLowerCase();
-    if (!type.includes('pdf') && blob.size < 50_000) return;
-    capturedBlob = blob;
-    log('✅ Capturado BLOB via', why, { size: blob.size, type: blob.type });
-  };
-
-  const captureDataUrl = (u, why) => {
-    if (!armed || capturedDataUrl) return;
-    const s = String(u || '');
-    const dt = Date.now() - armedAt;
-    if (dt < 0 || dt > 8000) return;
-
-    if (s.startsWith('data:application/pdf;base64,')) {
-      capturedDataUrl = s;
-      log('✅ Capturado DATAURL via', why, { len: s.length });
+  // Hook Blob()
+  const OrigBlob = window.Blob;
+  if (OrigBlob && !OrigBlob.__fmWrappedV5){
+    function BlobProxy(parts, opts){
+      const b = new OrigBlob(parts, opts);
+      try { pushCandidate(b, 'Blob()'); } catch {}
+      return b;
     }
-  };
+    BlobProxy.prototype = OrigBlob.prototype;
+    BlobProxy.__fmWrappedV5 = true;
+    window.Blob = BlobProxy;
+  }
 
-  // 1) URL.createObjectURL
+  // Hook createObjectURL
   const origCreate = URL.createObjectURL.bind(URL);
   URL.createObjectURL = function(blob){
-    try { captureBlob(blob, 'createObjectURL'); } catch {}
+    try { pushCandidate(blob, 'createObjectURL'); } catch {}
     return origCreate(blob);
   };
 
-  // 2) window.open(data:application/pdf)
+  // Hook window.open(data:pdf)
   const origOpen = window.open.bind(window);
   window.open = function(url, ...rest){
-    try { captureDataUrl(url, 'window.open'); } catch {}
+    try{
+      if (typeof url === 'string' && url.startsWith('data:application/pdf;base64,')){
+        const b = dataUrlToBlob(url);
+        if (b) pushCandidate(b, 'window.open(dataurl)');
+      }
+    }catch{}
     return origOpen(url, ...rest);
   };
 
-  // 3) Click en <a download> con data:pdf
+  // Hook <a download>
   const origAClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function(...args){
     try{
       const href = this.getAttribute('href') || '';
-      const dl = this.getAttribute('download') || '';
-      if (armed && (dl.toLowerCase().endsWith('.pdf') || href.startsWith('data:application/pdf'))) {
-        captureDataUrl(href, 'a[download].click');
+      const dl = (this.getAttribute('download') || '').toLowerCase();
+      if (href.startsWith('data:application/pdf;base64,')){
+        const b = dataUrlToBlob(href);
+        if (b) pushCandidate(b, 'a[download](dataurl)');
+      }
+      if (href.startsWith('blob:') && dl.endsWith('.pdf')){
+        // no podemos convertir blob:->Blob aquí, pero al menos sabemos que createObjectURL debió pasar
       }
     }catch{}
     return origAClick.apply(this, args);
   };
 
-  // 4) jsPDF hook (si existe)
-  function hookJsPDF(){
-    const jsPDF = window.jspdf?.jsPDF || window.jsPDF || null;
-    if (!jsPDF || jsPDF.prototype.__fmPdfNubePatched) return;
-
-    const p = jsPDF.prototype;
-    const origOutput = p.output;
-    const origSave = p.save;
-
-    if (typeof origOutput === 'function'){
-      p.output = function(type, ...rest){
-        const out = origOutput.call(this, type, ...rest);
-        try{
-          if (type === 'blob' && out instanceof Blob) captureBlob(out, 'jsPDF.output(blob)');
-          if (type === 'datauristring' && typeof out === 'string') captureDataUrl(out, 'jsPDF.output(datauristring)');
-        }catch{}
-        return out;
-      };
-    }
-
-    if (typeof origSave === 'function'){
-      p.save = function(...args){
-        try{
-          if (typeof this.output === 'function'){
-            const b = this.output('blob');
-            if (b instanceof Blob) captureBlob(b, 'jsPDF.save->output(blob)');
-          }
-        }catch{}
-        return origSave.apply(this, args);
-      };
-    }
-
-    p.__fmPdfNubePatched = true;
-    log('Hook jsPDF ✅');
-  }
-  hookJsPDF();
-  setTimeout(hookJsPDF, 1200);
-
-  async function finalize(){
-    armed = false;
-
+  async function huntAndUpload(){
     const u = auth.currentUser;
     if (!u){
-      alert('Primero haz LOGIN en Cloud para subir a Storage.');
+      alert('Primero LOGIN en Cloud para subir PDFs.');
       $('#btnCloud')?.click();
       return;
     }
 
-    // espera final por si genera tarde
-    await new Promise(r => setTimeout(r, 600));
+    while (Date.now() < deadline){
+      // procesa candidatos
+      while (queue.length){
+        const { blob, why } = queue.shift();
 
-    if (!capturedBlob && capturedDataUrl){
-      capturedBlob = dataUrlToBlob(capturedDataUrl);
-      if (capturedBlob) log('✅ Convertido DATAURL->BLOB', { size: capturedBlob.size, type: capturedBlob.type });
+        // filtro rápido: tamaño mínimo
+        if (blob.size < 2000) continue;
+
+        const ok = await isRealPdfBlob(blob);
+        if (!ok) continue;
+
+        log('✅ PDF real detectado via', why, { size: blob.size, type: blob.type });
+
+        const num = armedNum || getNumFactura();
+        const { url, path } = await uploadPdf(blob, num);
+        const saved = savePdfUrlIntoInvoice(num, url, path);
+
+        alert(
+          '✅ PDF subido a Storage.\n\n' +
+          'Factura: ' + num + '\n' +
+          'Ruta: ' + path + '\n' +
+          'Guardado link en: ' + saved.key + (saved.ok ? ' (en factura)' : ' (índice)')
+        );
+
+        armed = false;
+        return;
+      }
+
+      await new Promise(r => setTimeout(r, 200));
     }
 
-    if (!capturedBlob){
-      alert(
-        'No se detectó el PDF para subir.\n\n' +
-        'Abre Consola y mira si aparece algún "✅ Capturado".\n' +
-        'Si NO aparece, el click no está entrando o el PDF no es blob/dataurl.\n\n' +
-        'Dime el texto exacto del botón PDF+Nube o pégame el <button>…</button>.'
-      );
-      return;
-    }
-
-    try{
-      const num = armedNum || getNumFactura();
-      log('Subiendo a Storage…', num);
-
-      const { url, path } = await uploadPdf(capturedBlob, num);
-      const saved = savePdfUrlSomewhere(num, url, path);
-
-      alert(
-        '✅ PDF subido a Storage.\n\n' +
-        'Factura: ' + num + '\n' +
-        'Ruta: ' + path + '\n' +
-        'Guardado link en: ' + saved.key + (saved.ok ? ' (dentro de la factura)' : ' (índice externo)')
-      );
-
-      window.dispatchEvent(new CustomEvent('fmcloud:syncok', { detail: { key: 'pdf' } }));
-      log('OK', { num, path, url, saved });
-
-    } catch (e){
-      console.error(e);
-      alert('❌ Error subiendo a Storage: ' + (e?.code || e?.message || e));
-    } finally {
-      capturedBlob = null;
-      capturedDataUrl = null;
-    }
+    armed = false;
+    alert('No se encontró un PDF real (%PDF-) en 8 segundos. El generador PDF está fallando o no está llegando a generar el blob.');
   }
 
-  // Enganche ANTES del core
+  // click hook (antes del core)
   document.addEventListener('click', (e) => {
     if (!isPdfNubeBtn(e.target)) return;
 
     armed = true;
     armedAt = Date.now();
     armedNum = getNumFactura();
-    capturedBlob = null;
-    capturedDataUrl = null;
+    deadline = Date.now() + 8000;
+    queue.length = 0;
 
-    log('Click PDF+Nube detectado. Armado.', { armedNum });
+    log('ARMED', { armedNum });
 
-    // deja correr tu core y luego subimos
-    setTimeout(() => finalize().catch(()=>{}), 1800);
+    setTimeout(() => huntAndUpload().catch(err => {
+      console.error(err);
+      armed = false;
+      alert('Error en subida: ' + (err?.code || err?.message || err));
+    }), 0);
   }, true);
 
-  log('Patch V4 activo ✅');
+  log('Patch V5 activo ✅');
 })();
