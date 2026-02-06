@@ -1,38 +1,28 @@
-/* patches/pdf-cloud-upload.js
-   PDF + Nube (Storage) sin tocar el core:
-   - Captura el Blob PDF cuando tu app genera el PDF (createObjectURL)
-   - Sube a Firebase Storage
-   - Guarda pdfUrl/pdfPath en la factura (LocalStorage)
-   Requisitos:
-   - Estar logueado en Firebase Auth (tu modal Cloud)
+/* patches/pdf-cloud-upload.js  (V2 FIX)
+   - Arma captura ANTES de que el core genere el PDF
+   - Captura Blob via URL.createObjectURL
+   - Sube a Firebase Storage y guarda pdfUrl en la factura (LocalStorage)
 */
 
 (async () => {
   'use strict';
-  if (window.__FM_PDF_CLOUD_PATCH__) return;
-  window.__FM_PDF_CLOUD_PATCH__ = true;
+  if (window.__FM_PDF_CLOUD_V2__) return;
+  window.__FM_PDF_CLOUD_V2__ = true;
 
   const $ = (s, r=document) => r.querySelector(s);
 
-  // ===== Ajusta aquí si tu botón tiene otro selector =====
-  const PDF_CLOUD_SELECTORS = [
-    '#btnPdfCloud', '#btnPDFCloud', '#btnPdfNube', '#btnPDFNube',
-    '[data-action="pdfcloud"]', '[data-action="pdf+nube"]', '[data-action="pdfnube"]',
-    '.btnPdfCloud', '.btnPDFCloud'
-  ];
+  // ==== Ajusta si quieres (pero este patch también detecta por TEXTO) ====
+  const MATCH_BTN = (btn) => {
+    const t = (btn?.textContent || '').trim().toLowerCase();
+    const id = (btn?.id || '').toLowerCase();
+    const act = (btn?.dataset?.action || '').toLowerCase();
+    // detecta "PDF+Nube", "PDF Nube", "Nube" (pero evita el botón Cloud)
+    if (id.includes('cloud')) return false;
+    if (act.includes('pdf') && act.includes('nube')) return true;
+    if (id.includes('pdf') && (id.includes('nube') || id.includes('cloud'))) return true;
+    return /pdf\s*\+\s*nube|pdf\s*nube|pdf\+nube/.test(t);
+  };
 
-  // Firebase modular CDN
-  const [appMod, authMod, storageMod] = await Promise.all([
-    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js"),
-    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js"),
-    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-storage.js")
-  ]);
-
-  const { initializeApp, getApps, getApp } = appMod;
-  const { getAuth } = authMod;
-  const { getStorage, ref: sRef, uploadBytes, getDownloadURL } = storageMod;
-
-  // TU CONFIG (igual que el test)
   const firebaseConfig = {
     apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
     authDomain: "factumiral.firebaseapp.com",
@@ -44,18 +34,24 @@
     databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
   };
 
+  // Firebase (CDN)
+  const [appMod, authMod, storageMod] = await Promise.all([
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js"),
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-storage.js")
+  ]);
+
+  const { initializeApp, getApps, getApp } = appMod;
+  const { getAuth } = authMod;
+  const { getStorage, ref: sRef, uploadBytes, getDownloadURL } = storageMod;
+
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const storage = getStorage(app);
 
-  const toast = (title, msg) => {
-    try {
-      if (typeof window.toast === 'function') return window.toast(title, msg);
-    } catch {}
-    console.log(`[${title}]`, msg);
-  };
+  const log = (...a) => console.log('[PDF+NUBE V2]', ...a);
 
-  const safeParse = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
+  function safeParse(raw){ try { return JSON.parse(raw); } catch { return null; } }
 
   function findInvoicesKey(){
     const candidates = [
@@ -63,22 +59,15 @@
     ];
     for (const k of candidates) if (localStorage.getItem(k)) return k;
 
-    // fallback: buscar JSON grande que contenga FA-
+    // fallback: busca JSON array con FA-
     for (const k of Object.keys(localStorage)){
       const v = localStorage.getItem(k);
-      if (v && v.length > 300 && v.includes('FA-') && v.includes('factur')) return k;
-    }
-    // fallback 2: buscar arrays con "FA-"
-    for (const k of Object.keys(localStorage)){
-      const v = localStorage.getItem(k);
-      if (!v || v.length < 80) continue;
-      if (v.includes('FA-') && v.trim().startsWith('[')) return k;
+      if (v && v.length > 300 && v.includes('FA-') && v.trim().startsWith('[')) return k;
     }
     return null;
   }
 
-  function getCurrentInvoiceNumber(){
-    // intenta leer desde DOM
+  function getInvoiceNumberFromDOM(){
     const cand = [
       '#numFactura', '#facturaNum', '#facNum', '#invoiceNum',
       'input[name="numFactura"]', 'input[name="facturaNum"]'
@@ -90,40 +79,29 @@
         if (v) return v;
       }
     }
-
-    // fallback: si tienes un campo visible con FA-...
+    // fallback: busca cualquier texto tipo FA-...
     const any = Array.from(document.querySelectorAll('input,span,div'))
       .map(x => (x.value || x.textContent || '').trim())
       .find(t => /^FA-\d{12,}/.test(t));
-    return any || '';
+    return any || `FA-${Date.now()}`;
   }
 
   function sanitizeFileName(s){
-    return (s || 'SIN-NUM')
+    return (s || 'FA-' + Date.now())
       .replace(/[^\w\-]+/g,'_')
       .replace(/_+/g,'_')
       .slice(0, 80);
   }
 
-  function updateInvoicePdfUrl(numFactura, pdfUrl, pdfPath){
+  function savePdfUrlIntoInvoice(numFactura, pdfUrl, pdfPath){
     const k = findInvoicesKey();
-    if (!k) {
-      toast('PDF+Nube', 'No encuentro la key de facturas en LocalStorage');
-      return false;
-    }
+    if (!k) { log('No encuentro key de facturas'); return false; }
+
     const list = safeParse(localStorage.getItem(k) || '[]');
     if (!Array.isArray(list)) return false;
 
-    const findMatch = (f) => {
-      const n = (f?.num || f?.numero || f?.n || f?.id || '').toString().trim();
-      return n === numFactura;
-    };
-
-    const idx = list.findIndex(findMatch);
-    if (idx < 0) {
-      toast('PDF+Nube', `Subido OK, pero no encontré la factura ${numFactura} para guardar pdfUrl`);
-      return false;
-    }
+    const idx = list.findIndex(f => String(f?.num || f?.numero || f?.id || '').trim() === String(numFactura).trim());
+    if (idx < 0) { log('No encuentro factura para guardar pdfUrl:', numFactura); return false; }
 
     list[idx].pdfUrl = pdfUrl;
     list[idx].pdfPath = pdfPath;
@@ -131,132 +109,107 @@
 
     localStorage.setItem(k, JSON.stringify(list));
 
-    // Notifica (si tienes refresco por cloud)
+    // aviso para refrescos si tienes listeners
     window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { key: k } }));
     return true;
   }
 
-  async function uploadPdfBlobToStorage(pdfBlob, numFactura){
+  async function uploadPdf(blob, numFactura){
     const u = auth.currentUser;
     if (!u) throw new Error('NO_AUTH');
 
     const safeNum = sanitizeFileName(numFactura);
-    const fileName = `${safeNum}.pdf`;
-    const path = `factumiral/${u.uid}/pdf/${fileName}`;
+    const path = `factumiral/${u.uid}/pdf/${safeNum}.pdf`;
 
     const r = sRef(storage, path);
-    await uploadBytes(r, pdfBlob, { contentType: 'application/pdf' });
+    await uploadBytes(r, blob, { contentType: 'application/pdf' });
     const url = await getDownloadURL(r);
     return { url, path };
   }
 
-  function findPdfCloudButton(){
-    for (const s of PDF_CLOUD_SELECTORS){
-      const b = $(s);
-      if (b) return b;
-    }
-    // fallback por texto
-    const btns = Array.from(document.querySelectorAll('button'));
-    return btns.find(b => /pdf\s*\+\s*nube|pdf\+nube|nube/i.test((b.textContent||'').trim())) || null;
-  }
-
-  // ---- Captura del Blob cuando tu app genera PDF
+  // ====== CAPTURA Blob ======
   let armed = false;
+  let armedAt = 0;
+  let armedNum = '';
   let capturedBlob = null;
-  let lastArmTS = 0;
 
   const origCreate = URL.createObjectURL.bind(URL);
   URL.createObjectURL = function(blob){
     try{
-      if (armed && blob instanceof Blob) {
-        const t = (blob.type || '').toLowerCase();
-        // muchos generadores ponen application/pdf, otros octet-stream
-        if (t.includes('pdf') || t.includes('octet-stream')) {
+      if (armed && blob instanceof Blob){
+        const dt = Date.now() - armedAt;
+        const type = (blob.type || '').toLowerCase();
+        // ventana corta + blob grande
+        if (dt >= 0 && dt < 4000 && (type.includes('pdf') || blob.size > 50_000)){
           capturedBlob = blob;
+          log('Blob capturado', { size: blob.size, type: blob.type });
         }
       }
-    } catch {}
+    }catch{}
     return origCreate(blob);
   };
 
-  async function runPdfCloudFlow(){
-    const btn = findPdfCloudButton();
-    if (!btn) {
-      alert('No encontré el botón PDF+Nube. Dime su ID/clase y lo ajusto.');
-      return;
-    }
-
+  async function finalize(){
     const u = auth.currentUser;
-    if (!u) {
-      alert('Primero haz LOGIN en Cloud (Firebase) para poder subir a Storage.');
+    if (!u){
+      alert('Primero LOGIN en Cloud para subir PDFs.');
       $('#btnCloud')?.click();
       return;
     }
 
-    const numFactura = getCurrentInvoiceNumber() || `FA-${Date.now()}`;
-    toast('PDF+Nube', 'Preparando captura del PDF…');
-
-    // “armar” captura
-    armed = true;
-    capturedBlob = null;
-    lastArmTS = Date.now();
-
-    // esperamos a que tu handler genere el PDF y llame a createObjectURL
+    // esperamos un poco por si el core genera el bloburl al final
     await new Promise(r => setTimeout(r, 900));
 
     armed = false;
 
-    if (!capturedBlob) {
+    if (!capturedBlob){
       alert(
-        'No pude capturar el PDF.\n\n' +
-        'Causa típica: tu generador NO usa createObjectURL (descarga directo).\n' +
-        'Solución: dime qué librería usas (jsPDF / pdfMake) o pégame el trozo de generar PDF.'
+        'No se detectó el PDF para subir.\n\n' +
+        'Esto pasa si tu generador descarga directo (sin createObjectURL) o falla antes de generar.\n' +
+        'Dime qué librería usas (jsPDF/pdfMake) o pégame el trozo de “Generar PDF” y lo adapto.'
       );
       return;
     }
 
     try{
-      toast('PDF+Nube', 'Subiendo a Storage…');
-      const { url, path } = await uploadPdfBlobToStorage(capturedBlob, numFactura);
+      const num = armedNum || getInvoiceNumberFromDOM();
+      log('Subiendo PDF…', num);
 
-      const ok = updateInvoicePdfUrl(numFactura, url, path);
+      const { url, path } = await uploadPdf(capturedBlob, num);
+      const ok = savePdfUrlIntoInvoice(num, url, path);
 
-      toast('PDF+Nube', '✅ Subido OK');
       alert(
-        '✅ PDF subido a la nube.\n\n' +
-        'Factura: ' + numFactura + '\n' +
-        'Guardado en Storage: ' + path + '\n' +
+        '✅ PDF subido a Storage.\n\n' +
+        'Factura: ' + num + '\n' +
+        'Ruta: ' + path + '\n' +
         (ok ? 'pdfUrl guardado en la factura (Ver PDF funcionará).' : 'Subido OK, pero no pude guardar pdfUrl en esa factura.')
       );
-      console.log('PDF+Nube OK', { numFactura, path, url, capturedSize: capturedBlob.size, capturedType: capturedBlob.type });
-    }catch(e){
+
+      log('OK', { num, path, url });
+      window.dispatchEvent(new CustomEvent('fmcloud:syncok', { detail: { key: 'pdf' } }));
+    } catch (e){
       console.error(e);
-      alert('❌ Falló subida a Storage: ' + (e?.code || e?.message || e));
+      alert('❌ Error subiendo a Storage: ' + (e?.code || e?.message || e));
     }
   }
 
-  // Engancha: en CAPTURE para armar antes de que corra tu handler del botón
-  function hook(){
-    const btn = findPdfCloudButton();
-    if (!btn) {
-      console.warn('PDF+Nube: botón no encontrado (ajusta selectors).');
-      return;
-    }
+  // ====== Enganche robusto: delegación en CAPTURE ======
+  document.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('button, a');
+    if (!btn) return;
+    if (!MATCH_BTN(btn)) return;
 
-    btn.addEventListener('click', async () => {
-      // tu handler ya generará el PDF; nosotros solo hacemos flow después
-      // evitamos doble click
-      if (Date.now() - lastArmTS < 1200) return;
-      setTimeout(() => runPdfCloudFlow().catch(()=>{}), 50);
-    }, true);
+    // Armamos ANTES de que el core haga nada
+    armed = true;
+    armedAt = Date.now();
+    armedNum = getInvoiceNumberFromDOM();
+    capturedBlob = null;
 
-    toast('PDF+Nube', 'Patch activo ✅');
-  }
+    log('PDF+Nube click detectado. Armado captura.', { armedNum });
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', hook, { once:true });
-  } else {
-    hook();
-  }
+    // finalizamos después (sin bloquear el click del core)
+    setTimeout(() => finalize().catch(()=>{}), 0);
+  }, true);
 
+  log('Patch V2 activo ✅');
 })();
