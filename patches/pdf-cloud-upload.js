@@ -1,437 +1,460 @@
-/* patches/pdf-pro-cloud.js
-   PDF PRO + SUBIDA A FIREBASE STORAGE
-   - No usa tu generador roto
-   - Lee factura actual desde LocalStorage
-   - Genera PDF profesional (jsPDF + AutoTable + QR)
-   - Sube a Storage y guarda pdfUrl en la factura
+/* patches/pdf-cloud-pro.js
+   BOTÓN VERDE: "PDF PRO + CLOUD"
+   - Genera PDF PRO (jsPDF + AutoTable)
+   - Sube a Firebase Storage
+   - Guarda pdfUrl (Local + RTDB pdfIndex)
+   NO TOCA app.js
 */
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
-  authDomain: "factumiral.firebaseapp.com",
-  projectId: "factumiral",
-  storageBucket: "factumiral.firebasestorage.app",
-  messagingSenderId: "576821038417",
-  appId: "1:576821038417:web:aba329f36563134bb01770",
-  measurementId: "G-HJVL8ET49L",
-  databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
-};
+(async () => {
+  'use strict';
+  if (window.__FM_PDF_PRO_CLOUD__) return;
+  window.__FM_PDF_PRO_CLOUD__ = true;
 
-const $ = (s, r=document) => r.querySelector(s);
-const log = (...a) => console.log('[PDF PRO+CLOUD]', ...a);
+  const $ = (s, r=document) => r.querySelector(s);
+  const log = (...a) => console.log('[PDF PRO + CLOUD]', ...a);
 
-function num(x){
-  if (x === null || x === undefined) return 0;
-  const s = String(x).trim().replace(/\s+/g,'').replace(',', '.');
-  const v = Number(s);
-  return Number.isFinite(v) ? v : 0;
-}
-function esc(s){ return String(s ?? '').trim(); }
+  // ========= CSS del botón (verde) =========
+  (function injectCss(){
+    const id = 'fmPdfProCloudCss';
+    if (document.getElementById(id)) return;
+    const st = document.createElement('style');
+    st.id = id;
+    st.textContent = `
+      .btn--green{
+        background:#26d06a !important;
+        color:#000 !important;
+        border:1px solid rgba(0,0,0,.18) !important;
+        font-weight:800 !important;
+      }
+      .btn--green:hover{ filter: brightness(0.98); }
+      .btn--green:active{ transform: translateY(1px); }
+    `;
+    document.head.appendChild(st);
+  })();
 
-function findArrayKeyWithInvoices(){
-  const preferred = ['factumiral_facturas','fm_facturas','arslan_v104_facturas','facturas'];
-  for (const k of preferred) {
-    const v = localStorage.getItem(k);
-    if (v && v.trim().startsWith('[') && v.includes('FA-')) return k;
-  }
-  for (const k of Object.keys(localStorage)){
-    const v = localStorage.getItem(k);
-    if (v && v.length > 200 && v.trim().startsWith('[') && v.includes('FA-')) return k;
-  }
-  return null;
-}
-function safeParse(raw){ try { return JSON.parse(raw); } catch { return null; } }
-
-function getCurrentInvoiceNumberFromDOM(){
-  const cand = ['#numFactura','#facturaNum','#facNum','#invoiceNum','input[name="numFactura"]','input[name="facturaNum"]'];
-  for (const s of cand){
-    const el = $(s);
-    const v = (el?.value || el?.textContent || '').trim();
-    if (v) return v;
-  }
-  // fallback
-  const any = Array.from(document.querySelectorAll('input,span,div'))
-    .map(x => (x.value || x.textContent || '').trim())
-    .find(t => /^FA-\d{10,}/.test(t));
-  return any || '';
-}
-
-function pickInvoice(){
-  const key = findArrayKeyWithInvoices();
-  if (!key) return { key:null, list:[], invoice:null };
-
-  const list = safeParse(localStorage.getItem(key) || '[]');
-  if (!Array.isArray(list)) return { key, list:[], invoice:null };
-
-  const curNum = getCurrentInvoiceNumberFromDOM();
-  if (curNum){
-    const i = list.find(x => String(x?.num ?? x?.numero ?? x?.id ?? '').trim() === curNum.trim());
-    if (i) return { key, list, invoice:i };
-  }
-
-  // fallback: última factura
-  const last = list[list.length - 1] || null;
-  return { key, list, invoice:last };
-}
-
-function getProviderClientSettingsFallback(){
-  // intenta sacar de DOM si existe
-  const prov = {
-    nombre: esc($('#provNombre')?.value),
-    nif: esc($('#provNif')?.value),
-    dir: esc($('#provDir')?.value),
-    tel: esc($('#provTel')?.value),
-    email: esc($('#provEmail')?.value),
+  // ========= Firebase CONFIG (la tuya) =========
+  const firebaseConfig = {
+    apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
+    authDomain: "factumiral.firebaseapp.com",
+    projectId: "factumiral",
+    storageBucket: "factumiral.firebasestorage.app",
+    messagingSenderId: "576821038417",
+    appId: "1:576821038417:web:aba329f36563134bb01770",
+    measurementId: "G-HJVL8ET49L",
+    databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
   };
-  const cli = {
-    nombre: esc($('#cliNombre')?.value || $('#clienteNombre')?.value),
-    nif: esc($('#cliNif')?.value || $('#clienteNif')?.value),
-    dir: esc($('#cliDir')?.value || $('#clienteDir')?.value),
-    tel: esc($('#cliTel')?.value || $('#clienteTel')?.value),
-    email: esc($('#cliEmail')?.value || $('#clienteEmail')?.value),
-  };
-  const st = {
-    ivaPct: num($('#setIva')?.value || 4),
-    transportePct: num($('#setTrans')?.value || 10),
-    transporteOn: !!$('#chkTransporte')?.checked,
-    ivaIncluido: !!$('#chkIvaIncluido')?.checked,
-  };
-  return { prov, cli, st };
-}
 
-function normalizeLines(inv){
-  const raw = inv?.lineas || inv?.lines || inv?.items || inv?.rows || inv?.productos || [];
-  const arr = Array.isArray(raw) ? raw : [];
-  return arr.map((r) => {
-    const prod = esc(r?.producto ?? r?.name ?? r?.nombre ?? '');
-    const modo = esc(r?.modo ?? r?.mode ?? '');
-    const cant = num(r?.cantidad ?? r?.qty ?? r?.cant);
-    const bruto = num(r?.bruto ?? r?.kgBruto ?? r?.pesoBruto);
-    const tara = num(r?.tara ?? r?.taraTotal ?? r?.kgTara);
-    const neto = (r?.neto !== undefined && r?.neto !== null && String(r?.neto).trim() !== '')
-      ? num(r?.neto)
-      : Math.max(0, bruto - tara);
-    const precio = num(r?.precio ?? r?.price ?? r?.precioKg ?? r?.precioCaja ?? r?.precioUd);
-    const origen = esc(r?.origen ?? r?.origin ?? '');
-    const importe = (r?.importe !== undefined && r?.importe !== null && String(r?.importe).trim() !== '')
-      ? num(r?.importe)
-      : (modo === 'caja' || modo === 'CAJA') ? cant * precio
-        : (modo === 'ud' || modo === 'UD') ? cant * precio
-        : neto * precio;
-    return { prod, modo: modo || 'kg', cant, bruto, tara, neto, precio, origen, importe };
-  }).filter(x => x.prod);
-}
+  // ========= Cargar Firebase modular =========
+  const [appMod, authMod, storageMod, dbMod] = await Promise.all([
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js"),
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-storage.js"),
+    import("https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js"),
+  ]);
 
-function ddmmyyyy(isoLike){
-  const s = esc(isoLike);
-  if (!s) return '';
-  // soporta YYYY-MM-DD
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return s;
-}
-
-async function ensureLibs(){
-  // jsPDF UMD + AutoTable + QRCode
-  const load = (url) => new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = url;
-    s.async = true;
-    s.onload = () => res(true);
-    s.onerror = () => rej(new Error('No se pudo cargar: ' + url));
-    document.head.appendChild(s);
-  });
-
-  if (!window.jspdf?.jsPDF){
-    await load('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-  }
-  if (!window.jspdf?.jsPDF?.API?.autoTable){
-    await load('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js');
-  }
-  if (!window.QRCode){
-    await load('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
-  }
-}
-
-function makeQrDataUrl(text){
-  const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
-  document.body.appendChild(host);
-
-  // QRCodeJS crea canvas dentro
-  // tamaño 140 para buena calidad
-  const qr = new window.QRCode(host, { text, width: 140, height: 140, correctLevel: window.QRCode.CorrectLevel.M });
-  const canvas = host.querySelector('canvas');
-  const dataUrl = canvas ? canvas.toDataURL('image/png') : null;
-
-  try{ qr.clear(); } catch {}
-  host.remove();
-  return dataUrl;
-}
-
-function openUrlModal(url){
-  let modal = $('#fmPdfCloudModal');
-  if (modal) modal.remove();
-
-  modal = document.createElement('div');
-  modal.id = 'fmPdfCloudModal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:12px;';
-  modal.innerHTML = `
-    <div style="width:min(980px,100%);height:min(92vh,100%);background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35);display:flex;flex-direction:column;">
-      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee;">
-        <strong>PDF en la nube</strong>
-        <div style="display:flex;gap:8px;">
-          <a href="${url}" target="_blank" rel="noopener" style="padding:8px 10px;border:1px solid #000;background:#34c759;color:#000;border-radius:10px;text-decoration:none;">Abrir pestaña</a>
-          <button id="fmPdfCloudClose" style="padding:8px 10px;border:1px solid #ddd;background:#f5f5f5;border-radius:10px;cursor:pointer;">Cerrar</button>
-        </div>
-      </div>
-      <iframe style="flex:1;border:0;width:100%;" src="${url}"></iframe>
-    </div>
-  `;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.remove(); });
-  $('#fmPdfCloudClose')?.addEventListener('click', ()=> modal.remove());
-}
-
-async function generatePdfBlobPro(invoice, fallback){
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit:'pt', format:'a4' });
-
-  const lines = normalizeLines(invoice);
-  const { prov, cli, st } = fallback;
-
-  const numFac = esc(invoice?.num ?? invoice?.numero ?? getCurrentInvoiceNumberFromDOM() ?? `FA-${Date.now()}`);
-  const fecha = ddmmyyyy(invoice?.fecha ?? invoice?.date ?? '');
-
-  const subtotal = lines.reduce((a,x)=>a + num(x.importe), 0);
-  const transOn = (invoice?.transporteOn !== undefined) ? !!invoice?.transporteOn : st.transporteOn;
-  const transPct = (invoice?.transportePct !== undefined) ? num(invoice?.transportePct) : st.transportePct;
-  const ivaIncl = (invoice?.ivaIncluido !== undefined) ? !!invoice?.ivaIncluido : st.ivaIncluido;
-  const ivaPct = (invoice?.ivaPct !== undefined) ? num(invoice?.ivaPct) : st.ivaPct;
-
-  const transporte = transOn ? subtotal * (transPct/100) : 0;
-  const base = subtotal + transporte;
-  const iva = ivaIncl ? 0 : base * (ivaPct/100);
-  const total = base + iva;
-
-  // QR AEAT (fallback): texto compacto
-  const provNif = esc(invoice?.provNif ?? prov.nif);
-  const qrText = `NIF:${provNif}|FAC:${numFac}|F:${fecha||''}|T:${total.toFixed(2)}`;
-  let qrDataUrl = null;
-  try{ qrDataUrl = makeQrDataUrl(qrText); } catch {}
-
-  // ====== Header PRO ======
-  doc.setDrawColor(0);
-  doc.setLineWidth(1);
-
-  // Título
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(20);
-  doc.text('FACTURA', 40, 46);
-
-  // Caja meta (num/fecha/total) arriba derecha
-  doc.setFontSize(10);
-  doc.setFont('helvetica','normal');
-  doc.rect(360, 24, 195, 60);
-  doc.text(`Nº: ${numFac}`, 370, 42);
-  if (fecha) doc.text(`Fecha: ${fecha}`, 370, 56);
-  doc.setFont('helvetica','bold');
-  doc.text(`TOTAL: ${total.toFixed(2)} €`, 370, 74);
-
-  // 3 columnas: proveedor / QR / cliente
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(11);
-
-  // cajas
-  doc.rect(40, 95, 240, 95);
-  doc.rect(290, 95, 90, 95);
-  doc.rect(390, 95, 165, 95);
-
-  doc.text('Proveedor', 50, 113);
-  doc.text('QR', 320, 113);
-  doc.text('Cliente', 400, 113);
-
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(10);
-
-  const pNombre = esc(invoice?.provNombre ?? prov.nombre);
-  const pDir    = esc(invoice?.provDir ?? prov.dir);
-  const pTel    = esc(invoice?.provTel ?? prov.tel);
-  const pEmail  = esc(invoice?.provEmail ?? prov.email);
-
-  const cNombre = esc(invoice?.cliNombre ?? cli.nombre);
-  const cDir    = esc(invoice?.cliDir ?? cli.dir);
-  const cTel    = esc(invoice?.cliTel ?? cli.tel);
-  const cEmail  = esc(invoice?.cliEmail ?? cli.email);
-  const cNif    = esc(invoice?.cliNif ?? cli.nif);
-
-  let y = 130;
-  const t = (tx) => { doc.text(tx, 50, y); y += 14; };
-  if (pNombre) t(pNombre);
-  if (provNif) t(`NIF: ${provNif}`);
-  if (pDir)    t(pDir);
-  if (pTel)    t(`Tel: ${pTel}`);
-  if (pEmail)  t(pEmail);
-
-  let y2 = 130;
-  const t2 = (tx) => { doc.text(tx, 400, y2); y2 += 14; };
-  if (cNombre) t2(cNombre);
-  if (cNif)    t2(`NIF/CIF: ${cNif}`);
-  if (cDir)    t2(cDir);
-  if (cTel)    t2(`Tel: ${cTel}`);
-  if (cEmail)  t2(cEmail);
-
-  if (qrDataUrl){
-    doc.addImage(qrDataUrl, 'PNG', 302, 120, 76, 76);
-    doc.setFontSize(7);
-    doc.text(qrText.slice(0, 28) + '…', 292, 190);
-  } else {
-    doc.setFontSize(9);
-    doc.text('QR no disponible', 300, 145);
-  }
-
-  // ====== Tabla líneas ======
-  const body = lines.length ? lines.map(l => [
-    l.prod,
-    l.modo,
-    l.cant ? String(l.cant) : '',
-    l.bruto ? l.bruto.toFixed(2) : '',
-    l.tara ? l.tara.toFixed(2) : '',
-    l.neto ? l.neto.toFixed(2) : '',
-    l.precio ? l.precio.toFixed(2) : '',
-    l.origen || '',
-    l.importe ? l.importe.toFixed(2) : ''
-  ]) : [['(Sin líneas)', '', '', '', '', '', '', '', '']];
-
-  doc.autoTable({
-    startY: 210,
-    head: [[ 'Producto','Modo','Cant','Bruto','Tara','Neto','Precio','Origen','Importe' ]],
-    body,
-    styles: { font:'helvetica', fontSize:9, cellPadding:5, lineWidth:0.5, lineColor:[0,0,0] },
-    headStyles: { fillColor:[0,0,0], textColor:[255,255,255] },
-    alternateRowStyles: { fillColor:[245,245,245] },
-    columnStyles: { 0:{cellWidth:150}, 7:{cellWidth:70}, 8:{halign:'right'} },
-    margin: { left:40, right:40 },
-    didDrawPage: (data) => {
-      // Footer: página
-      const pages = doc.getNumberOfPages();
-      const page = doc.internal.getCurrentPageInfo().pageNumber;
-      doc.setFontSize(9);
-      doc.setFont('helvetica','normal');
-      doc.text(`Página ${page}/${pages}`, 40, 820);
-    }
-  });
-
-  // ====== Totales ======
-  const endY = doc.lastAutoTable.finalY + 12;
-  const boxY = Math.min(endY, 740);
-
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(11);
-  doc.rect(360, boxY, 195, 80);
-
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(10);
-  doc.text(`Subtotal: ${subtotal.toFixed(2)} €`, 370, boxY + 22);
-  if (transOn) doc.text(`Transporte (${transPct.toFixed(0)}%): ${transporte.toFixed(2)} €`, 370, boxY + 38);
-  if (!ivaIncl) doc.text(`IVA (${ivaPct.toFixed(0)}%): ${iva.toFixed(2)} €`, 370, boxY + 54);
-  else doc.text('IVA incluido', 370, boxY + 54);
-
-  doc.setFont('helvetica','bold');
-  doc.text(`TOTAL: ${total.toFixed(2)} €`, 370, boxY + 72);
-
-  return doc.output('blob');
-}
-
-async function uploadToStorage(blob, invoiceNumber){
-  const { initializeApp, getApps, getApp } = await import('https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js');
-  const { getAuth } = await import('https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js');
-  const { getStorage, ref, uploadBytes, getDownloadURL } = await import('https://www.gstatic.com/firebasejs/12.8.0/firebase-storage.js');
+  const { initializeApp, getApps, getApp } = appMod;
+  const { getAuth } = authMod;
+  const { getStorage, ref: sRef, uploadBytes, getDownloadURL } = storageMod;
+  const { getDatabase, ref: dRef, set: dbSet } = dbMod;
 
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const storage = getStorage(app);
+  const db = getDatabase(app, firebaseConfig.databaseURL);
 
-  const u = auth.currentUser;
-  if (!u) throw new Error('NO_AUTH');
+  // ========= Cargar jsPDF + AutoTable (CDN) =========
+  function loadScript(url){
+    return new Promise((res, rej)=>{
+      const s = document.createElement('script');
+      s.src = url;
+      s.async = true;
+      s.onload = () => res(true);
+      s.onerror = () => rej(new Error('No se pudo cargar: ' + url));
+      document.head.appendChild(s);
+    });
+  }
 
-  const safeNum = String(invoiceNumber || `FA-${Date.now()}`).replace(/[^\w\-]+/g,'_').slice(0, 80);
-  const path = `factumiral/${u.uid}/facturas/${safeNum}.pdf`;
-
-  const r = ref(storage, path);
-  await uploadBytes(r, blob, { contentType:'application/pdf' });
-  const url = await getDownloadURL(r);
-  return { url, path };
-}
-
-function savePdfUrlIntoInvoice(key, list, invoice, pdfUrl, pdfPath){
-  const numFac = String(invoice?.num ?? invoice?.numero ?? '').trim();
-  const idx = list.findIndex(x => String(x?.num ?? x?.numero ?? x?.id ?? '').trim() === numFac);
-  if (idx < 0) return false;
-
-  list[idx].pdfUrl = pdfUrl;
-  list[idx].pdfPath = pdfPath;
-  list[idx].pdfUpdatedAt = Date.now();
-
-  localStorage.setItem(key, JSON.stringify(list));
-  window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { key } }));
-  return true;
-}
-
-function injectButton(){
-  const right = document.querySelector('.topbar__right') || document.body;
-  if ($('#btnPdfCloudPro')) return;
-
-  const btn = document.createElement('button');
-  btn.id = 'btnPdfCloudPro';
-  btn.type = 'button';
-  btn.textContent = 'PDF+NUBE PRO';
-  // Verde con texto negro (como pediste)
-  btn.style.cssText = 'padding:10px 12px;border:1px solid #000;background:#34c759;color:#000;border-radius:12px;font-weight:700;cursor:pointer;';
-
-  right.appendChild(btn);
-
-  btn.addEventListener('click', async () => {
-    try{
-      await ensureLibs();
-
-      const picked = pickInvoice();
-      if (!picked.invoice) return alert('No encuentro ninguna factura guardada (LocalStorage). Guarda una factura primero.');
-
-      const fallback = getProviderClientSettingsFallback();
-      const blob = await generatePdfBlobPro(picked.invoice, fallback);
-
-      const invoiceNumber = String(picked.invoice?.num ?? picked.invoice?.numero ?? getCurrentInvoiceNumberFromDOM() ?? `FA-${Date.now()}`);
-      const { url, path } = await uploadToStorage(blob, invoiceNumber);
-
-      const saved = savePdfUrlIntoInvoice(picked.key, picked.list, picked.invoice, url, path);
-
-      if (!saved) {
-        // fallback: índice externo por si no encuentra estructura exacta
-        const idx = safeParse(localStorage.getItem('fm_pdfindex') || '{}') || {};
-        idx[invoiceNumber] = { url, path, ts: Date.now() };
-        localStorage.setItem('fm_pdfindex', JSON.stringify(idx));
-      }
-
-      openUrlModal(url);
-      alert('✅ PDF PRO subido a Storage y listo.');
-
-    } catch (e){
-      console.error(e);
-      if (String(e?.message||e).includes('NO_AUTH')){
-        alert('Primero LOGIN en Cloud (Firebase) para poder subir a Storage.');
-        $('#btnCloud')?.click();
-        return;
-      }
-      alert('❌ Error PDF+Nube PRO: ' + (e?.message || e));
+  async function ensurePdfLibs(){
+    // jsPDF UMD
+    if (!window.jspdf?.jsPDF) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
     }
-  });
-}
+    // AutoTable
+    if (!window.jspdf?.jsPDF?.API?.autoTable) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js');
+    }
+  }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectButton, { once:true });
-} else {
-  injectButton();
-}
+  // ========= Helpers para leer valores =========
+  const firstVal = (selectors) => {
+    for (const s of selectors){
+      const el = $(s);
+      const v = (el?.value ?? el?.textContent ?? '').toString().trim();
+      if (v) return v;
+    }
+    return '';
+  };
 
-log('PDF PRO+CLOUD listo ✅');
+  const parseNum = (v) => {
+    const s = (v ?? '').toString().trim().replace(/\s/g,'').replace(',','.');
+    const n = Number(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const eur = (n) => {
+    const v = (Number(n)||0);
+    return v.toFixed(2).replace('.',',') + ' €';
+  };
+
+  // ========= Lee datos de factura (DOM) =========
+  function readInvoiceFromDom(){
+    const num = firstVal(['#numFactura','#facturaNum','#facNum','input[name="numFactura"]']) || `FA-${Date.now()}`;
+    const fecha = firstVal(['#fechaFactura','#facFecha','input[name="fechaFactura"]']);
+
+    const prov = {
+      nombre: firstVal(['#provNombre','input#provNombre']),
+      nif:    firstVal(['#provNif','input#provNif']),
+      dir:    firstVal(['#provDir','input#provDir']),
+      tel:    firstVal(['#provTel','input#provTel']),
+      email:  firstVal(['#provEmail','input#provEmail']),
+    };
+
+    const cli = {
+      nombre: firstVal(['#cliNombre','#clienteNombre','input#cliNombre','input#clienteNombre']),
+      nif:    firstVal(['#cliNif','#clienteNif','input#cliNif','input#clienteNif']),
+      dir:    firstVal(['#cliDir','#clienteDir','input#cliDir','input#clienteDir']),
+      tel:    firstVal(['#cliTel','#clienteTel','input#cliTel','input#clienteTel']),
+      email:  firstVal(['#cliEmail','#clienteEmail','input#cliEmail','input#clienteEmail']),
+    };
+
+    const tags = firstVal(['#tags','#facTags','input#tags','input#facTags']);
+    const obs  = firstVal(['#observaciones','#obs','#facObs','textarea#observaciones','textarea#obs','textarea#facObs']);
+
+    // --- líneas (heurística robusta)
+    const rows = [];
+    const containers = [
+      '#gridBody', '#lineasBody', '#linesBody', '#gridPro', '.gridPro', 'table'
+    ].map(s => $(s)).filter(Boolean);
+
+    const seen = new Set();
+    const pick = (root, sels) => firstVal(sels.map(x => x.replace('{root}', '')).map(ss => ss.startsWith('#') ? ss : ss).map(ss => ss));
+
+    const findInRow = (r, selList) => {
+      for (const s of selList){
+        const el = r.querySelector(s);
+        if (el){
+          const v = (el.value ?? el.textContent ?? '').toString().trim();
+          if (v) return v;
+        }
+      }
+      return '';
+    };
+
+    const rowCandidates = [];
+    for (const c of containers){
+      rowCandidates.push(...Array.from(c.querySelectorAll('tr,[data-row],.row,.gridRow,.line')));
+    }
+
+    for (const r of rowCandidates){
+      if (seen.has(r)) continue; seen.add(r);
+
+      const producto = findInRow(r, [
+        '[data-col="producto"] input','input[data-col="producto"]','input[name*="prod"]','input[id*="prod"]',
+        'input[placeholder*="Producto"]'
+      ]);
+
+      // si no hay producto, saltar
+      if (!producto) continue;
+
+      const modo = findInRow(r, [
+        '[data-col="modo"] select','select[data-col="modo"]','select[name*="modo"]','select[id*="modo"]'
+      ]) || findInRow(r, ['input[data-col="modo"]','input[name*="modo"]']);
+
+      const cantidad = findInRow(r, [
+        '[data-col="cantidad"] input','input[data-col="cantidad"]','input[name*="cant"]','input[id*="cant"]','input[placeholder*="Cantidad"]'
+      ]);
+
+      const bruto = findInRow(r, [
+        '[data-col="bruto"] input','input[data-col="bruto"]','input[name*="bruto"]','input[id*="bruto"]'
+      ]);
+
+      const tara = findInRow(r, [
+        '[data-col="tara"] input','input[data-col="tara"]','input[name*="tara"]','input[id*="tara"]'
+      ]);
+
+      const neto = findInRow(r, [
+        '[data-col="neto"] input','input[data-col="neto"]','input[name*="neto"]','input[id*="neto"]'
+      ]);
+
+      const precio = findInRow(r, [
+        '[data-col="precio"] input','input[data-col="precio"]','input[name*="precio"]','input[id*="precio"]','input[placeholder*="Precio"]'
+      ]);
+
+      const origen = findInRow(r, [
+        '[data-col="origen"] input','input[data-col="origen"]','input[name*="origen"]','input[id*="origen"]'
+      ]);
+
+      const importe = findInRow(r, [
+        '[data-col="importe"] input','input[data-col="importe"]','input[name*="importe"]','input[id*="importe"]','input[placeholder*="Importe"]'
+      ]);
+
+      rows.push({ producto, modo, cantidad, bruto, tara, neto, precio, origen, importe });
+    }
+
+    return { num, fecha, tags, obs, prov, cli, rows };
+  }
+
+  // ========= PDF PRO =========
+  async function buildPdfBlob(data){
+    await ensurePdfLibs();
+    const { jsPDF } = window.jspdf;
+
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const W = doc.internal.pageSize.getWidth();
+    const M = 40;
+
+    // Header
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(18);
+    doc.text('FACTURA', M, 44);
+
+    doc.setDrawColor(0);
+    doc.setLineWidth(1);
+    doc.line(M, 54, W - M, 54);
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica','normal');
+
+    // Caja meta arriba derecha
+    const metaX = W - M - 200;
+    const metaY = 22;
+    doc.setDrawColor(0);
+    doc.setLineWidth(0.6);
+    doc.roundedRect(metaX, metaY, 200, 48, 8, 8);
+    doc.text(`Nº: ${data.num}`, metaX + 10, metaY + 18);
+    if (data.fecha) doc.text(`Fecha: ${data.fecha}`, metaX + 10, metaY + 34);
+
+    // Proveedor izquierda
+    let y = 78;
+    doc.setFont('helvetica','bold'); doc.text('Proveedor', M, y); y += 14;
+    doc.setFont('helvetica','normal');
+    const p = data.prov || {};
+    const provLines = [
+      p.nombre, p.nif ? `NIF: ${p.nif}` : '', p.dir, p.tel ? `Tel: ${p.tel}` : '', p.email ? `Email: ${p.email}` : ''
+    ].filter(Boolean);
+    provLines.forEach((t)=>{ doc.text(t, M, y); y += 13; });
+
+    // Cliente derecha
+    let y2 = 78;
+    const cx = W/2 + 10;
+    doc.setFont('helvetica','bold'); doc.text('Cliente', cx, y2); y2 += 14;
+    doc.setFont('helvetica','normal');
+    const c = data.cli || {};
+    const cliLines = [
+      c.nombre, c.nif ? `NIF/CIF: ${c.nif}` : '', c.dir, c.tel ? `Tel: ${c.tel}` : '', c.email ? `Email: ${c.email}` : ''
+    ].filter(Boolean);
+    cliLines.forEach((t)=>{ doc.text(t, cx, y2); y2 += 13; });
+
+    // Tags
+    const tags = (data.tags || '').trim();
+    if (tags) {
+      doc.setFont('helvetica','bold');
+      doc.text('Tags:', M, 160);
+      doc.setFont('helvetica','normal');
+      doc.text(tags, M + 40, 160);
+    }
+
+    // Tabla
+    const startY = 178;
+    const body = (data.rows && data.rows.length)
+      ? data.rows.map(r => [
+          r.producto || '',
+          r.modo || '',
+          r.cantidad || '',
+          r.bruto || '',
+          r.tara || '',
+          r.neto || '',
+          r.precio || '',
+          r.origen || '',
+          r.importe || ''
+        ])
+      : [['(Sin líneas detectadas en el grid)', '', '', '', '', '', '', '', '']];
+
+    doc.autoTable({
+      startY,
+      head: [[
+        'Producto','Modo','Cant','Bruto','Tara','Neto','Precio','Origen','Importe'
+      ]],
+      body,
+      margin: { left: M, right: M },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 5 },
+      headStyles: { fillColor: [0,0,0], textColor: [255,255,255] },
+      alternateRowStyles: { fillColor: [245,245,245] },
+      didDrawPage: (d) => {
+        // Pie con numeración
+        const page = doc.internal.getNumberOfPages();
+        doc.setFontSize(9);
+        doc.setFont('helvetica','normal');
+        doc.text(`Página ${page}`, W - M, doc.internal.pageSize.getHeight() - 18, { align:'right' });
+      }
+    });
+
+    // Totales (calculados desde importe si existe)
+    const sum = (data.rows || []).reduce((acc, r)=> acc + parseNum(r.importe), 0);
+    const afterTableY = doc.lastAutoTable.finalY + 14;
+
+    doc.setFont('helvetica','bold');
+    doc.text('TOTAL:', W - M - 120, afterTableY);
+    doc.setFont('helvetica','normal');
+    doc.text(eur(sum), W - M, afterTableY, { align:'right' });
+
+    // Observaciones
+    if ((data.obs || '').trim()){
+      doc.setFont('helvetica','bold');
+      doc.text('Observaciones', M, afterTableY + 28);
+      doc.setFont('helvetica','normal');
+      const text = (data.obs || '').trim();
+      const lines = doc.splitTextToSize(text, W - 2*M);
+      doc.text(lines, M, afterTableY + 44);
+    }
+
+    return doc.output('blob');
+  }
+
+  // ========= Subida a Storage + index en RTDB =========
+  async function uploadPdfToCloud(blob, numFactura){
+    const u = auth.currentUser;
+    if (!u) throw new Error('NO_AUTH');
+
+    const safeNum = sanitize(numFactura);
+    const path = `factumiral/${u.uid}/pdf/${safeNum}.pdf`;
+
+    const r = sRef(storage, path);
+    await uploadBytes(r, blob, { contentType: 'application/pdf' });
+    const url = await getDownloadURL(r);
+
+    // Index en RTDB (no rompe tu app aunque no lo use)
+    await dbSet(dRef(db, `factumiral/${u.uid}/pdfIndex/${safeNum}`), {
+      numFactura: safeNum,
+      url,
+      path,
+      ts: Date.now()
+    });
+
+    return { url, path, safeNum };
+  }
+
+  // ========= Guardar url en factura local (si se encuentra) =========
+  function savePdfUrlLocal(numFactura, pdfUrl, pdfPath){
+    const target = String(numFactura).trim();
+    const tryParse = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
+
+    for (const k of Object.keys(localStorage)){
+      const raw = localStorage.getItem(k);
+      if (!raw || raw[0] !== '[') continue;
+      const arr = tryParse(raw);
+      if (!Array.isArray(arr)) continue;
+
+      const idx = arr.findIndex(f => String(f?.num ?? f?.numero ?? f?.numFactura ?? f?.id ?? '').trim() === target);
+      if (idx >= 0){
+        arr[idx].pdfUrl = pdfUrl;
+        arr[idx].pdfPath = pdfPath;
+        arr[idx].pdfUpdatedAt = Date.now();
+        localStorage.setItem(k, JSON.stringify(arr));
+        window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { key: k } }));
+        return { ok:true, key:k };
+      }
+    }
+
+    // fallback
+    const idx = tryParse(localStorage.getItem('fm_pdfindex') || '{}') || {};
+    idx[target] = { url: pdfUrl, path: pdfPath, ts: Date.now() };
+    localStorage.setItem('fm_pdfindex', JSON.stringify(idx));
+    return { ok:false, key:'fm_pdfindex' };
+  }
+
+  // ========= Modal visor (sin blob navigation rara) =========
+  function openPdfInModal(url){
+    let modal = $('#fmPdfProCloudModal');
+    if (modal) modal.remove();
+
+    modal = document.createElement('div');
+    modal.id = 'fmPdfProCloudModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:12px;';
+    modal.innerHTML = `
+      <div style="width:min(980px,100%);height:min(92vh,100%);background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35);display:flex;flex-direction:column;">
+        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee;">
+          <strong>PDF (Cloud)</strong>
+          <div style="display:flex;gap:8px;">
+            <button id="fmPdfProCloudClose" style="padding:8px 10px;border:1px solid #ddd;background:#f5f5f5;border-radius:10px;cursor:pointer;">Cerrar</button>
+          </div>
+        </div>
+        <iframe id="fmPdfProCloudFrame" style="flex:1;border:0;width:100%;" referrerpolicy="no-referrer"></iframe>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.remove(); });
+    $('#fmPdfProCloudClose').addEventListener('click', ()=> modal.remove());
+    $('#fmPdfProCloudFrame').src = url;
+  }
+
+  // ========= Botón verde =========
+  function injectButton(){
+    if ($('#btnPdfProCloud')) return;
+
+    const host = document.querySelector('.topbar__right') || document.body;
+    const b = document.createElement('button');
+    b.id = 'btnPdfProCloud';
+    b.type = 'button';
+    b.className = 'btn btn--green';
+    b.textContent = 'PDF PRO + CLOUD';
+    b.title = 'Genera un PDF profesional y lo sube a Firebase Storage';
+
+    host.appendChild(b);
+
+    b.addEventListener('click', async () => {
+      try{
+        // necesita login
+        if (!auth.currentUser){
+          alert('Primero entra en Cloud (correo + contraseña) para subir PDFs.');
+          $('#btnCloud')?.click();
+          return;
+        }
+
+        b.disabled = true;
+        b.textContent = 'Generando…';
+
+        const data = readInvoiceFromDom();
+        const blob = await buildPdfBlob(data);
+
+        b.textContent = 'Subiendo…';
+        const up = await uploadPdfToCloud(blob, data.num);
+
+        const saved = savePdfUrlLocal(data.num, up.url, up.path);
+
+        b.textContent = '✅ Subido';
+        setTimeout(()=>{ b.textContent = 'PDF PRO + CLOUD'; b.disabled = false; }, 900);
+
+        // abrir visor cloud
+        openPdfInModal(up.url);
+
+        log('OK', { factura: data.num, storagePath: up.path, saved });
+
+      } catch (e){
+        console.error(e);
+        b.disabled = false;
+        b.textContent = 'PDF PRO + CLOUD';
+        alert('❌ Error: ' + (e?.code || e?.message || e));
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectButton, { once:true });
+  } else {
+    injectButton();
+  }
+
+  log('Patch PDF PRO + CLOUD listo ✅');
+})();
