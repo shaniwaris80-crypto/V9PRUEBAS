@@ -1904,9 +1904,37 @@ PARTE 1/4 — FACTU MIRAL (B/W PRO) — index.html (COMPLETO)
 
         b.textContent = 'Subiendo…';
         badge('⬆️ Subiendo a Firebase Storage…', '#05a');
+const num = getFacturaNum();
+const up = await uploadPdfBlob(CAPTURED, num);
 
-        const num = getFacturaNum();
-        const up = await uploadPdfBlob(CAPTURED, num);
+// ===== Guardar URL del PDF dentro de la factura (sin tocar app.js) =====
+try {
+  const keys = Object.keys(localStorage);
+  const kFact = keys.find(k => k.toLowerCase().includes('facturas')) || null;
+
+  if (kFact) {
+    const arr = JSON.parse(localStorage.getItem(kFact) || '[]');
+    const idx = arr.findIndex(f =>
+      (f?.numFactura || f?.numero || f?.num || f?.id || '').toString() === num.toString()
+      || (f?.n || '').toString() === num.toString()
+    );
+
+    if (idx >= 0) {
+      arr[idx].pdfUrl = up.url;
+      arr[idx].pdfCloudPath = up.path;
+      arr[idx].pdfUpdatedAt = Date.now();
+      localStorage.setItem(kFact, JSON.stringify(arr));
+      console.log('✅ Guardado pdfUrl en factura:', num);
+    } else {
+      console.log('ℹ️ No encontré la factura en localStorage para guardar pdfUrl (num=', num, ')');
+    }
+  } else {
+    console.log('ℹ️ No encontré clave de facturas en localStorage para guardar pdfUrl');
+  }
+} catch (e) {
+  console.warn('⚠️ No pude guardar pdfUrl en localStorage:', e);
+}
+;
 
         badge('✅ Subido a Storage ✔', '#0a7');
         b.textContent = '✅ Subido';
