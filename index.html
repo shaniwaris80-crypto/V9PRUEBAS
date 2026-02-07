@@ -1605,115 +1605,13 @@ PARTE 1/4 — FACTU MIRAL (B/W PRO) — index.html (COMPLETO)
   SCRIPTS (LIMPIO)
 ========================================================== -->
 
-<!-- 1) SOLO UNA VEZ -->
 <script src="app.js?v=999" defer></script>
-<script type="module" src="firebase-cloud.js?v=999"></script>
 
-<!-- 2) Parches inline (uno por uno, SIEMPRE cerrando </script>) -->
+<!-- Cloud SAFE (nuevo) -->
+<script type="module" src="firebase-cloud-safe.js?v=1"></script>
 
-<script>
-(() => {
-  // Aplica inputmode="decimal" a inputs que parezcan numéricos
-  function patchNumericInputs(){
-    const inputs = document.querySelectorAll('input[type="number"], input[data-num], input.price, input.qty');
-    inputs.forEach(i => {
-      i.setAttribute('inputmode','decimal');
-      i.setAttribute('autocomplete','off');
-      i.setAttribute('step','any');
-      if(i.type === 'number') i.type = 'text';
-    });
-  }
-
-  function normalizeOnBlur(e){
-    const el = e.target;
-    if(!(el instanceof HTMLInputElement)) return;
-    if(el.getAttribute('inputmode') !== 'decimal') return;
-    const v = (el.value || '').trim();
-    if(!v) return;
-    el.value = v.replace(',', '.');
-  }
-
-  document.addEventListener('DOMContentLoaded', patchNumericInputs);
-  document.addEventListener('focusin', patchNumericInputs);
-  document.addEventListener('blur', normalizeOnBlur, true);
-})();
-</script>
-
-<script>
-(() => {
-  function addBulkBtn(){
-    if(document.getElementById('bulkBtn')) return;
-    const b = document.createElement('button');
-    b.id='bulkBtn';
-    b.textContent='📋 Pegar lista';
-    b.style.cssText='position:fixed;right:12px;bottom:64px;z-index:99999;border:1px solid #111;background:#fff;border-radius:14px;padding:10px 12px;font:900 13px system-ui;box-shadow:0 10px 24px rgba(0,0,0,.18)';
-    document.body.appendChild(b);
-
-    b.onclick = () => {
-      const raw = prompt("Pega aquí (ej: TOMATE 2\\nPATATA 5):");
-      if(!raw) return;
-      const lines = raw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-
-      const parsed = lines.map(l=>{
-        const m = l.match(/^(.*?)[\s\t]+([0-9]+([.,][0-9]+)?)\s*$/);
-        if(!m) return { producto: l, cantidad: '' };
-        return { producto: m[1].trim(), cantidad: m[2].replace(',', '.') };
-      });
-
-      console.log("BULK PARSED:", parsed);
-      alert("✅ Lista parseada. Mira consola (F12) BULK PARSED.\nSiguiente paso: conectarlo al grid.");
-    };
-  }
-  document.addEventListener('DOMContentLoaded', addBulkBtn);
-})();
-</script>
-
-<script>
-(() => {
-  // (Opcional) botón X móvil para borrar búsqueda
-  const mq = window.matchMedia('(max-width: 820px)');
-  const $ = (s, r=document) => r.querySelector(s);
-
-  function ensureClearBtn(){
-    if(!mq.matches) return;
-    const wrap = $('.quicksearch');
-    const inp  = $('#globalSearch');
-    if(!wrap || !inp) return;
-    if(wrap.querySelector('.qsClear')) return;
-
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'qsClear';
-    b.textContent = '✕';
-    wrap.appendChild(b);
-
-    const toggle = () => b.classList.toggle('is-on', (inp.value||'').trim().length>0);
-
-    b.addEventListener('click', () => {
-      inp.value = '';
-      inp.dispatchEvent(new Event('input', {bubbles:true}));
-      inp.dispatchEvent(new Event('change', {bubbles:true}));
-      inp.focus();
-      toggle();
-    });
-
-    inp.addEventListener('input', toggle);
-    inp.addEventListener('change', toggle);
-    toggle();
-  }
-
-  document.addEventListener('DOMContentLoaded', ensureClearBtn);
-  mq.addEventListener?.('change', ensureClearBtn);
-})();
-</script>
-
-<!-- 3) TU SCRIPT “PDF CLOUD INLINE” AQUÍ (tal cual), PERO ASEGÚRATE QUE:
-     - empieza con <script> y termina con </script>
-     - no metas <script src="..."> dentro de otro <script>
--->
-<script>
-/* PEGA AQUÍ TU BLOQUE PDF CLOUD INLINE COMPLETO */
-</script>
+<!-- Tu patch PDF (el que ya te funciona) -->
+<script src="patches/pdf-cloud-inline.js?v=1" defer></script>
 
 
 
