@@ -1,280 +1,143 @@
-/* =========================================================
-   patches/pdf-viewer-list-cloud.js
-   - Arregla "Ver PDF" en lista de facturas
-   - Prioriza PDF en Cloud (RTDB->pdf.url) si existe
-   - Si no hay Cloud, intenta abrir el PDF local en el visor (#pdfModal)
-   - NO toca app.js
-========================================================= */
 (() => {
   'use strict';
-  if (window.__FM_PDF_LIST_CLOUD_V1__) return;
-  window.__FM_PDF_LIST_CLOUD_V1__ = true;
+  if (window.__FM_PDF_LIST_CLOUD__) return;
+  window.__FM_PDF_LIST_CLOUD__ = true;
 
-  const FIREBASE_VER = '12.8.0';
   const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+  const sleep = (ms) => new Promise(r=>setTimeout(r, ms));
 
-  // ---------- LocalStorage helpers ----------
-  function lsFindKey(subs) {
+  function findFacturasKey(){
+    try{
+      if (window.LS && typeof window.LS === 'object'){
+        for (const k of Object.values(window.LS)){
+          if (typeof k === 'string' && k.toLowerCase().includes('facturas')) return k;
+        }
+      }
+    }catch{}
     const keys = Object.keys(localStorage);
-    const low = subs.map(s => s.toLowerCase());
-    return keys.find(k => low.some(x => k.toLowerCase().includes(x))) || null;
-  }
-  function lsGetJSON(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key) || '') ?? fallback; }
-    catch { return fallback; }
+    return keys.find(k => k.toLowerCase().includes('facturas')) || null;
   }
 
-  const LS_FACT = lsFindKey(['facturas','factura','invoices']);
-
-  // ---------- Detectar nº factura desde un item del listado ----------
-  function detectFacturaIdFromNode(node) {
-    if (!node) return '';
-
-    // 1) datasets típicos
-    const ds = node.dataset || {};
-    const cand = ds.id || ds.factura || ds.facturaId || ds.num || ds.numero || ds.invoice || ds.invoiceId;
-    if (cand) return String(cand).trim();
-
-    // 2) buscar FA-... en texto
-    const txt = (node.textContent || '').toUpperCase();
-    const m = txt.match(/FA[-\s]?\d[\w-]*/);
-    if (m) return m[0].replace(/\s+/g,'').replace('FA', 'FA-').replace('FA--','FA-').trim();
-
-    return '';
+  function loadJSON(k, fallback){
+    try { return JSON.parse(localStorage.getItem(k) || ''); } catch { return fallback; }
   }
 
-  function findFacturaInLocal(id) {
-    if (!LS_FACT) return null;
-    const arr = lsGetJSON(LS_FACT, []);
-    const s = String(id || '').trim();
-    if (!s) return null;
-
-    return arr.find(f => {
-      const num = (f?.numFactura || f?.numero || f?.num || f?.facNumero || f?.n || f?.id || '').toString().trim();
-      return num === s;
-    }) || null;
-  }
-
-  // ---------- Visor PDF interno (tu #pdfModal) ----------
-  function openPdfInModal(urlOrBlobUrl) {
-    const modal = $('#pdfModal');
-    const obj = $('#pdfObject');
-    const frame = $('#pdfFrame');
-
-    if (modal) modal.classList.remove('is-hidden');
-
-    if (obj) obj.setAttribute('data', urlOrBlobUrl || '');
-    if (frame) frame.setAttribute('src', urlOrBlobUrl || '');
-
-    // botón cerrar (si no está enganchado por app)
-    $('#btnPdfCerrar')?.addEventListener('click', () => modal?.classList.add('is-hidden'), { once:false });
-  }
-
-  // ---------- Firebase (leer pdf.url desde RTDB) ----------
-  let FB = null;
-
-  function readConfigFromUI() {
-    const apiKey = ($('#fbApiKey')?.value || '').trim();
-    const authDomain = ($('#fbAuthDomain')?.value || '').trim();
-    const databaseURL = ($('#fbDbUrl')?.value || '').trim();
-    const projectId = ($('#fbProjectId')?.value || '').trim();
-    const appId = ($('#fbAppId')?.value || '').trim();
-    const storageBucket = ($('#fbStorage')?.value || '').trim();
-
-    // si no está en UI, usamos tu config fija (fallback)
-    const fallback = {
-      apiKey: "AIzaSyDgBBnuISNIaQF2hluowQESzVaE-pEiUsY",
-      authDomain: "factumiral.firebaseapp.com",
-      projectId: "factumiral",
-      storageBucket: "factumiral.firebasestorage.app",
-      messagingSenderId: "576821038417",
-      appId: "1:576821038417:web:aba329f36563134bb01770",
-      measurementId: "G-HJVL8ET49L",
-      databaseURL: "https://factumiral-default-rtdb.europe-west1.firebasedatabase.app"
+  function findFacturaByNum(store, num){
+    const norm = String(num).trim();
+    const matchNum = (f) => {
+      const n = (f?.numFactura ?? f?.numero ?? f?.num ?? f?.n ?? f?.id ?? '').toString().trim();
+      return n === norm;
     };
 
-    if (!apiKey || !authDomain || !databaseURL || !projectId || !appId) return fallback;
-
-    return { apiKey, authDomain, databaseURL, projectId, appId, storageBucket: storageBucket || undefined };
+    if (Array.isArray(store)) return store.find(matchNum) || null;
+    if (store && typeof store === 'object'){
+      if (Array.isArray(store.items)) return store.items.find(matchNum) || null;
+      for (const v of Object.values(store)) if (v && typeof v === 'object' && matchNum(v)) return v;
+    }
+    return null;
   }
 
-  async function getFirebase() {
-    if (FB) return FB;
-
-    const [appMod, authMod, dbMod] = await Promise.all([
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-app.js`),
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-auth.js`),
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-database.js`),
-    ]);
-
-    const { initializeApp, getApps, getApp } = appMod;
-    const { getAuth, signInWithEmailAndPassword } = authMod;
-    const { getDatabase, ref, get, child } = dbMod;
-
-    const cfg = readConfigFromUI();
-    const app = getApps().length ? getApp() : initializeApp(cfg);
-    const auth = getAuth(app);
-    const db = getDatabase(app);
-
-    FB = { auth, db, signInWithEmailAndPassword, ref, get, child };
-    return FB;
+  function extractFacturaNumFromText(el){
+    const t = (el.textContent || '');
+    // tu formato suele ser FA-YYYYMMDDHHMM... (adaptable)
+    const m = t.match(/FA-[A-Za-z0-9\-]{6,}/);
+    return m ? m[0] : null;
   }
 
-  async function ensureLogin() {
-    const { auth, signInWithEmailAndPassword } = await getFirebase();
-    if (auth.currentUser) return auth.currentUser;
+  function ensureButtonsOnListItem(itemEl){
+    if (!itemEl || itemEl.__fmPdfButtons) return;
+    const num = extractFacturaNumFromText(itemEl);
+    if (!num) return;
 
-    // intenta abrir tu modal cloud si existe
-    $('#btnCloud')?.click();
+    const k = findFacturasKey();
+    const store = k ? loadJSON(k, null) : null;
+    const fac = store ? findFacturaByNum(store, num) : null;
+    const url = fac?.pdfUrl;
 
-    const email = prompt('Email Firebase (Cloud):');
-    const pass  = prompt('Contraseña:');
-    if (!email || !pass) throw new Error('Login cancelado');
-    const cred = await signInWithEmailAndPassword(auth, email, pass);
-    return cred.user;
-  }
-
-  async function getCloudPdfUrl(facturaId) {
-    const { db, ref, get, child } = await getFirebase();
-    const u = await ensureLogin();
-    const root = `factumiral/${u.uid}/facturas/${encodeURIComponent(String(facturaId))}/pdf`;
-    const snap = await get(child(ref(db), root));
-    const v = snap.val();
-    return v?.url || '';
-  }
-
-  // ---------- Detectar click en "Ver PDF" dentro del listado ----------
-  function isVerPdfClick(target) {
-    const el = target?.closest?.('button,a');
-    if (!el) return false;
-
-    const id = (el.id || '').toLowerCase();
-    const txt = (el.textContent || '').toLowerCase();
-    const act = (el.dataset?.action || '').toLowerCase();
-
-    // cubrimos distintos nombres
-    if (id.includes('verpdf')) return true;
-    if (act.includes('verpdf') || act.includes('pdf')) return true;
-    if (txt.includes('ver pdf')) return true;
-
-    return false;
-  }
-
-  function findItemRoot(target) {
-    // intenta subir a contenedor de item
-    return target.closest?.('.listItem, .item, .row, .card, [data-id], [data-factura], [data-num]') || target.closest?.('#facturasList > *') || null;
-  }
-
-  async function handleVerPdfFromListClick(e) {
-    const btn = e.target.closest?.('button,a');
-    if (!btn) return;
-
-    const item = findItemRoot(btn) || btn.parentElement;
-    const facturaId = detectFacturaIdFromNode(item);
-
-    if (!facturaId) {
-      alert('No pude detectar el Nº de factura en este item.');
-      return;
+    // container
+    let bar = itemEl.querySelector('.fmPdfBar');
+    if (!bar){
+      bar = document.createElement('div');
+      bar.className = 'fmPdfBar';
+      bar.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;';
+      itemEl.appendChild(bar);
+    } else {
+      bar.innerHTML = '';
     }
 
-    // 1) si hay pdfUrl guardado en local factura, abrirlo directo
-    const f = findFacturaInLocal(facturaId);
-    const localUrl = f?.pdfUrl || f?.pdfCloudUrl || f?.pdf?.url || '';
-    if (localUrl) {
-      openPdfInModal(localUrl);
-      return;
-    }
+    // Ver PDF (si existe)
+    if (url){
+      const bView = document.createElement('button');
+      bView.type = 'button';
+      bView.textContent = 'Ver PDF';
+      bView.style.cssText = 'padding:8px 10px;border:1px solid #111;background:#fff;border-radius:10px;font-weight:800;cursor:pointer;';
+      bView.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        (window.fmPdfCloud?.openPdfViewer ? window.fmPdfCloud.openPdfViewer(url) : window.open(url,'_blank'));
+      });
+      bar.appendChild(bView);
 
-    // 2) pedir a cloud (si existe)
-    try {
-      const cloudUrl = await getCloudPdfUrl(facturaId);
-      if (cloudUrl) {
-        openPdfInModal(cloudUrl);
+      const tag = document.createElement('span');
+      tag.textContent = '✓ Cloud';
+      tag.style.cssText = 'padding:8px 10px;border:1px solid #0a7;background:#eafff3;border-radius:10px;font-weight:900;';
+      bar.appendChild(tag);
+    } else {
+      // Subir (abre la factura y usa el botón cloud)
+      const bUp = document.createElement('button');
+      bUp.type = 'button';
+      bUp.textContent = 'Subir PDF Cloud';
+      bUp.style.cssText = 'padding:8px 10px;border:1px solid rgba(0,0,0,.25);background:#26d06a;color:#000;border-radius:10px;font-weight:900;cursor:pointer;';
+      bUp.addEventListener('click', async (e) => {
+        e.preventDefault(); e.stopPropagation();
 
-        // opcional: guardar en localStorage para próximas veces
-        try {
-          if (f && LS_FACT) {
-            const arr = lsGetJSON(LS_FACT, []);
-            const idx = arr.findIndex(x => {
-              const num = (x?.numFactura || x?.numero || x?.num || x?.facNumero || x?.n || x?.id || '').toString().trim();
-              return num === facturaId;
-            });
-            if (idx >= 0) {
-              arr[idx].pdfUrl = cloudUrl;
-              localStorage.setItem(LS_FACT, JSON.stringify(arr));
-            }
-          }
-        } catch {}
+        // intentar abrir la factura clicando el item
+        try { itemEl.click(); } catch {}
+        // dar tiempo a que cargue en pestaña Factura
+        await sleep(350);
 
-        return;
-      }
-    } catch (err) {
-      console.warn('Cloud PDF error:', err);
-    }
+        if (!window.fmPdfCloud?.uploadCurrentInvoicePdf){
+          alert('No está cargado el módulo de PDF Cloud. Revisa que pdf-cloud-permanent.js no esté en 404.');
+          return;
+        }
 
-    alert('No hay PDF en Cloud para esta factura. Sube primero con "PDF + Nube".');
-  }
-
-  // ---------- Añadir botón extra "PDF Cloud" en cada item (opcional) ----------
-  function injectButtonsIfMissing() {
-    const list = $('#facturasList');
-    if (!list) return;
-
-    const items = Array.from(list.children || []);
-    items.forEach(item => {
-      if (!(item instanceof HTMLElement)) return;
-      if (item.querySelector('.fmPdfCloudBtn')) return;
-
-      const id = detectFacturaIdFromNode(item);
-      if (!id) return;
-
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'btn btn--ghost fmPdfCloudBtn';
-      b.textContent = 'PDF Cloud';
-      b.style.cssText = 'margin-left:8px;border:1px solid #111;border-radius:12px;padding:8px 10px;font-weight:900;';
-      b.addEventListener('click', async (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        try {
-          const url = await getCloudPdfUrl(id);
-          if (!url) return alert('No hay PDF en Cloud para esta factura.');
-          openPdfInModal(url);
-        } catch (e2) {
-          alert('Error Cloud: ' + (e2?.message || e2));
+        try{
+          await window.fmPdfCloud.uploadCurrentInvoicePdf();
+          // refresca botones de este item
+          await sleep(200);
+          ensureButtonsOnListItem(itemEl);
+        }catch(err){
+          console.error(err);
+          alert('❌ Subida PDF Cloud: ' + (err?.message || err));
         }
       });
 
-      // intenta ponerlo al final del item sin romper estilos
-      item.appendChild(b);
-    });
+      bar.appendChild(bUp);
+    }
+
+    itemEl.__fmPdfButtons = true;
   }
 
-  function startObserver() {
-    const list = $('#facturasList');
-    if (!list) return;
+  async function run(){
+    // esperar contenedor lista
+    for (let i=0;i<80;i++){
+      const list = $('#facturasList');
+      if (list){
+        // observar cambios
+        const obs = new MutationObserver(() => {
+          const items = $$('#facturasList > *');
+          items.forEach(ensureButtonsOnListItem);
+        });
+        obs.observe(list, { childList:true, subtree:false });
 
-    const mo = new MutationObserver(() => injectButtonsIfMissing());
-    mo.observe(list, { childList:true, subtree:false });
-    injectButtonsIfMissing();
+        // primera pasada
+        const items = $$('#facturasList > *');
+        items.forEach(ensureButtonsOnListItem);
+        return;
+      }
+      await sleep(200);
+    }
   }
 
-  // ---------- Init ----------
-  document.addEventListener('click', (e) => {
-    if (!isVerPdfClick(e.target)) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    handleVerPdfFromListClick(e);
-  }, true);
-
-  document.addEventListener('DOMContentLoaded', () => {
-    startObserver();
-    // por si el listado se pinta tarde
-    let n = 0;
-    const t = setInterval(() => {
-      injectButtonsIfMissing();
-      if (++n > 25) clearInterval(t);
-    }, 400);
-  });
-
+  run();
 })();
