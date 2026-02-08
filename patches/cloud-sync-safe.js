@@ -1,455 +1,590 @@
 /* =========================================================
-   patches/cloud-sync-safe.js  — Cloud Sync SAFE (RTDB)
-   - NO toca app.js
-   - Evita borrados por dispositivos vacíos
-   - Sync por registro + updatedAt
-   - Realtime pull con onValue
+   PATCH: cloud-sync-safe.js  (NO toca app.js)
+   - Botones: Subir local→nube (merge sin duplicar), Bajar nube→local
+   - Anti-borrado: un dispositivo vacío NO puede borrar la nube
+   - AutoSync seguro (opcional): push + pull sin recargar
 ========================================================= */
 (() => {
   'use strict';
-  if (window.__FM_CLOUD_SAFE_V2__) return;
-  window.__FM_CLOUD_SAFE_V2__ = true;
+  if (window.__FM_CLOUD_SYNC_SAFE__) return;
+  window.__FM_CLOUD_SYNC_SAFE__ = true;
 
-  const FIREBASE_VER = '12.8.0';
-  const MOBILE_MAX = 820;
-
-  const $ = (s, r=document) => r.querySelector(s);
+  const $  = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
-
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const now = () => Date.now();
 
-  // ---------- UI: Semáforo ----------
-  function ensureDot() {
-    const btn = $('#btnCloud');
-    if (!btn) return null;
-    let dot = $('#fmCloudDot');
-    if (dot) return dot;
-    dot = document.createElement('span');
-    dot.id = 'fmCloudDot';
-    dot.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:999px;margin-left:8px;vertical-align:middle;border:1px solid rgba(0,0,0,.25)';
-    btn.appendChild(dot);
-    return dot;
-  }
-  function setDot(color, title) {
-    const dot = ensureDot();
-    if (!dot) return;
-    dot.style.background = color;
-    dot.title = title || '';
-  }
+  // ---------- Device ID estable ----------
+  const DEVKEY = 'fm_device_id';
+  const deviceId = (() => {
+    let v = localStorage.getItem(DEVKEY);
+    if (!v) { v = 'dev_' + Math.random().toString(16).slice(2) + '_' + Date.now(); localStorage.setItem(DEVKEY, v); }
+    return v;
+  })();
 
-  // ---------- DeviceId (para debug/conflictos) ----------
-  const DEVICE_ID_KEY = 'fm_device_id';
-  function getDeviceId() {
-    let id = localStorage.getItem(DEVICE_ID_KEY);
-    if (!id) {
-      id = 'dev_' + Math.random().toString(16).slice(2) + '_' + Date.now().toString(16);
-      localStorage.setItem(DEVICE_ID_KEY, id);
+  // ---------- Firebase config: leer de tus inputs de Ajustes ----------
+  function readFbConfigFromUI(){
+    const apiKey = $('#fbApiKey')?.value?.trim();
+    const authDomain = $('#fbAuthDomain')?.value?.trim();
+    const databaseURL = $('#fbDbUrl')?.value?.trim();
+    const projectId = $('#fbProjectId')?.value?.trim();
+    const appId = $('#fbAppId')?.value?.trim();
+    const storageBucket = $('#fbStorage')?.value?.trim();
+
+    // Si no está en UI, intenta de window.FM_FIREBASE_CONFIG (por si lo defines)
+    const w = window.FM_FIREBASE_CONFIG || null;
+
+    const cfg = {
+      apiKey: apiKey || w?.apiKey,
+      authDomain: authDomain || w?.authDomain,
+      databaseURL: databaseURL || w?.databaseURL,
+      projectId: projectId || w?.projectId,
+      appId: appId || w?.appId,
+      storageBucket: storageBucket || w?.storageBucket,
+      messagingSenderId: w?.messagingSenderId,
+      measurementId: w?.measurementId,
+    };
+
+    // Realtime necesita databaseURL sí o sí
+    if (!cfg.apiKey || !cfg.authDomain || !cfg.projectId || !cfg.appId || !cfg.databaseURL){
+      throw new Error('Falta config Firebase en Ajustes (apiKey/authDomain/databaseURL/projectId/appId).');
     }
-    return id;
-  }
-  const DEVICE_ID = getDeviceId();
-
-  // ---------- Detectar keys de localStorage ----------
-  function lsFindKeyAny(substrings) {
-    const keys = Object.keys(localStorage);
-    const lowSubs = substrings.map(s => String(s).toLowerCase());
-    return keys.find(k => lowSubs.some(s => k.toLowerCase().includes(s))) || null;
+    // Normaliza slash final
+    cfg.databaseURL = cfg.databaseURL.replace(/\/+$/,'');
+    return cfg;
   }
 
-  function lsGetJSON(key, fallback) {
-    try {
-      if (!key) return fallback;
-      const raw = localStorage.getItem(key);
-      if (!raw) return fallback;
-      return JSON.parse(raw);
-    } catch { return fallback; }
-  }
-  function lsSetJSON(key, val) {
-    if (!key) return;
-    localStorage.setItem(key, JSON.stringify(val));
-  }
-
-  // Colecciones que sincronizamos (si existen)
-  const COLS = [
-    { col:'clientes',  hints:['clientes','client'] },
-    { col:'productos', hints:['productos','product'] },
-    { col:'taras',     hints:['taras','tara'] },
-    { col:'facturas',  hints:['facturas','factura','invoices'] },
-    { col:'ventas',    hints:['ventas','sales'] },
-    { col:'pricehist', hints:['pricehist','hist','preciohist','price_hist'] },
-    { col:'settings',  hints:['settings','ajustes'] },
-    { col:'provider',  hints:['provider','proveedor'] },
-  ];
-
-  const LSKEY = {};
-  for (const c of COLS) LSKEY[c.col] = lsFindKeyAny(c.hints);
-
-  // ---------- Normalización de items ----------
-  function stableId(col, it) {
-    if (!it || typeof it !== 'object') return 'x_' + now();
-    // ya trae id
-    if (it.id) return String(it.id);
-
-    if (col === 'facturas') {
-      const num = it.numFactura || it.numero || it.num || it.facNumero || it.n;
-      if (num) return String(num);
+  // ---------- UI mini badge ----------
+  function badge(text, color='#111'){
+    let b = $('#fmCloudSafeBadge');
+    if(!b){
+      b = document.createElement('div');
+      b.id = 'fmCloudSafeBadge';
+      b.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:999999;padding:8px 10px;border-radius:12px;font:12px/1.2 system-ui;color:#fff;opacity:.92;max-width:92vw;';
+      document.body.appendChild(b);
     }
-    if (col === 'clientes') {
-      const nif = it.nif || it.cif || it.NIF || it.CIF;
-      if (nif) return 'cli_' + String(nif);
-      if (it.nombre || it.nombreFiscal) return 'cli_' + String(it.nombreFiscal || it.nombre).slice(0,60);
-    }
-    if (col === 'productos') {
-      if (it.nombre) return 'pro_' + String(it.nombre).slice(0,80);
-    }
-    if (col === 'taras') {
-      if (it.nombre) return 'tara_' + String(it.nombre).slice(0,80);
-    }
-    // fallback
-    return col + '_' + now() + '_' + Math.random().toString(16).slice(2);
+    b.style.background = color;
+    b.textContent = text;
   }
 
-  function touch(col, it) {
-    it.id = stableId(col, it);
-    it.updatedAt = typeof it.updatedAt === 'number' ? it.updatedAt : now();
-    it.updatedBy = it.updatedBy || DEVICE_ID;
-    return it;
-  }
+  // ---------- Helpers normalización ----------
+  const norm = (s) => (s ?? '').toString().trim().toUpperCase();
+  const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 
-  function asArray(v) {
-    if (Array.isArray(v)) return v;
-    if (v && typeof v === 'object') return Object.values(v);
+  function asArray(col){
+    if (!col) return [];
+    if (Array.isArray(col)) return col.filter(Boolean);
+    if (isObj(col)) return Object.values(col).filter(Boolean);
     return [];
   }
 
-  function dedupeById(col, arr) {
-    const map = new Map();
-    for (const raw of asArray(arr)) {
-      if (!raw || typeof raw !== 'object') continue;
-      const it = touch(col, { ...raw });
-      const prev = map.get(it.id);
-      if (!prev || (prev.updatedAt || 0) <= (it.updatedAt || 0)) map.set(it.id, it);
+  // Hash simple FNV-1a
+  function fnv1a(str){
+    let h = 2166136261;
+    for (let i=0;i<str.length;i++){
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
     }
+    return (h >>> 0).toString(16);
+  }
+
+  // ---------- Detecta keys en localStorage ----------
+  function findLSKeyAny(words){
+    const keys = Object.keys(localStorage);
+    const low = words.map(w => w.toLowerCase());
+    return keys.find(k => low.some(w => k.toLowerCase().includes(w))) || null;
+  }
+
+  function getLocalPack(){
+    // Intenta detectar nombres típicos
+    const kProvider  = findLSKeyAny(['provider','proveedor','prov']);
+    const kSettings  = findLSKeyAny(['settings','ajustes']);
+    const kClientes  = findLSKeyAny(['clientes','client']);
+    const kProductos = findLSKeyAny(['productos','product']);
+    const kTaras     = findLSKeyAny(['taras','envase','envases']);
+    const kFacturas  = findLSKeyAny(['facturas','factura']);
+    const kVentas    = findLSKeyAny(['ventas','venta']);
+    const kPricehist = findLSKeyAny(['pricehist','hist','precios','ultimos']);
+
+    function read(k, fallback){
+      if(!k) return fallback;
+      try { return JSON.parse(localStorage.getItem(k) || '') ?? fallback; }
+      catch { return fallback; }
+    }
+
+    return {
+      __keys: { kProvider, kSettings, kClientes, kProductos, kTaras, kFacturas, kVentas, kPricehist },
+      provider:  read(kProvider,  {}),
+      settings:  read(kSettings,  {}),
+      clientes:  read(kClientes,  []),
+      productos: read(kProductos, []),
+      taras:     read(kTaras,     []),
+      facturas:  read(kFacturas,  []),
+      ventas:    read(kVentas,    []),
+      pricehist: read(kPricehist, []),
+      meta:      { deviceId, pulledAt: 0, pushedAt: 0, rev: Number(localStorage.getItem('fm_cloud_rev')||'0') }
+    };
+  }
+
+  function saveLocalPack(pack){
+    const K = pack.__keys || {};
+    function write(k, v){ if(k) localStorage.setItem(k, JSON.stringify(v)); }
+
+    write(K.kProvider,  pack.provider  ?? {});
+    write(K.kSettings,  pack.settings  ?? {});
+    write(K.kClientes,  pack.clientes  ?? []);
+    write(K.kProductos, pack.productos ?? []);
+    write(K.kTaras,     pack.taras     ?? []);
+    write(K.kFacturas,  pack.facturas  ?? []);
+    write(K.kVentas,    pack.ventas    ?? []);
+    write(K.kPricehist, pack.pricehist ?? []);
+
+    if (pack?.meta?.rev != null) localStorage.setItem('fm_cloud_rev', String(pack.meta.rev));
+  }
+
+  // ---------- Dedup keys ----------
+  function keyCliente(c){
+    const nif = norm(c?.nif || c?.cif || c?.NIF || c?.CIF || '');
+    if (nif) return 'NIF:' + nif;
+    const name = norm(c?.nombre || c?.name || '');
+    const dir = norm(c?.dir || c?.direccion || '');
+    return 'CLI:' + fnv1a(name + '|' + dir);
+  }
+
+  function keyProducto(p){
+    const name = norm(p?.nombre || p?.name || '');
+    return name ? 'PROD:' + name : 'PROD:' + fnv1a(JSON.stringify(p||{}));
+  }
+
+  function keyTara(t){
+    const name = norm(t?.nombre || t?.name || '');
+    const peso = (t?.peso ?? t?.tara ?? t?.kg ?? t?.pesoKg ?? '').toString().trim();
+    return 'TARA:' + fnv1a(name + '|' + peso);
+  }
+
+  function facturaFingerprint(f){
+    const num = (f?.numFactura || f?.numero || f?.num || '').toString().trim();
+    const fecha = (f?.fecha || f?.date || f?.facFecha || '').toString().trim();
+    const total = (f?.total || f?.importeTotal || f?.tTotal || '').toString().trim();
+    const cli = (f?.cliente?.nif || f?.cliNif || f?.clienteNif || f?.cliente || '').toString().trim();
+    const lines = JSON.stringify(f?.lineas || f?.items || f?.rows || []);
+    return fnv1a([num, fecha, total, cli, lines].join('|'));
+  }
+
+  function keyFactura(f){
+    const num = (f?.numFactura || f?.numero || f?.num || '').toString().trim();
+    if (num) return 'FAC:' + num;
+    return 'FAC:' + facturaFingerprint(f);
+  }
+
+  function updatedAtOf(x){
+    const v = x?.updatedAt ?? x?._updatedAt ?? x?.ts ?? x?.timestamp ?? x?.modifiedAt;
+    const n = Number(v || 0);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  // Merge seguro: nunca borra, nunca pisa con vacío
+  function mergeObjectNoEmpty(base, incoming){
+    const out = {...(base||{})};
+    const src = incoming || {};
+    for (const k of Object.keys(src)){
+      const v = src[k];
+      if (v === null || v === undefined) continue;
+      if (typeof v === 'string' && v.trim() === '') continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  function mergeArrayByKey(localArr, cloudArr, keyFn, kind){
+    const L = asArray(localArr);
+    const C = asArray(cloudArr);
+
+    const map = new Map();
+
+    // mete cloud primero
+    for (const it of C){
+      const k = keyFn(it);
+      if (!k) continue;
+      map.set(k, it);
+    }
+
+    // añade/actualiza local
+    for (const it of L){
+      const k = keyFn(it);
+      if (!k) continue;
+
+      if (kind === 'facturas'){
+        // dedupe por huella: si ya existe misma huella, ignora
+        const existing = map.get(k);
+        if (existing){
+          const h1 = existing.__fp || facturaFingerprint(existing);
+          const h2 = it.__fp || facturaFingerprint(it);
+          existing.__fp = h1;
+          it.__fp = h2;
+
+          if (h1 === h2){
+            // mismo contenido -> elige el más nuevo
+            if (updatedAtOf(it) > updatedAtOf(existing)) map.set(k, it);
+            continue;
+          }
+          // MISMO NÚMERO pero contenido distinto -> NO machacamos.
+          // Guardamos ambos creando clave alternativa interna (para no perder datos)
+          const alt = k + '__ALT__' + h2.slice(0,8);
+          map.set(alt, it);
+          continue;
+        }
+      }
+
+      if (!map.has(k)){
+        map.set(k, it);
+      } else {
+        const prev = map.get(k);
+        // elige el más nuevo; si no hay timestamps, gana cloud (más estable)
+        const a = updatedAtOf(prev);
+        const b = updatedAtOf(it);
+        if (b > a) map.set(k, it);
+      }
+    }
+
+    // output array
     return Array.from(map.values());
   }
 
-  function mergeLocalWithRemote(col, localArr, remoteObj) {
-    const local = new Map();
-    for (const it of dedupeById(col, localArr)) local.set(it.id, it);
+  function mergePack(localPack, cloudPack){
+    const out = {...(cloudPack||{})};
 
-    const remoteArr = asArray(remoteObj);
-    for (const r0 of remoteArr) {
-      if (!r0 || typeof r0 !== 'object') continue;
-      const r = touch(col, { ...r0 });
-      const l = local.get(r.id);
-      if (!l || (l.updatedAt || 0) < (r.updatedAt || 0)) local.set(r.id, r);
-    }
+    // provider/settings: merge sin vacío
+    out.provider  = mergeObjectNoEmpty(out.provider, localPack.provider);
+    out.settings  = mergeObjectNoEmpty(out.settings, localPack.settings);
 
-    return Array.from(local.values());
+    out.clientes  = mergeArrayByKey(localPack.clientes,  out.clientes,  keyCliente, 'clientes');
+    out.productos = mergeArrayByKey(localPack.productos, out.productos, keyProducto,'productos');
+    out.taras     = mergeArrayByKey(localPack.taras,     out.taras,     keyTara,    'taras');
+    out.facturas  = mergeArrayByKey(localPack.facturas,  out.facturas,  keyFactura, 'facturas');
+    out.ventas    = mergeArrayByKey(localPack.ventas,    out.ventas,    (v)=>'VEN:'+(v?.fecha||v?.date||fnv1a(JSON.stringify(v))), 'ventas');
+    out.pricehist = mergeArrayByKey(localPack.pricehist, out.pricehist, (h)=>'PH:'+(h?.id||fnv1a(JSON.stringify(h))), 'pricehist');
+
+    out.meta = mergeObjectNoEmpty(out.meta, cloudPack?.meta);
+    out.meta = mergeObjectNoEmpty(out.meta, {
+      updatedAt: Date.now(),
+      updatedBy: deviceId,
+      schema: 'factumiral_pack_v1'
+    });
+
+    return out;
   }
 
-  // ---------- Firebase load (modular) ----------
+  // ---------- Firebase (imports dinámicos) ----------
   let FB = null;
-
-  async function loadFirebase() {
+  async function getFirebase(){
     if (FB) return FB;
 
+    const cfg = readFbConfigFromUI();
+
     const [appMod, authMod, dbMod] = await Promise.all([
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-app.js`),
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-auth.js`),
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-database.js`),
+      import('https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js'),
+      import('https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js'),
     ]);
 
     const { initializeApp, getApps, getApp } = appMod;
-    const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } = authMod;
-    const { getDatabase, ref, onValue, runTransaction, get, child } = dbMod;
+    const { getAuth, signInWithEmailAndPassword, onAuthStateChanged } = authMod;
+    const { getDatabase, ref, get, set, onValue } = dbMod;
 
-    FB = { initializeApp, getApps, getApp, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, getDatabase, ref, onValue, runTransaction, get, child };
+    const app = getApps().length ? getApp() : initializeApp(cfg);
+    const auth = getAuth(app);
+    const db   = getDatabase(app, cfg.databaseURL);
+
+    FB = { cfg, auth, db, ref, get, set, onValue, signInWithEmailAndPassword, onAuthStateChanged };
     return FB;
   }
 
-  // ---------- Firebase config: lo lee de tu UI Ajustes ----------
-  function readConfigFromUI() {
-    const apiKey = ($('#fbApiKey')?.value || '').trim();
-    const authDomain = ($('#fbAuthDomain')?.value || '').trim();
-    const databaseURL = ($('#fbDbUrl')?.value || '').trim();
-    const projectId = ($('#fbProjectId')?.value || '').trim();
-    const appId = ($('#fbAppId')?.value || '').trim();
-    const storageBucket = ($('#fbStorage')?.value || '').trim();
+  async function ensureLogin(){
+    const { auth, signInWithEmailAndPassword } = await getFirebase();
+    if (auth.currentUser) return auth.currentUser;
 
-    if (!apiKey || !authDomain || !databaseURL || !projectId || !appId) return null;
-    return { apiKey, authDomain, databaseURL, projectId, appId, storageBucket: storageBucket || undefined };
-  }
+    // intenta abrir modal cloud si existe
+    $('#btnCloud')?.click();
 
-  function cloudEnabled() {
-    const chk = $('#ajCloudOn');
-    if (!chk) return true; // si no existe, asumimos que sí
-    return !!chk.checked;
-  }
-
-  // ---------- Estado ----------
-  let app = null;
-  let auth = null;
-  let db = null;
-  let user = null;
-
-  let applyingRemote = false;
-  let readyToPush = false;
-
-  const loadedCols = new Set();
-  const remoteCounts = {};
-
-  function rootPath() {
-    if (!user) return null;
-    return `factumiral/${user.uid}`;
-  }
-
-  // ---------- Login/Logout ----------
-  async function ensureInit() {
-    if (!cloudEnabled()) {
-      setDot('#b00', 'Cloud OFF (Ajustes)');
-      return false;
-    }
-
-    const cfg = readConfigFromUI();
-    if (!cfg) {
-      setDot('#b00', 'Falta config Firebase en Ajustes');
-      return false;
-    }
-
-    const F = await loadFirebase();
-    app = F.getApps().length ? F.getApp() : F.initializeApp(cfg);
-    auth = F.getAuth(app);
-    db = F.getDatabase(app);
-
-    F.onAuthStateChanged(auth, (u) => {
-      user = u || null;
-      if (!user) {
-        readyToPush = false;
-        setDot('#b00', 'No logueado');
-      } else {
-        setDot('#a80', 'Logueado: escuchando…');
-        startRealtime();
-      }
-    });
-
-    setDot('#a80', 'Cloud listo');
-    return true;
-  }
-
-  async function doLogin() {
-    const ok = await ensureInit();
-    if (!ok) return;
-
-    const email = prompt('Email Firebase (Auth):');
+    const email = prompt('Email Firebase (Cloud):');
     const pass  = prompt('Contraseña:');
-    if (!email || !pass) return;
-
-    const F = await loadFirebase();
-    await F.signInWithEmailAndPassword(auth, email, pass);
+    if (!email || !pass) throw new Error('Login cancelado');
+    const cred = await signInWithEmailAndPassword(auth, email, pass);
+    return cred.user;
   }
 
-  async function doLogout() {
-    if (!auth) return;
-    const F = await loadFirebase();
-    await F.signOut(auth);
-  }
+  // Detecta ruta correcta según tu DB actual
+  async function resolveDataPath(uid){
+    const { db, ref, get } = await getFirebase();
+    const base = ref(db, `factumiral/${uid}`);
+    const snap = await get(base);
+    const val = snap.exists() ? snap.val() : null;
 
-  // ---------- Realtime Pull ----------
-  function startRealtime() {
-    if (!db || !user) return;
-    const F = FB; // ya cargado
-
-    for (const c of COLS) {
-      const key = LSKEY[c.col];
-      if (!key) continue;
-
-      const p = `${rootPath()}/${c.col}`;
-      const r = F.ref(db, p);
-
-      F.onValue(r, (snap) => {
-        const remoteVal = snap.val() || {};
-        remoteCounts[c.col] = remoteVal ? Object.keys(remoteVal).length : 0;
-
-        // merge remoto -> local sin borrar
-        const localVal = lsGetJSON(key, []);
-        const merged = mergeLocalWithRemote(c.col, localVal, remoteVal);
-
-        applyingRemote = true;
-        lsSetJSON(key, merged);
-        applyingRemote = false;
-
-        loadedCols.add(c.col);
-        if (loadedCols.size >= Object.values(LSKEY).filter(Boolean).length) {
-          readyToPush = true;
-          setDot('#0a7', 'Cloud OK (Realtime)');
-        }
-
-        // Evento para tu app (si algún día lo quieres escuchar)
-        window.dispatchEvent(new CustomEvent('fmcloud:changed', { detail: { col: c.col, count: merged.length } }));
-
-        // Refresh “suave”: si no estás escribiendo, intenta refrescar el tab actual
-        const ae = document.activeElement;
-        const writing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
-        if (!writing) {
-          if (c.col === 'facturas') $('#btnFacturasRefresh')?.click();
-        }
-      }, (err) => {
-        console.warn('Cloud onValue error', c.col, err);
-        setDot('#b00', 'Error onValue');
-      });
+    // Si ya tienes kv/ls, usamos kv primero
+    if (val && typeof val === 'object'){
+      if (val.kv) return `factumiral/${uid}/kv`;
+      if (val.ls) return `factumiral/${uid}/ls`;
     }
+    // fallback
+    return `factumiral/${uid}/kv`;
   }
 
-  // ---------- Push incremental (por cambios) ----------
-  async function upsertItem(col, item) {
-    if (!db || !user) return { committed:false };
-    const F = FB;
+  // Lee pack nube
+  async function readCloudPack(uid){
+    const { db, ref, get } = await getFirebase();
+    const path = await resolveDataPath(uid);
+    const snap = await get(ref(db, path));
+    const pack = snap.exists() ? snap.val() : null;
 
-    const it = touch(col, { ...item, updatedAt: now(), updatedBy: DEVICE_ID });
-
-    const p = `${rootPath()}/${col}/${encodeURIComponent(it.id)}`;
-    const r = F.ref(db, p);
-
-    // transacción: no pisa si en cloud hay uno más nuevo 
-    const res = await F.runTransaction(r, (current) => {
-      if (!current) return it;
-      const cts = (current.updatedAt || 0);
-      const nts = (it.updatedAt || 0);
-      if (nts >= cts) return it;
-      return; // abort
-    }, { applyLocally: false });
-
-    return res;
+    return { path, pack: pack || { provider:{}, settings:{}, clientes:[], productos:[], taras:[], facturas:[], ventas:[], pricehist:[], meta:{} } };
   }
 
-  async function pushAll(colOnly=null) {
-    if (!readyToPush || !user) return;
-
-    // protección anti “dispositivo vacío”
-    for (const c of COLS) {
-      if (colOnly && c.col !== colOnly) continue;
-      const key = LSKEY[c.col];
-      if (!key) continue;
-
-      const localArr = dedupeById(c.col, lsGetJSON(key, []));
-      const remoteN = remoteCounts[c.col] || 0;
-
-      if (localArr.length === 0 && remoteN > 0) {
-        console.warn('Bloqueado push vacío para', c.col);
-        continue;
-      }
-
-      for (const it of localArr) {
-        await upsertItem(c.col, it);
-      }
-    }
-    setDot('#0a7', 'Cloud OK (Push)');
+  // Escribe pack nube
+  async function writeCloudPack(path, pack){
+    const { db, ref, set } = await getFirebase();
+    await set(ref(db, path), pack);
   }
 
-  // ---------- Hook: interceptar botones viejos (para que NO recargue) ----------
-  function interceptButtons() {
-    // Captura para matar handlers antiguos que hacían reload
-    document.addEventListener('click', async (e) => {
-      const t = e.target;
-      if (!(t instanceof HTMLElement)) return;
-
-      if (t.id === 'btnCloudLogin') {
-        e.preventDefault(); e.stopImmediatePropagation();
-        await doLogin();
-      }
-      if (t.id === 'btnCloudLogout') {
-        e.preventDefault(); e.stopImmediatePropagation();
-        await doLogout();
-      }
-      if (t.id === 'btnCloudSync') {
-        e.preventDefault(); e.stopImmediatePropagation();
-        setDot('#a80', 'Sync…');
-        await ensureInit();
-        if (!user) await doLogin();
-        await pushAll();
-        setDot('#0a7', 'Cloud OK');
-      }
-
-      // Cuando “guardas” algo, empuja sin recargar
-      const saveButtons = new Set(['btnGuardarFactura','btnClienteGuardar','btnClienteGuardar2','btnProdGuardar','btnTaraGuardar','btnVentasGuardar','btnAjustesGuardar','btnProvGuardar']);
-      if (saveButtons.has(t.id)) {
-        // deja que app.js guarde primero
-        setTimeout(async () => {
-          await ensureInit();
-          if (!user) return;
-          await pushAll();
-        }, 120);
-      }
-    }, true);
+  // Guardas “rev” para evitar bucles
+  function bumpLocalRev(){
+    const rev = Number(localStorage.getItem('fm_cloud_rev')||'0') + 1;
+    localStorage.setItem('fm_cloud_rev', String(rev));
+    return rev;
   }
 
-  // ---------- Hook: envolver window.save si existe (push incremental) ----------
-  function wrapSave() {
-    if (typeof window.save !== 'function' || window.save.__fmWrapped) return;
+  // ---------- Botones UI ----------
+  function mountButtons(){
+    const syncBtn = $('#btnCloudSync');
+    const host = syncBtn?.closest('.rowActions') || $('#tabAjustes .rowActions') || document.body;
+    if (!host || $('#fmBtnMigrate')) return;
 
-    const original = window.save;
-    window.save = function(k, v) {
-      const prevRaw = localStorage.getItem(k);
-      const ret = original.apply(this, arguments);
+    const b1 = document.createElement('button');
+    b1.id = 'fmBtnMigrate';
+    b1.className = 'btn btn--primary';
+    b1.type = 'button';
+    b1.textContent = '⬆️ Subir LOCAL → NUBE (merge)';
 
-      if (applyingRemote) return ret;
-      if (!readyToPush || !user) return ret;
+    const b2 = document.createElement('button');
+    b2.id = 'fmBtnPull';
+    b2.className = 'btn';
+    b2.type = 'button';
+    b2.textContent = '⬇️ Bajar NUBE → ESTE dispositivo';
 
-      // si toca una key de colecciones, sube cambios (simple: pushAll esa col)
-      const hit = Object.entries(LSKEY).find(([,key]) => key === k);
-      if (hit) {
-        const col = hit[0];
-        // debounce muy corto
-        clearTimeout(window.__fmPushT);
-        window.__fmPushT = setTimeout(() => pushAll(col), 300);
-      }
-      return ret;
+    const b3 = document.createElement('button');
+    b3.id = 'fmBtnAuto';
+    b3.className = 'btn btn--ghost';
+    b3.type = 'button';
+    b3.textContent = 'AutoSync: OFF';
+
+    host.appendChild(b1);
+    host.appendChild(b2);
+    host.appendChild(b3);
+
+    const setAutoLabel = () => {
+      const on = localStorage.getItem('fm_autosync') === '1';
+      b3.textContent = 'AutoSync: ' + (on ? 'ON' : 'OFF');
     };
-    window.save.__fmWrapped = true;
+    setAutoLabel();
+
+    b1.addEventListener('click', migrateLocalToCloud);
+    b2.addEventListener('click', pullCloudToLocal);
+    b3.addEventListener('click', () => {
+      const on = localStorage.getItem('fm_autosync') === '1';
+      localStorage.setItem('fm_autosync', on ? '0' : '1');
+      setAutoLabel();
+      if (!on) startRealtimePull(); // al activar, empieza pull
+    });
   }
 
-  // ---------- UI extra móvil: botón “Subir facturas (sin duplicar)” ----------
-  function mobileInvoiceButton() {
-    const isMobile = window.matchMedia(`(max-width:${MOBILE_MAX}px)`).matches;
-    if (!isMobile) return;
+  // ---------- Acciones principales ----------
+  async function migrateLocalToCloud(){
+    try{
+      badge('🟡 Preparando merge…', '#a80');
 
-    const panel = $('#tabFacturas');
-    if (!panel) return;
-    if ($('#fmBtnUploadFacturasMobile')) return;
+      const user = await ensureLogin();
+      const local = getLocalPack();
+      const { path, pack: cloud } = await readCloudPack(user.uid);
 
-    const btn = document.createElement('button');
-    btn.id = 'fmBtnUploadFacturasMobile';
-    btn.className = 'btn';
-    btn.type = 'button';
-    btn.textContent = 'Cloud: Subir facturas (sin duplicar)';
-    btn.style.cssText = 'margin-left:8px;border:1px solid #111;border-radius:12px;padding:10px 12px;font-weight:900;';
+      // Anti-borrado: si local está vacío y cloud tiene datos -> NO subimos
+      const lc = asArray(local.facturas).length + asArray(local.clientes).length + asArray(local.productos).length + asArray(local.taras).length;
+      const cc = asArray(cloud.facturas).length + asArray(cloud.clientes).length + asArray(cloud.productos).length + asArray(cloud.taras).length;
 
-    // intenta ponerlo junto a acciones del tab
-    const actions = panel.querySelector('.panel__actions');
-    (actions || panel).appendChild(btn);
+      if (lc === 0 && cc > 0){
+        badge('🔴 Local vacío: NO subo para no borrar la nube. Usa “Bajar NUBE → este dispositivo”.', '#b00');
+        alert('Local está vacío y Cloud tiene datos. Para evitar borrar la nube, NO se sube.\nPulsa “Bajar NUBE → este dispositivo”.');
+        return;
+      }
 
-    btn.addEventListener('click', async () => {
-      await ensureInit();
-      if (!user) await doLogin();
-      setDot('#a80', 'Subiendo facturas…');
-      await pushAll('facturas');
-      setDot('#0a7', 'Facturas OK');
-      alert('✅ Facturas subidas (sin duplicar: misma id = misma factura).');
-    });
+      // Merge seguro
+      const merged = mergePack(local, cloud);
+      merged.meta = merged.meta || {};
+      merged.meta.rev = bumpLocalRev();
+      merged.meta.pushedAt = Date.now();
+      merged.meta.pushedBy = deviceId;
+
+      await writeCloudPack(path, merged);
+
+      // Guarda también local para eliminar duplicados después del merge
+      local.meta.rev = merged.meta.rev;
+      saveLocalPack({...local, ...merged, __keys: local.__keys });
+
+      badge(`✅ Subido a nube (merge OK). Facturas:${merged.facturas?.length||0}`, '#0a7');
+
+      // refresco suave UI: click a botones “Actualizar” si existen
+      $('#btnFacturasRefresh')?.click();
+      $('#btnClientesRefresh')?.click?.();
+    }catch(e){
+      console.error(e);
+      badge('🔴 Error: ' + (e?.message || e), '#b00');
+      alert('Error: ' + (e?.message || e));
+    }
+  }
+
+  async function pullCloudToLocal(){
+    try{
+      badge('🟡 Bajando nube…', '#a80');
+      const user = await ensureLogin();
+      const local = getLocalPack();
+      const { pack: cloud } = await readCloudPack(user.uid);
+
+      const merged = mergePack(local, cloud);
+      merged.meta = merged.meta || {};
+      merged.meta.pulledAt = Date.now();
+      merged.meta.pulledBy = deviceId;
+
+      // No borres local si nube está vacía
+      const cc = asArray(cloud.facturas).length + asArray(cloud.clientes).length + asArray(cloud.productos).length + asArray(cloud.taras).length;
+      if (cc === 0){
+        badge('🟠 Cloud vacío: no borro nada local.', '#a80');
+        alert('Cloud está vacío (o sin datos). No se borró nada local.');
+        return;
+      }
+
+      saveLocalPack({ ...local, ...merged, __keys: local.__keys });
+
+      // guarda rev local si viene
+      if (merged.meta?.rev != null) localStorage.setItem('fm_cloud_rev', String(merged.meta.rev));
+
+      badge(`✅ Bajado (merge OK). Facturas:${merged.facturas?.length||0}`, '#0a7');
+      $('#btnFacturasRefresh')?.click();
+    }catch(e){
+      console.error(e);
+      badge('🔴 Error: ' + (e?.message || e), '#b00');
+      alert('Error: ' + (e?.message || e));
+    }
+  }
+
+  // ---------- AutoSync (push) con debounce ----------
+  let syncing = false;
+  let pending = false;
+  let tmr = null;
+
+  async function autoPushDebounced(){
+    if (localStorage.getItem('fm_autosync') !== '1') return;
+    if (tmr) clearTimeout(tmr);
+    tmr = setTimeout(async () => {
+      if (syncing) { pending = true; return; }
+      syncing = true;
+      try{
+        const user = await ensureLogin();
+        const local = getLocalPack();
+        const { path, pack: cloud } = await readCloudPack(user.uid);
+
+        // anti-borrado
+        const lc = asArray(local.facturas).length + asArray(local.clientes).length + asArray(local.productos).length + asArray(local.taras).length;
+        const cc = asArray(cloud.facturas).length + asArray(cloud.clientes).length + asArray(cloud.productos).length + asArray(cloud.taras).length;
+        if (lc === 0 && cc > 0) return;
+
+        const merged = mergePack(local, cloud);
+        merged.meta = merged.meta || {};
+        merged.meta.rev = bumpLocalRev();
+        merged.meta.pushedAt = Date.now();
+        merged.meta.pushedBy = deviceId;
+
+        await writeCloudPack(path, merged);
+
+        // actualiza local rev
+        saveLocalPack({ ...local, ...merged, __keys: local.__keys });
+        badge('🟢 AutoSync OK', '#0a7');
+      }catch(e){
+        console.warn(e);
+        badge('🟠 AutoSync error', '#a80');
+      }finally{
+        syncing = false;
+        if (pending){ pending = false; autoPushDebounced(); }
+      }
+    }, 1200);
+  }
+
+  // hook a localStorage.setItem para detectar cambios (sin romper app)
+  const _setItem = localStorage.setItem.bind(localStorage);
+  localStorage.setItem = function(k, v){
+    const r = _setItem(k, v);
+    const lk = String(k||'').toLowerCase();
+    if (lk.includes('factura') || lk.includes('cliente') || lk.includes('producto') || lk.includes('tara') || lk.includes('venta') || lk.includes('ajuste') || lk.includes('setting')){
+      // no molestamos mientras escribe: si hay input enfocado, espera
+      const ae = document.activeElement;
+      const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+      if (typing) setTimeout(autoPushDebounced, 900);
+      else autoPushDebounced();
+    }
+    return r;
+  };
+
+  // ---------- AutoPull realtime (descarga cambios de otros) ----------
+  let pullStarted = false;
+  function startRealtimePull(){
+    if (pullStarted) return;
+    pullStarted = true;
+
+    (async () => {
+      try{
+        const user = await ensureLogin();
+        const { db, ref, onValue } = await getFirebase();
+        const path = await resolveDataPath(user.uid);
+
+        onValue(ref(db, path), (snap) => {
+          if (!snap.exists()) return;
+          if (localStorage.getItem('fm_autosync') !== '1') return;
+
+          const cloud = snap.val() || {};
+          const cloudRev = Number(cloud?.meta?.rev || 0);
+          const localRev = Number(localStorage.getItem('fm_cloud_rev')||'0');
+
+          // si no hay cambios nuevos, nada
+          if (cloudRev && cloudRev <= localRev) return;
+
+          // no interrumpir si está escribiendo
+          const ae = document.activeElement;
+          const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+          if (typing) return;
+
+          const local = getLocalPack();
+          const merged = mergePack(local, cloud);
+
+          saveLocalPack({ ...local, ...merged, __keys: local.__keys });
+          if (cloudRev) localStorage.setItem('fm_cloud_rev', String(cloudRev));
+
+          badge('🔵 Cambios recibidos de otro dispositivo', '#2563eb');
+          // refresco suave
+          $('#btnFacturasRefresh')?.click();
+        });
+
+        badge('✅ Realtime Pull listo (AutoSync ON)', '#111');
+      }catch(e){
+        console.warn(e);
+      }
+    })();
   }
 
   // ---------- Init ----------
-  (async function init() {
-    setDot('#b00', 'Cloud OFF/No init');
-    interceptButtons();
-    await ensureInit();
-    wrapSave();
-    mobileInvoiceButton();
+  function init(){
+    mountButtons();
+    if (localStorage.getItem('fm_autosync') === '1') startRealtimePull();
+  }
 
-    // reintentos suaves por si app.js tarda en definir save()
-    for (let i=0;i<40;i++) { wrapSave(); await sleep(200); }
-  })();
+  document.addEventListener('DOMContentLoaded', init);
+  // fallback por si Ajustes carga tarde
+  setTimeout(init, 1200);
 
 })();
