@@ -1605,15 +1605,24 @@ PARTE 1/4 — FACTU MIRAL (B/W PRO) — index.html (COMPLETO)
   SCRIPTS (LIMPIO)
 ========================================================== -->
 
+<!-- APP -->
 <script src="app.js?v=1" defer></script>
 
-<!-- DEFAULT FIREBASE (antes del módulo) -->
+<!-- Firebase config por defecto (NO defer, para que exista antes del módulo) -->
 <script src="patches/firebase-default-config.js?v=1"></script>
 
+<!-- Cloud core -->
 <script type="module" src="firebase-cloud.js?v=1"></script>
 
-<!-- tus parches -->
+<!-- Parches (no tocan app.js) -->
 <script src="patches/cloud-sync-safe.js?v=1" defer></script>
+
+<!-- ✅ RESTAURA BOTÓN VERDE + SUBIDA PDF -->
+<script src="patches/pdf-cloud-permanent.js?v=1" defer></script>
+
+<!-- ✅ RESTAURA "VER PDF" EN LISTADO + VISOR -->
+<script src="patches/pdf-viewer-list-cloud.js?v=1" defer></script>
+
 
 
 
